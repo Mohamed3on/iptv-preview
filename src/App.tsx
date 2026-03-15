@@ -176,27 +176,31 @@ export default function App() {
     if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null; }
     if (mpegtsRef.current) { mpegtsRef.current.destroy(); mpegtsRef.current = null; }
 
-    const url = activeChannel.url;
-    const isHLS = url.includes(".m3u8");
-    const isTS = url.endsWith(".ts");
+    const rawUrl = activeChannel.url;
+    const isHLS = rawUrl.includes(".m3u8");
+    const isTS = rawUrl.endsWith(".ts");
+    // proxy streams in dev to avoid CORS/origin rejection from IPTV servers
+    const streamUrl = import.meta.env.DEV
+      ? `/stream?url=${encodeURIComponent(rawUrl)}`
+      : rawUrl;
 
     if (isHLS && Hls.isSupported()) {
       const hls = new Hls();
-      hls.loadSource(url);
+      hls.loadSource(streamUrl);
       hls.attachMedia(video);
       hls.on(Hls.Events.MANIFEST_PARSED, () => video.play().catch(() => {}));
       hlsRef.current = hls;
     } else if (isHLS && video.canPlayType("application/vnd.apple.mpegurl")) {
-      video.src = url;
+      video.src = streamUrl;
       video.play().catch(() => {});
     } else if (isTS && mpegts.isSupported()) {
-      const player = mpegts.createPlayer({ type: "mpegts", isLive: true, url });
+      const player = mpegts.createPlayer({ type: "mpegts", isLive: true, url: streamUrl });
       player.attachMediaElement(video);
       player.load();
       player.play();
       mpegtsRef.current = player;
     } else {
-      video.src = url;
+      video.src = streamUrl;
       video.play().catch(() => {});
     }
 

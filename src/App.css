@@ -162,6 +162,12 @@ input[type="text"]::placeholder {
   cursor: not-allowed;
 }
 
+.btn-load-all {
+  width: 100%;
+  padding: 9px;
+  margin-top: 4px;
+}
+
 .status-line {
   font-family: var(--font-mono);
   font-size: 10px;

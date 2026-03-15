@@ -1,10 +1,42 @@
+import path from 'path'
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
+import tailwindcss from '@tailwindcss/vite'
+import { Readable } from 'stream'
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), tailwindcss()],
+  resolve: {
+    alias: {
+      '@': path.resolve(__dirname, './src'),
+    },
+  },
   server: {
     proxy: {
+      '/stream': {
+        target: 'http://localhost:5173',
+        bypass: async (req, res) => {
+          const url = req.url?.replace('/stream?url=', '')
+          if (!url || !res) return
+          try {
+            const decoded = decodeURIComponent(url)
+            const resp = await fetch(decoded, { redirect: 'follow' })
+            if (!resp.ok) { res.statusCode = resp.status; res.end(`Upstream ${resp.status}`); return }
+            const ct = resp.headers.get('content-type')
+            if (ct) res.setHeader('content-type', ct)
+            res.setHeader('access-control-allow-origin', '*')
+            // stream the response instead of buffering
+            if (resp.body) {
+              Readable.fromWeb(resp.body as any).pipe(res)
+            } else {
+              res.end()
+            }
+          } catch (e: unknown) {
+            res.statusCode = 502
+            res.end(e instanceof Error ? e.message : 'proxy error')
+          }
+        },
+      },
       '/proxy': {
         target: 'http://localhost:5173',
         bypass: async (req, res) => {

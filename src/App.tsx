@@ -67,6 +67,7 @@ export default function App() {
   const [search, setSearch] = useState("");
   const [activeChannel, setActiveChannel] = useState<Channel | null>(null);
   const [nowMs, setNowMs] = useState(Date.now());
+  const [configOpen, setConfigOpen] = useState(true);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const hlsRef = useRef<Hls | null>(null);
@@ -75,7 +76,6 @@ export default function App() {
   const epgFileRef = useRef<HTMLInputElement>(null);
   const listParentRef = useRef<HTMLDivElement>(null);
 
-  // persist URLs
   useEffect(() => { try { localStorage.setItem("iptv_m3u", m3uUrl); } catch {} }, [m3uUrl]);
   useEffect(() => { try { localStorage.setItem("iptv_epg", epgUrl); } catch {} }, [epgUrl]);
 
@@ -89,7 +89,7 @@ export default function App() {
     const count = Object.keys(parsed.programs).length;
     if (count === 0) throw new Error("No EPG data found");
     setEpg(parsed);
-    setEpgStatus(`${count} channels loaded`);
+    setEpgStatus(`${count} EPG channels`);
   }, []);
 
   const loadPlaylist = useCallback(async () => {
@@ -166,14 +166,8 @@ export default function App() {
     const video = videoRef.current;
     if (!video || !activeChannel) return;
 
-    if (hlsRef.current) {
-      hlsRef.current.destroy();
-      hlsRef.current = null;
-    }
-    if (mpegtsRef.current) {
-      mpegtsRef.current.destroy();
-      mpegtsRef.current = null;
-    }
+    if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null; }
+    if (mpegtsRef.current) { mpegtsRef.current.destroy(); mpegtsRef.current = null; }
 
     const url = activeChannel.url;
     const isHLS = url.includes(".m3u8");
@@ -189,11 +183,7 @@ export default function App() {
       video.src = url;
       video.play().catch(() => {});
     } else if (isTS && mpegts.isSupported()) {
-      const player = mpegts.createPlayer({
-        type: "mpegts",
-        isLive: true,
-        url,
-      });
+      const player = mpegts.createPlayer({ type: "mpegts", isLive: true, url });
       player.attachMediaElement(video);
       player.load();
       player.play();
@@ -204,14 +194,8 @@ export default function App() {
     }
 
     return () => {
-      if (hlsRef.current) {
-        hlsRef.current.destroy();
-        hlsRef.current = null;
-      }
-      if (mpegtsRef.current) {
-        mpegtsRef.current.destroy();
-        mpegtsRef.current = null;
-      }
+      if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null; }
+      if (mpegtsRef.current) { mpegtsRef.current.destroy(); mpegtsRef.current = null; }
     };
   }, [activeChannel]);
 
@@ -247,76 +231,96 @@ export default function App() {
   return (
     <div className="app">
       <aside className="sidebar">
-        <h1 className="logo">IPTV Preview</h1>
-
-        <div className="input-group">
-          <label>M3U Playlist URL or File</label>
-          <div className="input-row">
-            <input
-              type="url"
-              placeholder="https://example.com/playlist.m3u"
-              value={m3uUrl}
-              onChange={(e) => setM3uUrl(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && loadPlaylist()}
-            />
-            <button onClick={loadPlaylist} disabled={loading}>
-              {loading ? "..." : "Load"}
-            </button>
-            <button
-              className="file-btn"
-              onClick={() => m3uFileRef.current?.click()}
-              disabled={loading}
-            >
-              File
-            </button>
-            <input ref={m3uFileRef} type="file" accept=".m3u,.m3u8" onChange={handleM3uFile} hidden />
-          </div>
+        <div className="sidebar-header">
+          <span className="logo">
+            <span className="logo-accent">IPTV</span> Preview
+          </span>
+          {channels.length > 0 && (
+            <span className="channel-count">
+              {channels.length.toLocaleString()} ch
+            </span>
+          )}
         </div>
 
-        <div className="input-group">
-          <label>EPG URL or File (optional)</label>
-          <div className="input-row">
-            <input
-              type="url"
-              placeholder="https://example.com/epg.xml"
-              value={epgUrl}
-              onChange={(e) => setEpgUrl(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && loadEPG()}
-            />
-            <button onClick={loadEPG} disabled={epgLoading}>
-              {epgLoading ? "..." : "Load"}
-            </button>
-            <button
-              className="file-btn"
-              onClick={() => epgFileRef.current?.click()}
-              disabled={epgLoading}
-            >
-              File
-            </button>
-            <input ref={epgFileRef} type="file" accept=".xml,.xml.gz,.gz" onChange={handleEpgFile} hidden />
-          </div>
-          {epgStatus && <div className="epg-status">{epgStatus}</div>}
+        <div className="config-panel">
+          <button
+            className="config-toggle"
+            data-open={configOpen}
+            onClick={() => setConfigOpen(!configOpen)}
+          >
+            <svg width="8" height="8" viewBox="0 0 8 8" fill="currentColor">
+              <path d="M2 0l4 4-4 4z" />
+            </svg>
+            Sources
+          </button>
+
+          {configOpen && (
+            <div className="config-fields">
+              <div>
+                <div className="field-label">Playlist</div>
+                <div className="field-row">
+                  <input
+                    type="url"
+                    placeholder="M3U URL"
+                    value={m3uUrl}
+                    onChange={(e) => setM3uUrl(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && loadPlaylist()}
+                  />
+                  <button className="btn btn-primary" onClick={loadPlaylist} disabled={loading}>
+                    {loading ? "..." : "Load"}
+                  </button>
+                  <button className="btn btn-ghost" onClick={() => m3uFileRef.current?.click()} disabled={loading}>
+                    File
+                  </button>
+                  <input ref={m3uFileRef} type="file" accept=".m3u,.m3u8" onChange={handleM3uFile} hidden />
+                </div>
+              </div>
+
+              <div>
+                <div className="field-label">EPG Guide</div>
+                <div className="field-row">
+                  <input
+                    type="url"
+                    placeholder="XMLTV URL (.xml, .xml.gz)"
+                    value={epgUrl}
+                    onChange={(e) => setEpgUrl(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && loadEPG()}
+                  />
+                  <button className="btn btn-primary" onClick={loadEPG} disabled={epgLoading}>
+                    {epgLoading ? "..." : "Load"}
+                  </button>
+                  <button className="btn btn-ghost" onClick={() => epgFileRef.current?.click()} disabled={epgLoading}>
+                    File
+                  </button>
+                  <input ref={epgFileRef} type="file" accept=".xml,.xml.gz,.gz" onChange={handleEpgFile} hidden />
+                </div>
+                {epgStatus && <div className="status-line">{epgStatus}</div>}
+              </div>
+            </div>
+          )}
         </div>
 
-        {error && <div className="error">{error}</div>}
+        {error && <div className="error-line">{error}</div>}
 
         {channels.length > 0 && (
           <>
-            <input
-              type="text"
-              placeholder={`Search ${channels.length} channels...`}
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="search"
-            />
+            <div className="search-wrap">
+              <input
+                type="text"
+                placeholder={`Search ${filtered.length.toLocaleString()} channels...`}
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                className="search-input"
+              />
+            </div>
 
             {groups.length > 0 && (
-              <div className="groups">
+              <div className="groups-wrap">
                 <button
                   className={`group-tag ${selectedGroup === null ? "active" : ""}`}
                   onClick={() => setSelectedGroup(null)}
                 >
-                  All ({channels.length})
+                  All
                 </button>
                 {groups.map((g) => (
                   <button
@@ -388,14 +392,18 @@ export default function App() {
               <video ref={videoRef} controls autoPlay muted className="player" />
             </div>
             <div className="now-playing">
-              <div className="np-channel">
+              <div className="np-header">
                 {activeChannel.logo && (
                   <img src={activeChannel.logo} alt="" className="np-logo" />
                 )}
-                <h2>{activeChannel.name}</h2>
+                <span className="np-channel-name">{activeChannel.name}</span>
                 {activeChannel.group && (
-                  <span className="np-group">{activeChannel.group}</span>
+                  <span className="np-group-tag">{activeChannel.group}</span>
                 )}
+                <span className="np-live-badge">
+                  <span className="np-live-dot" />
+                  Live
+                </span>
               </div>
               {(() => {
                 const programs = findEPGForChannel(activeChannel, epg);
@@ -408,11 +416,11 @@ export default function App() {
                       <div className="np-label">Now</div>
                       <div className="np-title">{current.title}</div>
                       <div className="np-time">
-                        {formatTime(current.start)} - {formatTime(current.stop)}
+                        {formatTime(current.start)} — {formatTime(current.stop)}
                       </div>
-                      <div className="np-progress-bar">
+                      <div className="np-progress-track">
                         <div
-                          className="np-progress"
+                          className="np-progress-fill"
                           style={{ width: `${programProgress(current, nowMs)}%` }}
                         />
                       </div>
@@ -425,7 +433,7 @@ export default function App() {
                         <div className="np-label">Next</div>
                         <div className="np-title">{next.title}</div>
                         <div className="np-time">
-                          {formatTime(next.start)} - {formatTime(next.stop)}
+                          {formatTime(next.start)} — {formatTime(next.stop)}
                         </div>
                       </div>
                     )}
@@ -436,13 +444,15 @@ export default function App() {
           </>
         ) : (
           <div className="empty-state">
-            <div className="empty-icon">📡</div>
-            <h2>Load a playlist to get started</h2>
-            <p>
-              Paste an M3U URL in the sidebar and click Load.
-              <br />
-              Optionally add an EPG URL for program guide info.
-            </p>
+            <div className="empty-graphic">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                <rect x="2" y="7" width="20" height="15" rx="2" ry="2" />
+                <polyline points="17 2 12 7 7 2" />
+              </svg>
+            </div>
+            <h2>No channel selected</h2>
+            <p>Load a playlist from the sidebar, then select a channel to start watching.</p>
+            <div className="empty-hint">Supports M3U, XMLTV EPG, HLS &amp; MPEG-TS</div>
           </div>
         )}
       </main>

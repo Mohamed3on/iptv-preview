@@ -13,7 +13,9 @@ import {
 } from "./parsers";
 import "./App.css";
 
-const PROXY_BASE = "https://vercel-cors-proxy-nine.vercel.app/api?url=";
+const PROXY_BASE = import.meta.env.DEV
+  ? "/proxy?url="
+  : "https://vercel-cors-proxy-nine.vercel.app/api?url=";
 
 function rewriteGithubUrl(url: string): string {
   const m = url.match(/^https?:\/\/github\.com\/([^/]+)\/([^/]+)\/raw\/(.+)$/);
@@ -124,6 +126,11 @@ export default function App() {
       setEpgLoading(false);
     }
   }, [epgUrl, applyEPG]);
+
+  const loadAll = useCallback(() => {
+    loadPlaylist();
+    loadEPG();
+  }, [loadPlaylist, loadEPG]);
 
   const handleM3uFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -264,11 +271,8 @@ export default function App() {
                     placeholder="M3U URL"
                     value={m3uUrl}
                     onChange={(e) => setM3uUrl(e.target.value)}
-                    onKeyDown={(e) => e.key === "Enter" && loadPlaylist()}
+                    onKeyDown={(e) => e.key === "Enter" && loadAll()}
                   />
-                  <button className="btn btn-primary" onClick={loadPlaylist} disabled={loading}>
-                    {loading ? "..." : "Load"}
-                  </button>
                   <button className="btn btn-ghost" onClick={() => m3uFileRef.current?.click()} disabled={loading}>
                     File
                   </button>
@@ -284,11 +288,8 @@ export default function App() {
                     placeholder="XMLTV URL (.xml, .xml.gz)"
                     value={epgUrl}
                     onChange={(e) => setEpgUrl(e.target.value)}
-                    onKeyDown={(e) => e.key === "Enter" && loadEPG()}
+                    onKeyDown={(e) => e.key === "Enter" && loadAll()}
                   />
-                  <button className="btn btn-primary" onClick={loadEPG} disabled={epgLoading}>
-                    {epgLoading ? "..." : "Load"}
-                  </button>
                   <button className="btn btn-ghost" onClick={() => epgFileRef.current?.click()} disabled={epgLoading}>
                     File
                   </button>
@@ -296,6 +297,10 @@ export default function App() {
                 </div>
                 {epgStatus && <div className="status-line">{epgStatus}</div>}
               </div>
+
+              <button className="btn btn-primary btn-load-all" onClick={loadAll} disabled={loading || epgLoading}>
+                {loading || epgLoading ? "Loading..." : "Load Sources"}
+              </button>
             </div>
           )}
         </div>

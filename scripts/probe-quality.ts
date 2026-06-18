@@ -11,10 +11,12 @@
 // probed, and flushes the cache to disk atomically every ~2s (and at the end), so
 // killing it mid-run never costs more than a couple seconds of work.
 //
-// REFRESH MODE (`refresh` arg): re-probe everything in scope (not just unprobed),
-// retry flaky feeds, and OVERWRITE a cached reading only when the new one is strictly
-// better (height, then fps). Monotonic — an idle/lower probe never downgrades a known
-// peak — so a periodic cron (e.g. GitHub Actions) converges each feed toward its best.
+// REFRESH MODE (`refresh` arg): re-probe ONLY feeds not yet confirmed at their marker
+// tier — those missing a reading, or cached BELOW their stated quality (e.g. a "4K" feed
+// reading 1080p, probably idle and may return higher). Feeds already at/above their
+// marker are left alone — nothing to gain. Retry flaky feeds; OVERWRITE a cached reading
+// only when strictly better (height, then fps) — monotonic, so an idle/lower probe never
+// downgrades a known peak. A periodic cron (GitHub Actions) thus cheaply chases the gaps.
 //
 // Usage: bun scripts/probe-quality.ts [concurrency] [refresh]   (creds from env or .env.local)
 import { configFromEnv, fetchCuratedChannels } from '../api/_lib.js'
@@ -39,9 +41,16 @@ let cache: Record<string, Meta | null> = {}
 try { cache = { ...(await import('../api/quality-cache.ts')).QUALITY } } catch { /* fresh run */ }
 
 const channels = await fetchCuratedChannels(cfg)
-const targets = channels.filter(
-  (c) => !c.isEventSlot && !c.vodExt && (c.q ?? 0) >= 4 && (REFRESH || !(c.streamId in cache)),
-)
+// A feed "matches its marker" when its real height reaches the tier's nominal resolution.
+const nominalH = (q: number) => (q >= 5 ? 2160 : q >= 4 ? 1080 : q >= 3 ? 720 : 0)
+const targets = channels.filter((c) => {
+  if (c.isEventSlot || c.vodExt || (c.q ?? 0) < 4) return false
+  if (!REFRESH) return !(c.streamId in cache)
+  // Refresh: skip feeds already confirmed at/above their stated tier; chase only the
+  // missing or under-performing ones (a "4K" feed stuck at 1080p is likely just idle).
+  const m = cache[c.streamId]
+  return !m || m.h < nominalH(c.q ?? 0)
+})
 const byId = new Map(targets.map((c) => [c.streamId, c.name]))
 const ids = [...byId.keys()]
 

@@ -172,6 +172,14 @@ export function languageRank(s: string): number {
   return 3
 }
 
+// Tie-break at equal quality + language: demote US feeds (Mohamed prefers UK over US).
+// ONLY US is moved — UK and everything else (beIN, ES, FR…) stay at 0, so no feed is
+// pushed above another non-US one (an earlier version wrongly sank beIN below UK too).
+// US tags appear as a prefix ("US: FOX") or a parenthetical ("4K-WC: (US) FOX").
+function regionPref(s: string): number {
+  return /^US\b/i.test(s) || /\(US\)/i.test(s) ? 1 : 0
+}
+
 // Quality from name markers (the API has no real res/fps metadata).
 // 0 = explicit SD/LQ -> dropped. Higher = listed first within each bucket.
 // Channel-name markers win; group name is the fallback for unmarked channels.
@@ -193,12 +201,18 @@ function qualityScore(channelName: string, groupName: string): number {
 
 // Resolution/fps used to order feeds WITHIN a marker tier (the marker sets the tier).
 // Probed value when we have it — so the genuinely-highest-res stream floats up — else
-// the marker's NOMINAL resolution, so a "4K" feed caught idle or unprobed (PPV slots,
-// no-signal at probe time) is trusted at 4K, not buried under a verified lower-res feed.
-function realRes(streamId: number, markerQ: number): { h: number; fps: number } {
+// the marker's NOMINAL resolution, so a "4K" feed unprobed or no-signal at probe time
+// is trusted at 4K, not buried under a verified lower-res feed.
+//
+// trustMarker (event/World-Cup feeds): these idle or show low-res filler between
+// matches, so a probe BELOW the marker is that filler, not the feed's live quality —
+// fall back to the nominal tier (fps unknown) instead of demoting it. A probe AT/ABOVE
+// the marker is genuine live quality and is always kept.
+function realRes(streamId: number, markerQ: number, trustMarker: boolean): { h: number; fps: number } {
+  const nominal = markerQ >= 5 ? 2160 : markerQ === 4 ? 1080 : markerQ === 3 ? 720 : markerQ === 2 ? 540 : 360
   const m = QUALITY[String(streamId)]
-  if (m) return { h: m.h, fps: m.fps }
-  return { h: markerQ >= 5 ? 2160 : markerQ === 4 ? 1080 : markerQ === 3 ? 720 : markerQ === 2 ? 540 : 360, fps: 0 }
+  if (m && !(trustMarker && m.h < nominal)) return { h: m.h, fps: m.fps }
+  return { h: nominal, fps: 0 }
 }
 
 export interface XtreamConfig {
@@ -281,6 +295,18 @@ function dedupeKey(name: string, tier?: number): string {
   return tier === undefined ? cleaned : `${cleaned}|${tier}`
 }
 
+// Sort key that keeps a channel's parallel feeds together and in sequence (FOX 1/2,
+// 4K 1/2/3) when their quality ties, instead of letting them scatter. Strips the
+// region prefix, non-ascii markers and quality words; compared with localeCompare
+// {numeric} so "2" sorts before "10".
+const nameKey = (s: string): string =>
+  s.replace(/^(8K|UK|US|DE|ES|IT|AR|FR|TK|BE|M|F)[:|]\s*/i, '')
+    .replace(/[^\x00-\x7F]/g, ' ')
+    .replace(/\b(8k|4k|uhd|fhd|hd|sd|raw|hevc|vip)\b/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase()
+
 async function apiGet<T>(cfg: XtreamConfig, action: string): Promise<T> {
   const url = `${cfg.host}/player_api.php?username=${cfg.user}&password=${cfg.pass}&action=${action}`
   const resp = await fetch(url, { headers: { 'User-Agent': 'VLC/3.0.18' } })
@@ -350,7 +376,7 @@ export async function fetchCuratedChannels(cfg: XtreamConfig): Promise<Channel[]
     .filter(([id, name]) => !keepSet.has(id) && autoIncluded(name))
     .map(([id]) => id)
 
-  type Item = { c: Channel; q: number; rh: number; rf: number; lang: number; backup: number; bein: number; idx: number }
+  type Item = { c: Channel; q: number; rh: number; rf: number; lang: number; region: number; backup: number; bein: number; nkey: string; idx: number }
   const byBucket = new Map<string, Item[]>()
 
   const ids = [...KEEP, ...autoIds]
@@ -359,6 +385,10 @@ export async function fetchCuratedChannels(cfg: XtreamConfig): Promise<Channel[]
     if (!group) continue
     const bucket = CAT_BUCKET[id] ?? bucketForCategory(group)
     const isEventSlot = EVENT_GROUP.test(group)
+    // Event/World-Cup feeds idle between matches; trust their marker over a low idle
+    // probe so they aren't buried while off-air (see realRes). The WC bucket holds
+    // such feeds whose category name doesn't say PPV/EVENT (e.g. "UHD 3840P").
+    const trustMarker = isEventSlot || bucket === B.wc
     const backup = BACKUP_GROUP.test(group) ? 1 : 0
     for (const s of byCat.get(id) ?? []) {
       const name = String(s.name ?? '').trim()
@@ -366,14 +396,16 @@ export async function fetchCuratedChannels(cfg: XtreamConfig): Promise<Channel[]
       if (isEventSlot && DEAD_SLOT.test(name)) continue
       const q = qualityScore(name, group)
       if (q === 0) continue // explicit SD/LQ feeds
-      const { h: rh, fps: rf } = realRes(s.stream_id, q)
+      const { h: rh, fps: rf } = realRes(s.stream_id, q, trustMarker)
       const item: Item = {
         q,
         rh,
         rf,
         lang: languageRank(name),
+        region: regionPref(name),
         backup,
         bein: BEIN.test(name) ? 0 : 1,
+        nkey: nameKey(name),
         idx,
         c: {
           streamId: s.stream_id,
@@ -399,13 +431,15 @@ export async function fetchCuratedChannels(cfg: XtreamConfig): Promise<Channel[]
     // beIN first in the Arabic bucket, then by MARKER tier (trust the provider's
     // UHD/RAW/HEVC/HD label so a "4K" feed caught idle or unprobed still ranks as 4K),
     // then REAL probed resolution/fps to order within the tier, language on ties,
-    // primaries before backups, stable otherwise
+    // US demoted below UK on a further tie, primaries before backups, then sibling
+    // feeds grouped + numbered (FOX 1/2, 4K 1/2/3) so equal-quality feeds don't scatter
     const isArabic = bucket === B.ar
     items.sort(
       (a, b) =>
         (isArabic ? a.bein - b.bein : 0) ||
         b.q - a.q || b.rh - a.rh || b.rf - a.rf ||
-        a.lang - b.lang || a.backup - b.backup || a.idx - b.idx,
+        a.lang - b.lang || a.region - b.region || a.backup - b.backup ||
+        a.nkey.localeCompare(b.nkey, 'en', { numeric: true }) || a.idx - b.idx,
     )
     const seen = new Map<string, number>()
     for (const it of items) {

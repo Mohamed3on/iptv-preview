@@ -29,6 +29,80 @@ function attr(line: string, key: string): string | null {
   return m ? m[1] : null;
 }
 
+/** EPG URLs baked into the `#EXTM3U` header (`url-tvg` / `x-tvg-url`). */
+export function parseTvgUrls(text: string): string[] {
+  const header = text.split("\n", 1)[0] ?? "";
+  const raw = attr(header, "url-tvg") || attr(header, "x-tvg-url");
+  if (!raw) return [];
+  return raw
+    .split(",")
+    .map((u) => u.trim())
+    .filter(Boolean);
+}
+
+export interface M3UCredentials {
+  host: string;
+  username: string;
+  password: string;
+}
+
+/** Extract Xtream-Codes host/username/password from an M3U URL or its stream URLs. */
+export function extractCredentials(
+  m3uUrl: string,
+  channels: Channel[]
+): M3UCredentials | undefined {
+  const fromQuery = credsFromQuery(m3uUrl);
+  if (fromQuery) return fromQuery;
+
+  // Fallback for uploaded files: trust path-derived creds only when several
+  // channels agree — every Xtream entry shares the same username/password.
+  const tally = new Map<string, { creds: M3UCredentials; count: number }>();
+  for (const ch of channels.slice(0, 50)) {
+    const creds = credsFromPath(ch.url);
+    if (!creds) continue;
+    const key = `${creds.host}/${creds.username}/${creds.password}`;
+    const seen = tally.get(key);
+    if (seen) seen.count++;
+    else tally.set(key, { creds, count: 1 });
+  }
+  for (const { creds, count } of tally.values()) {
+    if (count >= 3) return creds;
+  }
+  return undefined;
+}
+
+/** get.php-style URL with ?username=…&password=… query params */
+function credsFromQuery(raw: string): M3UCredentials | undefined {
+  try {
+    const u = new URL(raw);
+    const username = u.searchParams.get("username");
+    const password = u.searchParams.get("password");
+    if (username && password) return { host: u.host, username, password };
+  } catch {
+    /* not a valid URL */
+  }
+  return undefined;
+}
+
+/** Xtream stream URL: …/[live|movie|series/]USER/PASS/STREAM_ID[.ext] */
+function credsFromPath(raw: string): M3UCredentials | undefined {
+  try {
+    const u = new URL(raw);
+    const segs = u.pathname.split("/").filter(Boolean);
+    if (segs.length < 3) return undefined;
+    const streamId = segs[segs.length - 1].replace(/\.[a-z0-9]+$/i, "");
+    if (!/^\d+$/.test(streamId)) return undefined; // not an Xtream stream id
+    return {
+      host: u.host,
+      username: segs[segs.length - 3],
+      password: segs[segs.length - 2],
+    };
+  } catch {
+    /* not a valid URL */
+  }
+  return undefined;
+}
+
 export function parseEPGInWorker(xml: string): Promise<EPGData> {
   return new Promise((resolve, reject) => {
     const worker = new Worker(

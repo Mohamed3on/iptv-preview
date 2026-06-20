@@ -3,7 +3,9 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import Hls from "hls.js";
 import mpegts from "mpegts.js";
 import {
+  Check,
   ChevronRight,
+  Copy,
   Loader2,
   Monitor,
   Search,
@@ -12,12 +14,15 @@ import {
 import type { Channel, EPGData } from "./types";
 import {
   parseM3U,
+  parseTvgUrls,
+  extractCredentials,
   parseEPGInWorker,
   findEPGForChannel,
   getCurrentProgram,
   getNextProgram,
   programProgress,
 } from "./parsers";
+import { getCachedEpg, setCachedEpg, epgSourceKey } from "./epgCache";
 
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -39,7 +44,7 @@ import { Toggle } from "@/components/ui/toggle";
 
 const PROXY_BASE = import.meta.env.DEV
   ? "/proxy?url="
-  : "https://vercel-cors-proxy-nine.vercel.app/api?url=";
+  : "/api/proxy?url=";
 
 function rewriteGithubUrl(url: string): string {
   const m = url.match(
@@ -59,13 +64,17 @@ async function fetchWithProxy(url: string): Promise<Response> {
 
 async function fetchText(url: string): Promise<string> {
   const res = await fetchWithProxy(url);
-  if (url.endsWith(".gz")) {
-    const decompressed = res.body!.pipeThrough(
+  const buf = new Uint8Array(await res.arrayBuffer());
+  // Detect gzip by magic bytes (1f 8b), since EPG URLs often serve gzip
+  // without a .gz extension (e.g. myepg.top download links).
+  const isGzip = buf[0] === 0x1f && buf[1] === 0x8b;
+  if (isGzip) {
+    const stream = new Response(buf).body!.pipeThrough(
       new DecompressionStream("gzip")
     );
-    return new Response(decompressed).text();
+    return new Response(stream).text();
   }
-  return res.text();
+  return new TextDecoder().decode(buf);
 }
 
 function readFileAsText(file: File): Promise<string> {
@@ -94,6 +103,44 @@ function loadSaved(key: string, fallback: string) {
 }
 
 const EMPTY_EPG: EPGData = { programs: {}, aliases: {} };
+const EPG_TTL_MS = 6 * 60 * 60 * 1000; // refresh the cached guide every 6h
+
+function CredRow({ label, value }: { label: string; value: string }) {
+  const [copied, setCopied] = useState(false);
+
+  function copy() {
+    navigator.clipboard
+      .writeText(value)
+      .then(() => {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 1200);
+      })
+      .catch(() => {});
+  }
+
+  return (
+    <div className="flex items-center gap-2 border-b border-border px-2.5 py-1.5 last:border-b-0">
+      <span className="w-10 shrink-0 text-[9px] font-semibold uppercase tracking-widest text-muted-foreground">
+        {label}
+      </span>
+      <span className="min-w-0 flex-1 break-all font-mono text-[11px] text-foreground">
+        {value}
+      </span>
+      <button
+        type="button"
+        onClick={copy}
+        title={`Copy ${label}`}
+        className="shrink-0 text-muted-foreground transition-colors hover:text-amber"
+      >
+        {copied ? (
+          <Check className="size-3 text-amber" />
+        ) : (
+          <Copy className="size-3" />
+        )}
+      </button>
+    </div>
+  );
+}
 
 export default function App() {
   const [m3uUrl, setM3uUrl] = useState(() => loadSaved("iptv_m3u", ""));
@@ -152,6 +199,68 @@ export default function App() {
     setEpgStatus(`${count} EPG channels`);
   }, []);
 
+  // Load one or more XMLTV URLs and merge them into a single EPG, backed by an
+  // IndexedDB cache so subsequent loads are instant (TiviMate-style).
+  const loadEpgFrom = useCallback(
+    async (urls: string[]) => {
+      // Drop only exact-duplicate URLs. Distinct myepg links (same
+      // download_file, different key) are DIFFERENT guides — keep them all.
+      const seen = new Set<string>();
+      const unique = urls.filter((u) => {
+        const key = epgSourceKey(u);
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+      const cacheKey = unique.map(epgSourceKey).sort().join("|");
+
+      // Serve fresh cache instantly.
+      const cached = await getCachedEpg(cacheKey);
+      const age = cached ? Date.now() - cached.at : Infinity;
+      if (cached && age < EPG_TTL_MS) {
+        setEpg(cached.epg);
+        setEpgStatus(
+          `${Object.keys(cached.epg.programs).length} EPG channels (cached)`
+        );
+        return;
+      }
+
+      // Parse one guide at a time and merge, so peak memory stays bounded even
+      // with several large (100MB+) files.
+      const merged: EPGData = { programs: {}, aliases: {} };
+      for (let i = 0; i < unique.length; i++) {
+        setEpgStatus(
+          unique.length > 1
+            ? `Loading guide… (${i + 1}/${unique.length})`
+            : "Loading guide…"
+        );
+        try {
+          const d = await parseEPGInWorker(await fetchText(unique[i]));
+          Object.assign(merged.programs, d.programs);
+          Object.assign(merged.aliases, d.aliases);
+        } catch {
+          /* skip a source that fails to fetch/parse */
+        }
+      }
+      const count = Object.keys(merged.programs).length;
+      if (count === 0) {
+        // Fall back to a stale cache rather than showing nothing.
+        if (cached) {
+          setEpg(cached.epg);
+          setEpgStatus(
+            `${Object.keys(cached.epg.programs).length} EPG channels (cached)`
+          );
+          return;
+        }
+        throw new Error("No EPG data found");
+      }
+      setEpg(merged);
+      setEpgStatus(`${count} EPG channels`);
+      void setCachedEpg(cacheKey, { at: Date.now(), epg: merged });
+    },
+    []
+  );
+
   const loadPlaylist = useCallback(async () => {
     if (!m3uUrl.trim()) return;
     setLoading(true);
@@ -164,27 +273,36 @@ export default function App() {
       setChannels(parsed);
       setSelectedGroup(null);
       setActiveChannel(null);
+      // Auto-load EPG baked into the playlist header unless a manual EPG is set.
+      if (!epgUrl.trim()) {
+        const tvgUrls = parseTvgUrls(text);
+        if (tvgUrls.length > 0) {
+          setEpgLoading(true);
+          loadEpgFrom(tvgUrls)
+            .catch(() => setEpgStatus(""))
+            .finally(() => setEpgLoading(false));
+        }
+      }
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Failed to load playlist");
     } finally {
       setLoading(false);
     }
-  }, [m3uUrl]);
+  }, [m3uUrl, epgUrl, loadEpgFrom]);
 
   const loadEPG = useCallback(async () => {
     if (!epgUrl.trim()) return;
     setEpgLoading(true);
     setError("");
     try {
-      const text = await fetchText(epgUrl.trim());
-      await applyEPG(text);
+      await loadEpgFrom([epgUrl.trim()]);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Failed to load EPG");
       setEpgStatus("");
     } finally {
       setEpgLoading(false);
     }
-  }, [epgUrl, applyEPG]);
+  }, [epgUrl, loadEpgFrom]);
 
   const loadAll = useCallback(() => {
     loadPlaylist();
@@ -287,6 +405,11 @@ export default function App() {
     };
   }, [activeChannel]);
 
+  const credentials = useMemo(
+    () => extractCredentials(m3uUrl, channels),
+    [m3uUrl, channels]
+  );
+
   const groups = useMemo(
     () =>
       [
@@ -307,10 +430,24 @@ export default function App() {
     const s = search.toLowerCase();
     return channels.filter((c) => {
       if (selectedGroup && c.group !== selectedGroup) return false;
-      if (s && !c.name.toLowerCase().includes(s)) return false;
-      return true;
+      if (!s) return true;
+      if (c.name.toLowerCase().includes(s)) return true;
+      if (c.group?.toLowerCase().includes(s)) return true;
+      // Also match what's on now / up next in the guide.
+      const programs = findEPGForChannel(c, epg);
+      if (programs) {
+        for (const p of [
+          getCurrentProgram(programs, nowMs),
+          getNextProgram(programs, nowMs),
+        ]) {
+          if (!p) continue;
+          if (p.title.toLowerCase().includes(s)) return true;
+          if (p.description?.toLowerCase().includes(s)) return true;
+        }
+      }
+      return false;
     });
-  }, [channels, selectedGroup, search]);
+  }, [channels, selectedGroup, search, epg, nowMs]);
 
   const virtualizer = useVirtualizer({
     count: filtered.length,
@@ -386,6 +523,20 @@ export default function App() {
               />
             </div>
 
+            {/* Connection (debug) */}
+            {credentials && (
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-semibold tracking-widest text-muted-foreground uppercase">
+                  Connection
+                </label>
+                <div className="overflow-hidden rounded-md border border-border bg-surface-2">
+                  <CredRow label="Host" value={credentials.host} />
+                  <CredRow label="User" value={credentials.username} />
+                  <CredRow label="Pass" value={credentials.password} />
+                </div>
+              </div>
+            )}
+
             {/* EPG field */}
             <div className="space-y-1.5">
               <label className="text-[10px] font-semibold tracking-widest text-muted-foreground uppercase">
@@ -452,12 +603,22 @@ export default function App() {
                 </InputGroupAddon>
                 <InputGroupInput
                   type="text"
-                  placeholder={`Search ${filtered.length.toLocaleString()} channels...`}
+                  placeholder={
+                    Object.keys(epg.programs).length > 0
+                      ? `Search ${filtered.length.toLocaleString()} channels or what's on…`
+                      : `Search ${filtered.length.toLocaleString()} channels...`
+                  }
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
                   className="text-[13px]"
                 />
               </InputGroup>
+              {(epgLoading || epgStatus) && (
+                <p className="mt-1.5 flex items-center gap-1.5 font-mono text-[10px] tracking-wide text-amber-dim">
+                  {epgLoading && <Loader2 className="size-3 animate-spin" />}
+                  {epgLoading ? "Loading guide…" : epgStatus}
+                </p>
+              )}
             </div>
 
             {/* Group tags */}

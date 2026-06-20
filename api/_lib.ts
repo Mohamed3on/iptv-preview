@@ -99,6 +99,9 @@ export const KEEP: number[] = [
   105,  // AR| KIDS 4K
   42,   // ES| INFANTIL VIP
   334,  // DE| KIDS HD/4K
+  // US 24/7 single-show loop channels (cartoon marathons + kids/family)
+  2063, // US| 24/7 CARTOON RAW 60fps
+  2064, // US| 24/7 KIDS/FAMILY RAW 60fps
 ]
 
 // Viewer-facing buckets, in display order.
@@ -122,6 +125,8 @@ const B = {
   kidsEs: '🧒 Kids — Spanish',
   kidsDe: '🧒 Kids — German',
   kidsRu: '🧒 Kids — Russian',
+  cartoon247: '📺 24/7 Cartoons',
+  kidsFamily247: '📺 24/7 Kids & Family',
 } as const
 const BUCKET_ORDER: string[] = Object.values(B)
 
@@ -145,6 +150,7 @@ const CAT_BUCKET: Record<number, string> = {
   1139: B.ufc, 929: B.ufc, 903: B.ufc, 380: B.ufc,
   6: B.ru,
   304: B.kidsEn, 490: B.kidsEn, 105: B.kidsAr, 42: B.kidsEs, 334: B.kidsDe,
+  2063: B.cartoon247, 2064: B.kidsFamily247,
 }
 
 // Bucket for categories not in CAT_BUCKET (i.e. auto-included new ones).

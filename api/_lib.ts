@@ -2,6 +2,9 @@
 // Curation: KEEP ids + auto-include rules -> mapped into viewer-friendly
 // BUCKETS; channels quality-sorted (FHD+ first), language as tie-break
 // (EN > AR > DE/ES), dead PPV slots dropped, catch-up flags passed through.
+// UFC PPV replays + the provider's 4K/UHD movie libraries (all languages) are
+// appended as on-demand VOD entries. Live kids channels (EN/US/AR/ES/DE, plus
+// Russian kids pulled by name from the general RU category) get their own buckets.
 // Credentials come from env (XTREAM_HOST, XTREAM_USER, XTREAM_PASS, PLAYLIST_TOKEN).
 
 // Real probed video quality (height/fps) keyed by streamId, so buckets sort by
@@ -89,6 +92,13 @@ export const KEEP: number[] = [
   457,  // IT| AMAZON PRIME PPV (UCL)
   // Russian channels (general entertainment, isolated in their own group)
   6,    // RU| RUSSIAN HD/4K
+  // Kids (live) — one provider category per language. There's no dedicated RU kids
+  // category, so Russian kids are pulled by name out of category 6 (see RU_KIDS).
+  304,  // UK| KIDS HD/RAW (English)
+  490,  // US| KIDS HD/RAW 60fps (English)
+  105,  // AR| KIDS 4K
+  42,   // ES| INFANTIL VIP
+  334,  // DE| KIDS HD/4K
 ]
 
 // Viewer-facing buckets, in display order.
@@ -107,6 +117,11 @@ const B = {
   ufc: '🥊 UFC & Fight PPV',
   ufcVod: '🎬 UFC PPV Replays (VOD)',
   ru: '🇷🇺 Russian Channels',
+  kidsEn: '🧒 Kids — English',
+  kidsAr: '🧒 Kids — Arabic',
+  kidsEs: '🧒 Kids — Spanish',
+  kidsDe: '🧒 Kids — German',
+  kidsRu: '🧒 Kids — Russian',
 } as const
 const BUCKET_ORDER: string[] = Object.values(B)
 
@@ -129,6 +144,7 @@ const CAT_BUCKET: Record<number, string> = {
   2334: B.tennis, 1429: B.tennis, 1096: B.tennis, 1927: B.tennis,
   1139: B.ufc, 929: B.ufc, 903: B.ufc, 380: B.ufc,
   6: B.ru,
+  304: B.kidsEn, 490: B.kidsEn, 105: B.kidsAr, 42: B.kidsEs, 334: B.kidsDe,
 }
 
 // Bucket for categories not in CAT_BUCKET (i.e. auto-included new ones).
@@ -279,6 +295,9 @@ const BEIN = /bein/i
 // every feed (probed) despite a "RAW" tag on its World Cup stream, and BBC/ITV
 // RAW (true 1080p50) already cover English WC, so SBS adds nothing at quality.
 const DROP_CHANNEL = /^AU:\s*SBS\b/i
+// Russian kids channels (Nick/Cartoon Network/Disney) sit in the general RU
+// category — no dedicated RU kids category exists — so route them out by name.
+const RU_KIDS = /nick|cartoon\s*network|disney\s*(?:channel|jr|junior|xd)|карусел|мульт|малыш/i
 
 // Dedupe key: same cleaned name (+ quality tier, when given) counts as a dup.
 // Leading region/feed-family labels (TK/BE/M/F = StarzPlay feed variants) and
@@ -355,14 +374,68 @@ function ufcReplays(vod: VodStream[]): Channel[] {
   return out
 }
 
+// --- 4K/UHD movies (VOD) ---------------------------------------------------
+// The provider marks movie quality on the CATEGORY name, not per title, using
+// superscript tags (⁴ᴷ ³⁸⁴⁰ᴾ), plain 4K/3840/UHD, or Arabic فائقة الوضوح
+// ("ultra-HD"). We pull every such category — all languages — as on-demand VOD
+// so the playlist gains a clean, browsable 4K film library beside the sports.
+const MOVIE_4K = /⁴ᴷ|³⁸⁴⁰|\b4K\b|3840|\bUHD\b|2160|فائقة الوضوح/i
+
+// Decorative Unicode the provider uses for those tags (superscript digits +
+// modifier letters: ⁴ᴷ ³⁸⁴⁰ᴾ ᴰᴼᴸᴮʸ ᴬᵁᴰᴵᴼ ⱽᴵˢᴵᴼᴺ ᴴᴰᴿ) — stripped for clean names.
+const SUPER = /[²³¹⁰-₟ᴬ-ᵪʰ-˿ᶜ-ᶿⱽ]+/g
+
+// Category name -> clean group label, e.g.
+// "NETFLIX MOVIES ⁴ᴷ ³⁸⁴⁰ᴾ ᴰᵒˡᵇʸ ⱽᶦˢᶦᵒⁿ" -> "🎬 NETFLIX MOVIES 4K".
+function movieGroup(cat: string): string {
+  const base = cat
+    .replace(SUPER, ' ')
+    .replace(/\b(3840p?|dolby|audio|visi[oó]n|hdr|multi(?:-subs)?)\b/gi, ' ')
+    .replace(/فائقة الوضوح/g, ' ')
+    .replace(/(?<=^|\s)[A-ZÀ-Þ](?=\s|$)/g, ' ') // stray leftover capital (e.g. Ó from VISIÓN)
+    .replace(/\(\s*\)/g, ' ')
+    .replace(/\b4k\b/gi, ' ')
+    .replace(/[-–]\s*$/, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+  return `🎬 ${base} 4K`
+}
+
+// Strip the provider's "4K-EN - " / "4K-D+ - " title prefix for clean, sortable names.
+const MOVIE_PREFIX = /^4K-[A-Z0-9+]{1,5}\s*-\s*/i
+
+// Every movie in a 4K-marked category, as on-demand VOD (served from /movie/).
+// No tvg-id, so buildEventEpg gives them no (bogus) EPG row.
+function movie4kChannels(vod: VodStream[], catName: Map<number, string>): Channel[] {
+  const out: Channel[] = []
+  for (const s of vod) {
+    const cat = catName.get(Number(s.category_id))
+    if (!cat || !MOVIE_4K.test(cat)) continue
+    const name = String(s.name ?? '').replace(MOVIE_PREFIX, '').trim()
+    if (!name || SEPARATOR.test(name)) continue
+    out.push({
+      streamId: s.stream_id,
+      name,
+      logo: String(s.stream_icon ?? ''),
+      tvgId: '',
+      group: movieGroup(cat),
+      isEventSlot: false,
+      vodExt: s.container_extension || 'mp4',
+    })
+  }
+  return out
+}
+
 /** Fetch + filter provider channels into ordered, quality-sorted buckets. */
 export async function fetchCuratedChannels(cfg: XtreamConfig): Promise<Channel[]> {
-  const [cats, streams, vod] = await Promise.all([
+  const [cats, streams, vod, vodCats] = await Promise.all([
     apiGet<Category[]>(cfg, 'get_live_categories'),
     apiGet<Stream[]>(cfg, 'get_live_streams'),
     apiGet<VodStream[]>(cfg, 'get_vod_streams'),
+    apiGet<Category[]>(cfg, 'get_vod_categories'),
   ])
   const catName = new Map(cats.map((c) => [Number(c.category_id), c.category_name]))
+  const vodCatName = new Map(vodCats.map((c) => [Number(c.category_id), c.category_name]))
   const byCat = new Map<number, Stream[]>()
   for (const s of streams) {
     const id = Number(s.category_id)
@@ -396,6 +469,8 @@ export async function fetchCuratedChannels(cfg: XtreamConfig): Promise<Channel[]
       if (isEventSlot && DEAD_SLOT.test(name)) continue
       const q = qualityScore(name, group)
       if (q === 0) continue // explicit SD/LQ feeds
+      // Russian kids channels ride in the general RU category — route them to the kids group.
+      const chBucket = id === 6 && RU_KIDS.test(name) ? B.kidsRu : bucket
       const { h: rh, fps: rf } = realRes(s.stream_id, q, trustMarker)
       const item: Item = {
         q,
@@ -413,14 +488,14 @@ export async function fetchCuratedChannels(cfg: XtreamConfig): Promise<Channel[]
           logo: String(s.stream_icon ?? ''),
           // Event slots get a synthetic id served by /api/epg; others use provider EPG ids
           tvgId: isEventSlot ? `ppv.${s.stream_id}` : String(s.epg_channel_id ?? ''),
-          group: bucket,
+          group: chBucket,
           isEventSlot,
           q,
         },
       }
-      const list = byBucket.get(bucket)
+      const list = byBucket.get(chBucket)
       if (list) list.push(item)
-      else byBucket.set(bucket, [item])
+      else byBucket.set(chBucket, [item])
     }
   }
 
@@ -470,8 +545,10 @@ export async function fetchCuratedChannels(cfg: XtreamConfig): Promise<Channel[]
     c.tvgId = sibId.get(sibKey(c)) ?? `sx.${c.streamId}`
   }
 
-  // On-demand UFC PPV replays (appended after the live, EPG-tagged channels).
+  // On-demand UFC PPV replays + the 4K movie library (appended after the live,
+  // EPG-tagged channels; both are VOD with no tvg-id, so they get no EPG row).
   channels.push(...ufcReplays(vod))
+  channels.push(...movie4kChannels(vod, vodCatName))
   return channels
 }
 

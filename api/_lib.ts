@@ -536,19 +536,29 @@ export async function fetchCuratedChannels(cfg: XtreamConfig): Promise<Channel[]
 
   // Mint stable synthetic tvg-ids for channels the provider left untagged, so they
   // can still carry EPG in TiviMate (which maps EPG to channels by id only). Prefer
-  // an HD-twin's id (same region + name) so UHD/dup feeds share its guide; else a
-  // per-stream id. Identical-name myepg matches then attach to these; the country
-  // guard can't misfire on them (synthetic ids have no country suffix).
-  const sibKey = (c: Channel) => regionPrefix(c.name) + '|' + epgExactNorm(c.name)
+  // a twin's id so duplicate feeds share its guide; else a per-stream id. Identical-
+  // name myepg matches then attach to these; the country guard can't misfire on them
+  // (synthetic ids have no country suffix).
+  //
+  // Key by region + prefix-stripped name, so "DAZN 1" ES and UK stay distinct. But
+  // the World Cup ships each channel as many package×quality copies (DE/BE/VIP ×
+  // UHD/RAW/HD) the provider rarely tags — there, key by core name alone so every
+  // copy collapses onto ONE id: a real-broadcaster-id twin if one exists (lighting
+  // up the 4K BBC/FOX/M6 mirrors), else the first copy's minted id (so the
+  // FUSSBALL.TV/beIN MAX copies all share whichever one myepg actually carries).
+  const sibKey = (c: Channel) =>
+    c.group === B.wc ? epgEventCore(c.name) : `${regionPrefix(c.name)}|${epgExactNorm(c.name)}`
   const sibId = new Map<string, string>()
   for (const c of channels) {
     if (!isRegular(c)) continue
     const k = sibKey(c)
-    if (!sibId.has(k)) sibId.set(k, c.tvgId)
+    if (k && !sibId.has(k)) sibId.set(k, c.tvgId)
   }
   for (const c of channels) {
     if (c.isEventSlot || c.tvgId) continue
-    c.tvgId = sibId.get(sibKey(c)) ?? `sx.${c.streamId}`
+    const k = sibKey(c)
+    c.tvgId = (k && sibId.get(k)) || `sx.${c.streamId}`
+    if (k && !sibId.has(k)) sibId.set(k, c.tvgId)
   }
 
   // On-demand UFC PPV replays + the 4K movie library (appended after the live,
@@ -595,6 +605,13 @@ const epgFuzzyTokens = (ex: string) =>
 // is the same channel even if the country suffix differs (e.g. beIN FR uses .qa).
 const epgRawNorm = (s: string) =>
   s.toLowerCase().replace(/⚽/g, 'o').replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim()
+// World Cup core identity: drop the "4K-WC: (REGION)" wrapper, a trailing "(2)" copy
+// marker, then the package prefix + quality words (via epgExactNorm), so every
+// package×quality copy of one channel shares a key — "4K-WC: (UK) BBC 1 UHD" and
+// "UK: BBC 1 RAW" both -> "bbc1". Used only inside the WC bucket, where same-name
+// feeds carry the same match (so collapsing their EPG onto one id is safe).
+const epgEventCore = (s: string) =>
+  epgExactNorm(s.replace(/^\s*\d?k?-?wc:\s*/i, '').replace(/\([a-z]{2,6}\)/gi, '').replace(/\s*\(\d+\)\s*$/, ''))
 // Country suffix of an xmltv id, e.g. "dazn1.es" -> "es".
 const epgCountry = (id: string) => id.match(/\.([a-z]{2,3})$/i)?.[1].toLowerCase() ?? ''
 // Provider's leading "REGION:" tag, e.g. "ES: DAZN 1" -> "es".

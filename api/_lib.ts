@@ -18,6 +18,7 @@ export const KEEP: number[] = [
   // World Cup
   2343, // 8K| WORLD CUP 2026 8K
   2361, // 8K| WORLD CUP 2026 UHD 3840P
+  1134, // AR| BEIN SPORTS 8K & 3840P (beIN MAX 4K World Cup feeds, event-only)
   2352, // 8K| WORLD CUP PPV 2026 8K
   2346, // 8K| WORLD CUP 2026 REPLAY 8K
   2353, // UK| WORLD CUP PPV
@@ -44,6 +45,7 @@ export const KEEP: number[] = [
   977,  // UK| SERIE A TEAM PPV
   1614, // UK| LIGUE 1 PPV
   1972, // UK| SOCCER REPLAY RAW
+  662,  // 4K| UHD 3840P (Sky Sports/TNT/Eleven/V Sport 4K event feeds)
   // Tennis
   2334, // FR| ROLAND GARROS 2026 RAW
   1429, // TS| TENNIS TV PPV (ATP)
@@ -133,9 +135,10 @@ const BUCKET_ORDER: string[] = Object.values(B)
 const CAT_BUCKET: Record<number, string> = {
   2343: B.wc, 2361: B.wc, 2355: B.wc, 2362: B.wc, 1958: B.wc,
   2157: B.wc, // beIN SPORTS MAX = beIN's World Cup overflow feeds
+  1134: B.wc, // beIN MAX 4K 3840P = beIN's 4K World Cup feeds (event-only)
   2352: B.wcPpv, 2353: B.wcPpv, 2354: B.wcPpv, 547: B.wcPpv, 1334: B.wcPpv,
   2346: B.wcReplay,
-  1729: B.uk, 1728: B.uk, 1964: B.uk, 1965: B.uk,
+  1729: B.uk, 1728: B.uk, 1964: B.uk, 1965: B.uk, 662: B.uk,
   1830: B.fbPpv, 1441: B.fbPpv, 952: B.fbPpv, 1865: B.fbPpv, 755: B.fbPpv,
   769: B.fbPpv, 921: B.fbPpv, 575: B.fbPpv, 976: B.fbPpv, 977: B.fbPpv,
   1614: B.fbPpv, 433: B.fbPpv, 1672: B.fbPpv, 2018: B.fbPpv, 2231: B.fbPpv,
@@ -301,6 +304,9 @@ const BEIN = /bein/i
 // every feed (probed) despite a "RAW" tag on its World Cup stream, and BBC/ITV
 // RAW (true 1080p50) already cover English WC, so SBS adds nothing at quality.
 const DROP_CHANNEL = /^AU:\s*SBS\b/i
+// Cat 662 (4K| UHD 3840P) mixes 4K sport feeds (Sky/TNT/Eleven/ESPN/V Sport) with
+// lifestyle/shopping/news 4K (Cocina, QVC, Museum, Bloomberg…) — keep only sport.
+const SPORT_4K_662 = /sport|tnt|espn|bein|eleven|dazn/i
 // Russian kids channels (Nick/Cartoon Network/Disney) sit in the general RU
 // category — no dedicated RU kids category exists — so route them out by name.
 const RU_KIDS = /nick|cartoon\s*network|disney\s*(?:channel|jr|junior|xd)|карусел|мульт|малыш/i
@@ -472,6 +478,7 @@ export async function fetchCuratedChannels(cfg: XtreamConfig): Promise<Channel[]
     for (const s of byCat.get(id) ?? []) {
       const name = String(s.name ?? '').trim()
       if (!name || SEPARATOR.test(name) || DROP_CHANNEL.test(name)) continue
+      if (id === 662 && !SPORT_4K_662.test(name)) continue // 662: keep only its sport feeds
       if (isEventSlot && DEAD_SLOT.test(name)) continue
       const q = qualityScore(name, group)
       if (q === 0) continue // explicit SD/LQ feeds

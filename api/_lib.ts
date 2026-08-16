@@ -15,20 +15,14 @@ import { QUALITY } from './quality-cache.js'
 
 // Provider category_ids to keep.
 export const KEEP: number[] = [
-  // World Cup
-  2343, // 8K| WORLD CUP 2026 8K
-  2361, // 8K| WORLD CUP 2026 UHD 3840P
-  1134, // AR| BEIN SPORTS 8K & 3840P (beIN MAX 4K World Cup feeds, event-only)
-  2352, // 8K| WORLD CUP PPV 2026 8K
-  2346, // 8K| WORLD CUP 2026 REPLAY 8K
-  2353, // UK| WORLD CUP PPV
-  2354, // US| WORLD CUP PPV (FOX/Telemundo 60fps)
-  2355, // DE| FUSSBALL.TV WORLD CUP VIP
-  2362, // ES| DAZN MUNDIAL
-  1958, // ES| DAZN EXCLUSIVE MUNDIAL HD/RAW
-  547,  // ES| DAZN MUNDIAL PPV
-  1334, // ES| SOCCER MUNDIAL PPV
-  // UK sports
+  // UK sports — the provider ships Sky/TNT as parallel feed FAMILIES (RAW / 4K /
+  // HEVC / HD copies in separate categories). Keep the high-tier ones next to the
+  // HD copies so the quality sort actually has a top tier to pick from; dedupe
+  // then keeps the best feed + one spare per channel.
+  1731, // UK| SPORT RAW VIP DOLBY (Sky Sports 4K 3840P + RAW)
+  1726, // UK| TNT SPORT RAW VIP DOLBY (TNT Ultimate 4K + TNT 1-4 RAW 50fps)
+  1640, // UK| SPORT RAW (Sky Sports UHD 3840P, TNT/beIN English RAW)
+  978,  // UK| SPORT HEVC
   1729, // UK| SPORT HD VIP (Sky Sports)
   1728, // UK| TNT SPORT HD VIP
   1830, // UK| TNT SPORT EVENT
@@ -47,7 +41,6 @@ export const KEEP: number[] = [
   1972, // UK| SOCCER REPLAY RAW
   662,  // 4K| UHD 3840P (Sky Sports/TNT/Eleven/V Sport 4K event feeds)
   // Tennis
-  2334, // FR| ROLAND GARROS 2026 RAW
   1429, // TS| TENNIS TV PPV (ATP)
   1096, // TS| TENNIS LIVE
   1927, // US| TENNIS PPV
@@ -56,9 +49,28 @@ export const KEEP: number[] = [
   929,  // UK| UFC PPV
   903,  // US| PPV EVENT
   380,  // UK| PPV EVENT
-  // Arabic sports — beIN (pinned top) + StarzPlay / AD Sports bundle
+  // Arabic sports — beIN (pinned top) + StarzPlay / AD Sports bundle.
+  // Same feed-family story as UK: beIN ships each channel as 4K / RAW / HEVC / HD
+  // copies in SEPARATE categories, so keeping only the HD one (as we used to) meant
+  // no FHD/4K beIN in the list at all. Highest tier first.
+  1134, // AR| BEIN SPORTS 8K & 3840P (event feeds; marker trusted while idle)
+  780,  // AR| BEIN SPORTS SS (numbered 4K + HD feeds)
+  346,  // AR| BEIN SPORTS alternate (numbered 4K + HD feeds)
+  781,  // AR| BEIN SPORTS UHD (4K/RAW/HEVC/HD feed family)
+  1133, // AR| BEIN SPORTS 8K & RAW  (source-quality feeds, ~1080p50)
+  349,  // AR| BEIN SPORTS 8K & HEVC
   108,  // AR| BEIN SPORTS 8K & HD
-  2157, // AR| BEIN SPORTS MAX 8K
+  1653, // AR| BEIN SPORTS NM   (alternate uplink — HD/RAW spares)
+  1789, // AR| BEIN SPORTS BE   (backup uplink, sorts below primaries)
+  1252, // AR| BEIN SPORTS SA   (HD/RAW spares)
+  1736, // AR| BEIN SPORTS F & AFC
+  1654, // AR| BEIN SPORTS NM & ASIA (Al Kass HD/RAW)
+  24,   // AR| ARABIC SPORT 4K
+  624,  // AR| UEFA CHAMPIONS LEAGUE
+  2279, // AR| SPORTS PPV NM
+  2347, // AR| TOD SPORTS F PPV
+  2350, // AR| TOD SPORTS SA PPV
+  1572, // AR| DAZN MENA PPV 8K
   548,  // AR| STARZPLAY SPORT 8K & 4K (AD Sports Premium/Fight)
   1231, // AR| STARZPLAY SPORT 8K & TK (AD Sports, Asia, Golf)
   1657, // AR| STARZPLAY SPORT M & RAW (AD Premium/Asia)
@@ -86,6 +98,7 @@ export const KEEP: number[] = [
   1287, // ES| MOVISTAR DEPORTES VIP
   1290, // ES| M+ VAMOS VIP
   1291, // ES| OTROS DEPORTES VIP
+  547,  // ES| DAZN PPV
   // Italian sports
   265,  // IT| SPORT HD/4K
   476,  // IT| DAZN VIP HD/4K
@@ -108,9 +121,6 @@ export const KEEP: number[] = [
 
 // Viewer-facing buckets, in display order.
 const B = {
-  wc: '⚽ World Cup 2026',
-  wcPpv: '⚽ World Cup — Match PPV',
-  wcReplay: '📼 World Cup — Replays',
   uk: '🏴 Sky Sports & UK Sports',
   fbPpv: '⚽ Football — Match PPV',
   fbReplay: '📼 Football — Replays',
@@ -133,23 +143,22 @@ const B = {
 const BUCKET_ORDER: string[] = Object.values(B)
 
 const CAT_BUCKET: Record<number, string> = {
-  2343: B.wc, 2361: B.wc, 2355: B.wc, 2362: B.wc, 1958: B.wc,
-  2157: B.wc, // beIN SPORTS MAX = beIN's World Cup overflow feeds
-  1134: B.wc, // beIN MAX 4K 3840P = beIN's 4K World Cup feeds (event-only)
-  2352: B.wcPpv, 2353: B.wcPpv, 2354: B.wcPpv, 547: B.wcPpv, 1334: B.wcPpv,
-  2346: B.wcReplay,
+  1731: B.uk, 1726: B.uk, 1640: B.uk, 978: B.uk,
   1729: B.uk, 1728: B.uk, 1964: B.uk, 1965: B.uk, 662: B.uk,
   1830: B.fbPpv, 1441: B.fbPpv, 952: B.fbPpv, 1865: B.fbPpv, 755: B.fbPpv,
   769: B.fbPpv, 921: B.fbPpv, 575: B.fbPpv, 976: B.fbPpv, 977: B.fbPpv,
   1614: B.fbPpv, 433: B.fbPpv, 1672: B.fbPpv, 2018: B.fbPpv, 2231: B.fbPpv,
-  1616: B.fbPpv, 2242: B.fbPpv, 457: B.fbPpv,
+  1616: B.fbPpv, 2242: B.fbPpv, 457: B.fbPpv, 547: B.fbPpv,
   1972: B.fbReplay, 1232: B.fbReplay, 1115: B.fbReplay,
-  108: B.ar, 548: B.ar, 1231: B.ar, 1657: B.ar, 1791: B.ar, 2163: B.ar,
+  1134: B.ar, 780: B.ar, 346: B.ar, 781: B.ar, 1133: B.ar, 349: B.ar,
+  108: B.ar, 1653: B.ar, 1789: B.ar, 1252: B.ar, 1736: B.ar, 1654: B.ar,
+  24: B.ar, 624: B.ar, 2279: B.ar, 2347: B.ar, 2350: B.ar, 1572: B.ar,
+  548: B.ar, 1231: B.ar, 1657: B.ar, 1791: B.ar, 2163: B.ar,
   333: B.de, 1137: B.de, 667: B.de, 1267: B.de, 1633: B.de,
   870: B.es, 552: B.es, 1286: B.es, 553: B.es, 1601: B.es,
   1287: B.es, 1290: B.es, 1291: B.es,
   265: B.it, 476: B.it, 681: B.it,
-  2334: B.tennis, 1429: B.tennis, 1096: B.tennis, 1927: B.tennis,
+  1429: B.tennis, 1096: B.tennis, 1927: B.tennis,
   1139: B.ufc, 929: B.ufc, 903: B.ufc, 380: B.ufc,
   6: B.ru,
   304: B.kidsEn, 490: B.kidsEn, 105: B.kidsAr, 42: B.kidsEs, 334: B.kidsDe,
@@ -157,12 +166,7 @@ const CAT_BUCKET: Record<number, string> = {
 }
 
 // Bucket for categories not in CAT_BUCKET (i.e. auto-included new ones).
-function bucketForCategory(name: string): string {
-  if (/WORLD CUP|MUNDIAL/i.test(name)) {
-    if (/REPLAY/i.test(name)) return B.wcReplay
-    if (/PPV/i.test(name)) return B.wcPpv
-    return B.wc
-  }
+export function bucketForCategory(name: string): string {
   if (/REPLAY/i.test(name)) return B.fbReplay
   if (/UFC|PPV EVENT/i.test(name)) return B.ufc
   if (/TENNIS|ROLAND|WIMBLEDON/i.test(name)) return B.tennis
@@ -175,18 +179,20 @@ function bucketForCategory(name: string): string {
 }
 
 // Auto-include NEW provider categories beyond KEEP: relevant region prefix +
-// football/tennis/UFC topic in the name (e.g. "UK| CLUB WORLD CUP PPV").
+// football/tennis/UFC topic in the name. Expired tournament-specific packages
+// are deliberately blocked even if their names otherwise match a current topic.
 const AUTO_REGION = /^(8K|UK|ES|DE|IT|TS|FR)\|/i
 const AUTO_TOPIC =
-  /WORLD CUP|MUNDIAL|FUSSBALL|UEFA|CHAMPIONS|EPL|PREMIER LEAGUE|LA ?LIGA|SERIE A|BUNDESLIGA|LIGUE 1|FOOTBALL|SOCCER|CALCIO|COPA|TENNIS|ROLAND GARROS|WIMBLEDON|UFC|PPV EVENT/i
+  /FUSSBALL|UEFA|CHAMPIONS|EPL|PREMIER LEAGUE|LA ?LIGA|SERIE A|BUNDESLIGA|LIGUE 1|FOOTBALL|SOCCER|CALCIO|COPA|TENNIS|ROLAND GARROS|WIMBLEDON|US OPEN|UFC|PPV EVENT/i
+const STALE_EVENT = /WORLD CUP|MUNDIAL|ROLAND GARROS 2026/i
 
 export function autoIncluded(categoryName: string): boolean {
-  return AUTO_REGION.test(categoryName) && AUTO_TOPIC.test(categoryName)
+  return !STALE_EVENT.test(categoryName) && AUTO_REGION.test(categoryName) && AUTO_TOPIC.test(categoryName)
 }
 
 // Language priority: EN(0) > AR(1) > DE/ES(2) > rest(3). The provider tags
-// language three ways and the World Cup group mixes all of them: a leading prefix
-// (UK:/US:/ES:), a parenthetical region ("4K-WC: (UK) BBC"), or a trailing code
+// language three ways, and mixed-language groups carry all of them: a leading
+// prefix (UK:/US:/ES:), a parenthetical region ("(UK) BBC"), or a trailing code
 // (beIN "... MAX 5 EN" / "... 1 AR") — so an EN/AR feed sorts above DE/ES only if
 // we catch all three (else German wrongly leads on its clean "DE:" prefix alone).
 export function languageRank(s: string): number {
@@ -205,12 +211,18 @@ function regionPref(s: string): number {
   return /^US\b/i.test(s) || /\(US\)/i.test(s) ? 1 : 0
 }
 
+// Leading feed-family label the provider stamps on every copy of a channel —
+// region ("UK:", "ES:"), uplink ("NM:", "SS:", "SA:", "BE:", "F:", "◉:") or
+// quality branding ("8K:", "ᵁᴴᴰ:", "VIP:"). Matched structurally because the
+// provider keeps adding new families.
+const FEED_PREFIX = /^[^\s:|]{1,6}[:|]\s*/
+
 // Quality from name markers (the API has no real res/fps metadata).
 // 0 = explicit SD/LQ -> dropped. Higher = listed first within each bucket.
 // Channel-name markers win; group name is the fallback for unmarked channels.
-function qualityScore(channelName: string, groupName: string): number {
+export function qualityScore(channelName: string, groupName: string): number {
   const score = (s: string): number | null => {
-    if (/\bSD\b|▼|\bLQ\b/.test(s)) return 0
+    if (/\bSD\b|ˢᵈ|▼|\bLQ\b/i.test(s)) return 0
     let v: number | null = null
     if (/⁸ᴷ|ᵁᴴᴰ|UHD|4K|³⁸⁴⁰|3840|2160/i.test(s)) v = 5
     else if (/FHD|ᶠᴴᴰ|1080/i.test(s)) v = 4
@@ -220,8 +232,9 @@ function qualityScore(channelName: string, groupName: string): number {
     if (/(⁶⁰|⁵⁰)\s*ᶠᵖˢ|(60|50)\s*FPS/i.test(s)) v = (v ?? 3) + 1
     return v
   }
-  // strip the provider's "8K:" branding prefix so it doesn't read as 8K quality
-  return score(channelName.replace(/^8K[:|]\s*/i, '')) ?? score(groupName) ?? 2
+  // Strip the feed-family branding prefix so "ᵁᴴᴰ: beIN 1 HD" is scored as HD,
+  // not UHD. The actual channel marker must win over its source family's name.
+  return score(channelName.replace(FEED_PREFIX, '')) ?? score(groupName) ?? 2
 }
 
 // Resolution/fps used to order feeds WITHIN a marker tier (the marker sets the tier).
@@ -229,8 +242,8 @@ function qualityScore(channelName: string, groupName: string): number {
 // the marker's NOMINAL resolution, so a "4K" feed unprobed or no-signal at probe time
 // is trusted at 4K, not buried under a verified lower-res feed.
 //
-// trustMarker (event/World-Cup feeds): these idle or show low-res filler between
-// matches, so a probe BELOW the marker is that filler, not the feed's live quality —
+// trustMarker (PPV slots + "(EVENT ONLY)" feeds): these idle or show low-res filler
+// between matches, so a probe BELOW the marker is that filler, not live quality —
 // fall back to the nominal tier (fps unknown) instead of demoting it. A probe AT/ABOVE
 // the marker is genuine live quality and is always kept.
 function realRes(streamId: number, markerQ: number, trustMarker: boolean): { h: number; fps: number } {
@@ -293,17 +306,23 @@ export interface Channel {
 const EVENT_GROUP = /PPV|EVENT|REPLAY/i
 // Decorative separator entries like "##### beIN SPORTS #####"
 const SEPARATOR = /^[#*=─—-]{3,}.*[#*=─—-]{3,}$/
-// Finished/idle event slots — they reappear when renamed for the next event
-const DEAD_SLOT = /^[\s#]*\b(END(?:ED)?|FINISHED|OFF\s*AIR|NO\s+EVENTS?|TBA)\b\s*[|:.\-]?/i
+// Finished/idle event slots — they reappear when renamed for the next event.
+// Two shapes: a leading status tag ("End | Panthers @ Cardinals | …"), and an
+// idle notice anywhere in the name ("AR: DAZN PPV 23 - NO EVENT STREAMING - |
+// 8K EXCLUSIVE"), which the leading-tag form misses.
+const DEAD_SLOT = /^[\s#]*\b(END(?:ED)?|FINISHED|OFF\s*AIR|NO\s+EVENTS?|TBA)\b\s*[|:.-]?|\bNO\s+EVENT\b|\bNO\s+STREAM(?:ING)?\b/i
 // Backup source groups sort below primaries within the same bucket
 const BACKUP_GROUP = /ᴮᴱ|ᴮᴷ|⁽ᴮᴷ⁾|\(BK\)|BACKUP/i
 // beIN pins to the top of the Arabic bucket — the only AR channel that matters
 const BEIN = /bein/i
 // Channels dropped even when they ride in via a kept category — feeds that look
-// fine by name/marker but are sub-FHD in reality. AU SBS is 1280x720 25fps on
-// every feed (probed) despite a "RAW" tag on its World Cup stream, and BBC/ITV
-// RAW (true 1080p50) already cover English WC, so SBS adds nothing at quality.
+// fine by name/marker but are sub-FHD in reality: AU SBS is 1280x720 25fps on
+// every feed (probed) despite its "RAW" tag.
 const DROP_CHANNEL = /^AU:\s*SBS\b/i
+// Feeds that only carry signal during an event (beIN's 4K slots, mostly). They
+// idle or show low-res filler in between, so a probe below their marker is that
+// filler, not the feed — trust the marker instead (see realRes).
+const EVENT_ONLY = /\(\s*EVENT\s*ONLY\s*\)/i
 // Cat 662 (4K| UHD 3840P) mixes 4K sport feeds (Sky/TNT/Eleven/ESPN/V Sport) with
 // lifestyle/shopping/news 4K (Cocina, QVC, Museum, Bloomberg…) — keep only sport.
 const SPORT_4K_662 = /sport|tnt|espn|bein|eleven|dazn/i
@@ -312,13 +331,11 @@ const SPORT_4K_662 = /sport|tnt|espn|bein|eleven|dazn/i
 const RU_KIDS = /nick|cartoon\s*network|disney\s*(?:channel|jr|junior|xd)|карусел|мульт|малыш/i
 
 // Dedupe key: same cleaned name (+ quality tier, when given) counts as a dup.
-// Leading region/feed-family labels (TK/BE/M/F = StarzPlay feed variants) and
-// source tags (STC/STZ uplinks) are stripped so the same channel collapses
-// across the provider's parallel feeds. Omit `tier` to collapse a channel
-// across all its qualities (used where one channel ships at many tiers).
+// Omit `tier` to collapse a channel across all its qualities (used where one
+// channel ships at many tiers).
 function dedupeKey(name: string, tier?: number): string {
   const cleaned = name
-    .replace(/^(8K|UK|US|DE|ES|IT|AR|FR|TK|BE|M|F)[:|]\s*/i, '')
+    .replace(FEED_PREFIX, '')
     .toLowerCase()
     .replace(/\b(4k|uhd|fhd|hd|sd|raw|hevc|vip|stc|stz)\b/g, '')
     .replace(/[^a-z0-9؀-ۿ]+/g, ' ')
@@ -331,8 +348,8 @@ function dedupeKey(name: string, tier?: number): string {
 // region prefix, non-ascii markers and quality words; compared with localeCompare
 // {numeric} so "2" sorts before "10".
 const nameKey = (s: string): string =>
-  s.replace(/^(8K|UK|US|DE|ES|IT|AR|FR|TK|BE|M|F)[:|]\s*/i, '')
-    .replace(/[^\x00-\x7F]/g, ' ')
+  s.replace(FEED_PREFIX, '')
+    .replace(/[^\p{ASCII}]/gu, ' ')
     .replace(/\b(8k|4k|uhd|fhd|hd|sd|raw|hevc|vip)\b/gi, '')
     .replace(/\s+/g, ' ')
     .trim()
@@ -470,10 +487,6 @@ export async function fetchCuratedChannels(cfg: XtreamConfig): Promise<Channel[]
     if (!group) continue
     const bucket = CAT_BUCKET[id] ?? bucketForCategory(group)
     const isEventSlot = EVENT_GROUP.test(group)
-    // Event/World-Cup feeds idle between matches; trust their marker over a low idle
-    // probe so they aren't buried while off-air (see realRes). The WC bucket holds
-    // such feeds whose category name doesn't say PPV/EVENT (e.g. "UHD 3840P").
-    const trustMarker = isEventSlot || bucket === B.wc
     const backup = BACKUP_GROUP.test(group) ? 1 : 0
     for (const s of byCat.get(id) ?? []) {
       const name = String(s.name ?? '').trim()
@@ -484,7 +497,9 @@ export async function fetchCuratedChannels(cfg: XtreamConfig): Promise<Channel[]
       if (q === 0) continue // explicit SD/LQ feeds
       // Russian kids channels ride in the general RU category — route them to the kids group.
       const chBucket = id === 6 && RU_KIDS.test(name) ? B.kidsRu : bucket
-      const { h: rh, fps: rf } = realRes(s.stream_id, q, trustMarker)
+      // Feeds that only light up during a match (PPV slots, beIN's "(EVENT ONLY)"
+      // 4K slots) keep their marker tier when probed low — that's idle filler.
+      const { h: rh, fps: rf } = realRes(s.stream_id, q, isEventSlot || EVENT_ONLY.test(name))
       const item: Item = {
         q,
         rh,
@@ -547,14 +562,12 @@ export async function fetchCuratedChannels(cfg: XtreamConfig): Promise<Channel[]
   // name myepg matches then attach to these; the country guard can't misfire on them
   // (synthetic ids have no country suffix).
   //
-  // Key by region + prefix-stripped name, so "DAZN 1" ES and UK stay distinct. But
-  // the World Cup ships each channel as many package×quality copies (DE/BE/VIP ×
-  // UHD/RAW/HD) the provider rarely tags — there, key by core name alone so every
-  // copy collapses onto ONE id: a real-broadcaster-id twin if one exists (lighting
-  // up the 4K BBC/FOX/M6 mirrors), else the first copy's minted id (so the
-  // FUSSBALL.TV/beIN MAX copies all share whichever one myepg actually carries).
-  const sibKey = (c: Channel) =>
-    c.group === B.wc ? epgEventCore(c.name) : `${regionPrefix(c.name)}|${epgExactNorm(c.name)}`
+  // Key by BUCKET + prefix-stripped name. The bucket is the region ("DAZN 1" in
+  // the Spanish bucket stays distinct from the UK one), while the stripped prefix
+  // collapses a channel's parallel feed families (8K/NM/BE/UHD × RAW/HEVC/HD) onto
+  // one id — so the untagged copies inherit whichever real broadcaster id the
+  // provider put on one of them, and myepg's guide lights up all of them.
+  const sibKey = (c: Channel) => `${c.group}|${epgExactNorm(c.name)}`
   const sibId = new Map<string, string>()
   for (const c of channels) {
     if (!isRegular(c)) continue
@@ -602,7 +615,7 @@ const xmltvTime = (d: Date) =>
 // strips plural 's' + reorders tokens so "UK: SKY SPORT F1" == "Sky Sports F1".
 const EPG_QUAL = new Set(['8k', '4k', 'hd', 'sd', 'fhd', 'uhd', 'raw', 'vip', 'hevc', 'fps', 'mobile', 'mobil'])
 const epgExactNorm = (s: string) =>
-  s.replace(/^[a-z0-9+\-]{1,6}[:|]\s*/i, '').toLowerCase().replace(/⚽/g, 'o')
+  s.replace(FEED_PREFIX, '').toLowerCase().replace(/⚽/g, 'o')
     .replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim().replace(/ (\d)/g, '$1')
 // Fuzzy form from an already-computed exact norm — callers that need both pass
 // `ex` in so epgExactNorm runs once, not twice.
@@ -612,17 +625,8 @@ const epgFuzzyTokens = (ex: string) =>
 // is the same channel even if the country suffix differs (e.g. beIN FR uses .qa).
 const epgRawNorm = (s: string) =>
   s.toLowerCase().replace(/⚽/g, 'o').replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim()
-// World Cup core identity: drop the "4K-WC: (REGION)" wrapper, a trailing "(2)" copy
-// marker, then the package prefix + quality words (via epgExactNorm), so every
-// package×quality copy of one channel shares a key — "4K-WC: (UK) BBC 1 UHD" and
-// "UK: BBC 1 RAW" both -> "bbc1". Used only inside the WC bucket, where same-name
-// feeds carry the same match (so collapsing their EPG onto one id is safe).
-const epgEventCore = (s: string) =>
-  epgExactNorm(s.replace(/^\s*\d?k?-?wc:\s*/i, '').replace(/\([a-z]{2,6}\)/gi, '').replace(/\s*\(\d+\)\s*$/, ''))
 // Country suffix of an xmltv id, e.g. "dazn1.es" -> "es".
 const epgCountry = (id: string) => id.match(/\.([a-z]{2,3})$/i)?.[1].toLowerCase() ?? ''
-// Provider's leading "REGION:" tag, e.g. "ES: DAZN 1" -> "es".
-const regionPrefix = (s: string) => s.match(/^([a-z0-9+\-]{1,6})[:|]/i)?.[1].toLowerCase() ?? ''
 // A regular (non-event) channel that can carry real EPG — i.e. has a tvg-id.
 const isRegular = (c: Channel) => !c.isEventSlot && !!c.tvgId
 // Channel id of a <programme> block (what TiviMate maps EPG by).

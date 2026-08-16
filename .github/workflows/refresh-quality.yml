@@ -1,12 +1,10 @@
 name: Refresh feed quality
 
 # Re-probe real video quality (ffprobe) for the curated feeds and cache the peak,
-# so the playlist sorts on truth. Monotonic refresh: only upgrades a feed's reading,
-# never downgrades — across runs spanning match windows it converges to each feed's best.
+# so the playlist sorts on truth. Manual-only because the IPTV account has one
+# connection slot; a scheduled probe can steal that slot from normal playback.
 on:
   workflow_dispatch: {}
-  schedule:
-    - cron: '0 */2 * * *' # every 2 hours (UTC)
 
 permissions:
   contents: write
@@ -31,7 +29,7 @@ jobs:
           XTREAM_HOST: ${{ secrets.XTREAM_HOST }}
           XTREAM_USER: ${{ secrets.XTREAM_USER }}
           XTREAM_PASS: ${{ secrets.XTREAM_PASS }}
-        run: bun scripts/probe-quality.ts 48 refresh
+        run: bun scripts/probe-quality.ts 1 refresh
 
       - name: Commit refreshed cache if changed
         run: |

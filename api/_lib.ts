@@ -181,7 +181,7 @@ export function bucketForCategory(name: string): string {
 // Auto-include NEW provider categories beyond KEEP: relevant region prefix +
 // football/tennis/UFC topic in the name. Expired tournament-specific packages
 // are deliberately blocked even if their names otherwise match a current topic.
-const AUTO_REGION = /^(8K|UK|ES|DE|IT|TS|FR)\|/i
+const AUTO_REGION = /^(8K|UK|ES|DE|IT|TS|FR|AR)\|/i
 const AUTO_TOPIC =
   /FUSSBALL|UEFA|CHAMPIONS|EPL|PREMIER LEAGUE|LA ?LIGA|SERIE A|BUNDESLIGA|LIGUE 1|FOOTBALL|SOCCER|CALCIO|COPA|TENNIS|ROLAND GARROS|WIMBLEDON|US OPEN|UFC|PPV EVENT/i
 const STALE_EVENT = /WORLD CUP|MUNDIAL|ROLAND GARROS 2026/i
@@ -304,8 +304,9 @@ export interface Channel {
 }
 
 const EVENT_GROUP = /PPV|EVENT|REPLAY/i
-// Decorative separator entries like "##### beIN SPORTS #####"
-const SEPARATOR = /^[#*=─—-]{3,}.*[#*=─—-]{3,}$/
+// Decorative separator entries like "##### beIN SPORTS #####". Two is enough —
+// the provider also ships the "## NOW TV SPORT ᵁᴴᴰ ##" form, which a 3+ rule missed.
+const SEPARATOR = /^[#*=─—-]{2,}.*[#*=─—-]{2,}$/
 // Finished/idle event slots — they reappear when renamed for the next event.
 // Two shapes: a leading status tag ("End | Panthers @ Cardinals | …"), and an
 // idle notice anywhere in the name ("AR: DAZN PPV 23 - NO EVENT STREAMING - |
@@ -313,12 +314,11 @@ const SEPARATOR = /^[#*=─—-]{3,}.*[#*=─—-]{3,}$/
 const DEAD_SLOT = /^[\s#]*\b(END(?:ED)?|FINISHED|OFF\s*AIR|NO\s+EVENTS?|TBA)\b\s*[|:.-]?|\bNO\s+EVENT\b|\bNO\s+STREAM(?:ING)?\b/i
 // Backup source groups sort below primaries within the same bucket
 const BACKUP_GROUP = /ᴮᴱ|ᴮᴷ|⁽ᴮᴷ⁾|\(BK\)|BACKUP/i
-// beIN pins to the top of the Arabic bucket — the only AR channel that matters
+// beIN pins to the top of the Arabic bucket — the only AR channel that matters.
+// Matched on the CATEGORY as well as the channel, because beIN's 4K event slots are
+// named for the event ("NM: SPORT 2 ⁴ᴷ ³⁸⁴⁰ᵖ") rather than the brand, and a
+// name-only test buried those genuine 2160p feeds below 720p beIN ones.
 const BEIN = /bein/i
-// Channels dropped even when they ride in via a kept category — feeds that look
-// fine by name/marker but are sub-FHD in reality: AU SBS is 1280x720 25fps on
-// every feed (probed) despite its "RAW" tag.
-const DROP_CHANNEL = /^AU:\s*SBS\b/i
 // Feeds that only carry signal during an event (beIN's 4K slots, mostly). They
 // idle or show low-res filler in between, so a probe below their marker is that
 // filler, not the feed — trust the marker instead (see realRes).
@@ -490,7 +490,7 @@ export async function fetchCuratedChannels(cfg: XtreamConfig): Promise<Channel[]
     const backup = BACKUP_GROUP.test(group) ? 1 : 0
     for (const s of byCat.get(id) ?? []) {
       const name = String(s.name ?? '').trim()
-      if (!name || SEPARATOR.test(name) || DROP_CHANNEL.test(name)) continue
+      if (!name || SEPARATOR.test(name)) continue
       if (id === 662 && !SPORT_4K_662.test(name)) continue // 662: keep only its sport feeds
       if (isEventSlot && DEAD_SLOT.test(name)) continue
       const q = qualityScore(name, group)
@@ -507,7 +507,7 @@ export async function fetchCuratedChannels(cfg: XtreamConfig): Promise<Channel[]
         lang: languageRank(name),
         region: regionPref(name),
         backup,
-        bein: BEIN.test(name) ? 0 : 1,
+        bein: BEIN.test(name) || BEIN.test(group) ? 0 : 1,
         nkey: nameKey(name),
         idx,
         c: {
@@ -531,16 +531,18 @@ export async function fetchCuratedChannels(cfg: XtreamConfig): Promise<Channel[]
   for (const bucket of BUCKET_ORDER) {
     const items = byBucket.get(bucket)
     if (!items) continue
-    // beIN first in the Arabic bucket, then by MARKER tier (trust the provider's
-    // UHD/RAW/HEVC/HD label so a "4K" feed caught idle or unprobed still ranks as 4K),
-    // then REAL probed resolution/fps to order within the tier, language on ties,
-    // US demoted below UK on a further tie, primaries before backups, then sibling
-    // feeds grouped + numbered (FOX 1/2, 4K 1/2/3) so equal-quality feeds don't scatter
+    // beIN first in the Arabic bucket, then by EFFECTIVE resolution/fps — the probed
+    // value where we have one, else the marker's nominal tier (realRes already makes
+    // that substitution), so an unprobed or idle "4K" feed still ranks as 4K while a
+    // feed MEASURED at 720p stops outranking a measured 1080p50 one just because the
+    // provider stamped "4K" on its name. Marker tier only breaks ties from there, then
+    // language, US demoted below UK, primaries before backups, and finally sibling
+    // feeds grouped + numbered (FOX 1/2, 4K 1/2/3) so equal feeds don't scatter.
     const isArabic = bucket === B.ar
     items.sort(
       (a, b) =>
         (isArabic ? a.bein - b.bein : 0) ||
-        b.q - a.q || b.rh - a.rh || b.rf - a.rf ||
+        b.rh - a.rh || b.rf - a.rf || b.q - a.q ||
         a.lang - b.lang || a.region - b.region || a.backup - b.backup ||
         a.nkey.localeCompare(b.nkey, 'en', { numeric: true }) || a.idx - b.idx,
     )

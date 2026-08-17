@@ -237,6 +237,14 @@ export function qualityScore(channelName: string, groupName: string): number {
   return score(channelName.replace(FEED_PREFIX, '')) ?? score(groupName) ?? 2
 }
 
+// ffprobe reads r_frame_rate, which on some feeds is the container TICK rate rather
+// than the display rate. 100 is real — sports feeds report the 50p field rate that
+// way — but 120/240/250/300 only ever show up on 24-30fps material (nursery-rhyme
+// loops, documentary channels), where it was floating them above genuine 60fps
+// channels. Anything above 100 is therefore treated as unknown rather than trusted.
+export const saneFps = (fps: number): number =>
+  Number.isFinite(fps) && fps > 0 && fps <= 100 ? fps : 0
+
 // Resolution/fps used to order feeds WITHIN a marker tier (the marker sets the tier).
 // Probed value when we have it — so the genuinely-highest-res stream floats up — else
 // the marker's NOMINAL resolution, so a "4K" feed unprobed or no-signal at probe time
@@ -249,7 +257,7 @@ export function qualityScore(channelName: string, groupName: string): number {
 function realRes(streamId: number, markerQ: number, trustMarker: boolean): { h: number; fps: number } {
   const nominal = markerQ >= 5 ? 2160 : markerQ === 4 ? 1080 : markerQ === 3 ? 720 : markerQ === 2 ? 540 : 360
   const m = QUALITY[String(streamId)]
-  if (m && !(trustMarker && m.h < nominal)) return { h: m.h, fps: m.fps }
+  if (m && !(trustMarker && m.h < nominal)) return { h: m.h, fps: saneFps(m.fps) }
   return { h: nominal, fps: 0 }
 }
 

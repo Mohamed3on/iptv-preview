@@ -20,7 +20,7 @@
 // downgrades a known peak. A periodic cron (GitHub Actions) thus cheaply chases the gaps.
 //
 // Usage: bun scripts/probe-quality.ts [concurrency] [refresh]   (creds from env or .env.local)
-import { configFromEnv, fetchCuratedChannels } from '../api/_lib.js'
+import { configFromEnv, fetchCuratedChannels, saneFps } from '../api/_lib.js'
 import { rename } from 'node:fs/promises'
 
 const cfg = configFromEnv()
@@ -104,7 +104,10 @@ async function probe(id: number): Promise<Meta | null> {
     const v = JSON.parse(out)?.streams?.[0]
     if (v?.width) {
       const [n, d] = String(v.r_frame_rate ?? '').split('/').map(Number)
-      return { w: v.width, h: v.height, fps: d ? Math.round((n / d) * 10) / 10 : n, codec: v.codec_name, name: byId.get(id)! }
+      // saneFps drops container tick-rate misreads (240/250/300) so `better` can't
+      // lock one in as a feed's peak and hide its real rate forever.
+      const fps = saneFps(d ? Math.round((n / d) * 10) / 10 : n)
+      return { w: v.width, h: v.height, fps, codec: v.codec_name, name: byId.get(id)! }
     }
   } catch { /* unparseable / no video */ }
   return null

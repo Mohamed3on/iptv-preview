@@ -17,15 +17,23 @@
 // reading 1080p, probably idle and may return higher). Feeds already at/above their
 // marker are left alone — nothing to gain. Retry flaky feeds; OVERWRITE a cached reading
 // only when strictly better (height, then fps) — monotonic, so an idle/lower probe never
-// downgrades a known peak. A periodic cron (GitHub Actions) thus cheaply chases the gaps.
+// downgrades a known peak. Repeated runs thus chase the gaps and converge on each peak.
 //
-// Usage: bun scripts/probe-quality.ts [concurrency] [refresh]   (creds from env or .env.local)
+// TIME BUDGET (`mins=N`, default 30): stop starting new probes once the budget is spent.
+// Refresh targets are by definition the feeds that DIDN'T reach their marker — idle or
+// dead ones that burn the full ffprobe timeout — and at the one connection this account
+// allows, the ~900-feed backlog is several hours of wall clock. Unbounded, that either
+// blows GitHub's 6h job limit or holds the only connection slot all day. Bounded, each
+// run takes a predictable bite and the monotonic cache keeps the progress.
+//
+// Usage: bun scripts/probe-quality.ts [concurrency] [refresh] [mins=N]  (creds from env/.env.local)
 import { configFromEnv, fetchCuratedChannels, saneFps } from '../api/_lib.js'
 import { rename } from 'node:fs/promises'
 
 const cfg = configFromEnv()
 const requestedConcurrency = Number(Bun.argv[2]) || 1
 const REFRESH = Bun.argv.includes('refresh')
+const BUDGET_MIN = Number(Bun.argv.find((a) => a.startsWith('mins='))?.slice(5)) || 30
 const CACHE = 'api/quality-cache.ts'
 // The cache is a TS MODULE (not JSON) so the Vercel function can bundle it — native
 // ESM there rejects JSON imports without attributes. We write it as `export const`.
@@ -125,9 +133,10 @@ async function probeBest(id: number, tries: number): Promise<Meta | null> {
 }
 
 const t0 = Date.now()
+const deadline = t0 + BUDGET_MIN * 60_000
 let cursor = 0
 const worker = async () => {
-  while (cursor < ids.length) {
+  while (cursor < ids.length && Date.now() < deadline) {
     const id = ids[cursor++]
     const m = await probeBest(id, REFRESH ? 3 : 1)
     // Refresh: only upgrade, never downgrade a known peak. Initial: record result (null = probed).
@@ -137,8 +146,15 @@ const worker = async () => {
 }
 await Promise.all(Array.from({ length: Math.min(CONC, ids.length) }, worker))
 clearInterval(timer)
+const done = Math.min(cursor, ids.length)
+if (done < ids.length) {
+  console.log(`Budget of ${BUDGET_MIN}min reached — ${ids.length - done} feeds left for the next run.`)
+}
 dirty = true; await flush()
 
-const ok = ids.filter((id) => cache[id]).length
+// Count over what this run actually ATTEMPTED (`done`), not the whole target list —
+// a budgeted run stops early, and reporting the backlog as "probed" overstates it.
+const attempted = ids.slice(0, done)
+const ok = attempted.filter((id) => cache[id]).length
 const total = Object.keys(cache).length
-console.log(`${REFRESH ? 'Refreshed' : 'Probed'} ${ids.length} feeds in ${((Date.now() - t0) / 1000).toFixed(1)}s @ conc=${CONC} — ${ok} have signal (cache now ${total})`)
+console.log(`${REFRESH ? 'Refreshed' : 'Probed'} ${attempted.length}/${ids.length} feeds in ${((Date.now() - t0) / 1000).toFixed(1)}s @ conc=${CONC} — ${ok} have signal (cache now ${total})`)

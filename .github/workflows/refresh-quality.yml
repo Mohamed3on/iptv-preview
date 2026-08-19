@@ -1,10 +1,17 @@
 name: Refresh feed quality
 
 # Re-probe real video quality (ffprobe) for the curated feeds and cache the peak,
-# so the playlist sorts on truth. Manual-only because the IPTV account has one
-# connection slot; a scheduled probe can steal that slot from normal playback.
+# so the playlist sorts on truth. Manual-only because the IPTV account has ONE
+# connection slot: a scheduled probe steals it from normal playback, and every
+# stream then returns HTTP 458. Each run takes a time-bounded bite of the backlog
+# (the cache is monotonic, so progress accumulates across runs).
 on:
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      minutes:
+        description: 'How long to probe for (the run holds the single connection slot)'
+        required: false
+        default: '30'
 
 permissions:
   contents: write
@@ -29,7 +36,16 @@ jobs:
           XTREAM_HOST: ${{ secrets.XTREAM_HOST }}
           XTREAM_USER: ${{ secrets.XTREAM_USER }}
           XTREAM_PASS: ${{ secrets.XTREAM_PASS }}
-        run: bun scripts/probe-quality.ts 1 refresh
+          # Via env, not inline in `run:` — a dispatch input interpolated into the
+          # shell is a command-injection seam. Validated below before it is used.
+          MINUTES: ${{ inputs.minutes }}
+        run: |
+          case "$MINUTES" in
+            ''|*[!0-9]*) echo "minutes must be a whole number, got '$MINUTES'"; exit 1 ;;
+          esac
+          # Concurrency is requested high and capped by the script to the account's
+          # actually-free connection slots, so this adapts if the plan ever grows.
+          bun scripts/probe-quality.ts 8 refresh "mins=$MINUTES"
 
       - name: Commit refreshed cache if changed
         run: |

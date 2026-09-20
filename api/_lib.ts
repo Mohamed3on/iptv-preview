@@ -5,6 +5,8 @@
 // UFC PPV replays + the provider's 4K/UHD movie libraries (all languages) are
 // appended as on-demand VOD entries. Live kids channels (EN/US/AR/ES/DE, plus
 // Russian kids pulled by name from the general RU category) get their own buckets.
+// Per-competition "🏆" groups (withCompetitionGroups) copy football channels from
+// every region under the league/cup they carry, quality first.
 // Credentials come from env (XTREAM_HOST, XTREAM_USER, XTREAM_PASS, PLAYLIST_TOKEN).
 
 // Real probed video quality (height/fps) keyed by streamId, so buckets sort by
@@ -12,6 +14,9 @@
 // (many "UHD 3840P" feeds are really 1080p30 or 720p). Refreshed offline by
 // scripts/probe-quality.ts; a missing entry just falls back to the name marker.
 import { QUALITY } from './quality-cache.js'
+// Channels seen airing live matches of each competition in the EPG (tvg-id ->
+// competition -> last-seen date), learned daily by scripts/learn-competitions.ts.
+import { LEARNED } from './competition-cache.js'
 
 // Provider category_ids to keep.
 export const KEEP: number[] = [
@@ -105,6 +110,9 @@ export const KEEP: number[] = [
   681,  // IT| SERIE A/B/C
   2242, // IT| DAZN PPV
   457,  // IT| AMAZON PRIME PPV (UCL)
+  // French — Ligue 1+ (the league's own channel: 8 of 9 matches a round live only here)
+  1952, // FR| LIGUE1+ VIP RAW (HD + RAW feed families)
+  1954, // FR| LIGUE1+ ◉
   // Russian channels (general entertainment, isolated in their own group)
   6,    // RU| RUSSIAN HD/4K
   // Kids (live) — one provider category per language. There's no dedicated RU kids
@@ -128,6 +136,7 @@ const B = {
   de: '🇩🇪 German Sports',
   es: '🇪🇸 Spanish Sports',
   it: '🇮🇹 Italian Sports',
+  fr: '🇫🇷 French Sports',
   tennis: '🎾 Tennis',
   ufc: '🥊 UFC & Fight PPV',
   ufcVod: '🎬 UFC PPV Replays (VOD)',
@@ -158,6 +167,7 @@ const CAT_BUCKET: Record<number, string> = {
   870: B.es, 552: B.es, 1286: B.es, 553: B.es, 1601: B.es,
   1287: B.es, 1290: B.es, 1291: B.es,
   265: B.it, 476: B.it, 681: B.it,
+  1952: B.fr, 1954: B.fr,
   1429: B.tennis, 1096: B.tennis, 1927: B.tennis,
   1139: B.ufc, 929: B.ufc, 903: B.ufc, 380: B.ufc,
   6: B.ru,
@@ -174,6 +184,7 @@ export function bucketForCategory(name: string): string {
   if (/^DE\|/i.test(name)) return /PPV/i.test(name) ? B.fbPpv : B.de
   if (/^ES\|/i.test(name)) return /PPV/i.test(name) ? B.fbPpv : B.es
   if (/^IT\|/i.test(name)) return /PPV/i.test(name) ? B.fbPpv : B.it
+  if (/^FR\|/i.test(name)) return /PPV/i.test(name) ? B.fbPpv : B.fr
   if (/PPV|EVENT/i.test(name)) return B.fbPpv
   return B.uk
 }
@@ -183,7 +194,7 @@ export function bucketForCategory(name: string): string {
 // are deliberately blocked even if their names otherwise match a current topic.
 const AUTO_REGION = /^(8K|UK|ES|DE|IT|TS|FR|AR)\|/i
 const AUTO_TOPIC =
-  /FUSSBALL|UEFA|CHAMPIONS|EPL|PREMIER LEAGUE|LA ?LIGA|SERIE A|BUNDESLIGA|LIGUE 1|FOOTBALL|SOCCER|CALCIO|COPA|TENNIS|ROLAND GARROS|WIMBLEDON|US OPEN|UFC|PPV EVENT/i
+  /FUSSBALL|UEFA|CHAMPIONS|EPL|PREMIER LEAGUE|LA ?LIGA|SERIE A|BUNDESLIGA|LIGUE ?1|FOOTBALL|SOCCER|CALCIO|COPA|TENNIS|ROLAND GARROS|WIMBLEDON|US OPEN|UFC|PPV EVENT/i
 const STALE_EVENT = /WORLD CUP|MUNDIAL|ROLAND GARROS 2026/i
 
 export function autoIncluded(categoryName: string): boolean {
@@ -216,6 +227,29 @@ function regionPref(s: string): number {
 // quality branding ("8K:", "ᵁᴴᴰ:", "VIP:"). Matched structurally because the
 // provider keeps adding new families.
 const FEED_PREFIX = /^[^\s:|]{1,6}[:|]\s*/
+
+// Superscript/modifier letters the provider spells feed markers in (ᴿᴬᵂ, ᵁᴴᴰ ³⁸⁴⁰ᴾ,
+// ʰᵉᵛᶜ, ᴬʳᵉⁿᵃ) mapped to ascii, so they become ordinary words to strip or keep.
+const SUP_FROM = 'ᴬᴮᶜᴰᴱᶠᴳᴴᴵᴶᴷᴸᴹᴺᴼᴾᴿˢᵀᵁⱽᵂᵃᵇᵈᵉᵍʰⁱʲᵏˡᵐⁿᵒᵖʳᵗᵘᵛʷˣʸᶻ⁰¹²³⁴⁵⁶⁷⁸⁹'
+const SUP_TO = 'abcdefghijklmnoprstuvwabdeghijklmnoprtuvwxyz0123456789'
+const SUP_RE = new RegExp(`[${SUP_FROM}]`, 'g')
+const unsuper = (s: string) => s.replace(SUP_RE, (ch) => SUP_TO[SUP_FROM.indexOf(ch)])
+// Words that only tell feeds of one channel apart: quality, codec, fps, uplink, delivery.
+const FEED_WORDS = new Set([
+  '8k', '4k', 'hd', 'sd', 'fhd', 'uhd', 'hdr', 'raw', 'vip', 'hevc', 'fps', '50', '60',
+  '3840p', '2160p', '1080p', '720p', 'mobil', 'mobile', 'sat', 'dolby', 'audio', 'bk', 'bk1', 'bk2', 'stz', 'stc',
+])
+/** One identity for all parallel feeds of a channel: family prefix, feed words and
+ *  plural dropped — "VIP: TNT SPORTS 1 ᴿᴬᵂ ⁵⁰ FPS" and "NOW: TNT SPORT 1 ᴴᴰ" → "tnt sport 1". */
+export const chanKey = (s: string): string =>
+  unsuper(s.replace(FEED_PREFIX, ''))
+    .toLowerCase()
+    .replace(/⚽/g, 'o')
+    .replace(/[^a-z0-9\u0600-\u06ff]+/g, ' ')
+    .split(' ')
+    .filter((t) => t && !FEED_WORDS.has(t))
+    .map((t) => t.replace(/s$/, ''))
+    .join(' ')
 
 // Quality from name markers (the API has no real res/fps metadata).
 // 0 = explicit SD/LQ -> dropped. Higher = listed first within each bucket.
@@ -307,6 +341,8 @@ export interface Channel {
   isEventSlot: boolean
   /** marker-based quality tier (qualityScore): 0=SD … 4=FHD/RAW, 5=UHD/8K; unset for VOD */
   q?: number
+  /** competitions carried per name/category (COMPS keys); EPG-learned ones are added at grouping time */
+  comps?: string[]
   /** VOD container extension (mkv/mp4) — served from /movie/ instead of /live/ */
   vodExt?: string
 }
@@ -362,6 +398,67 @@ const nameKey = (s: string): string =>
     .replace(/\s+/g, ' ')
     .trim()
     .toLowerCase()
+
+// --- Competitions ------------------------------------------------------------
+// "🏆 <competition>" groups gather every channel carrying a competition across
+// regions. A channel qualifies by NAME ("SKY SPORT BUNDESLIGA 1"), by provider
+// CATEGORY (the per-league PPV packages), or — for 24/7 channels — by having aired
+// a live match of it recently per the EPG (learned into competition-cache.ts by
+// scripts/learn-competitions.ts: the guides only reach ~36h ahead, far too short
+// to see a cup round or a UEFA week directly). Vetoes keep out other sports and
+// women's/second-tier competitions that reuse the names (volleyball "Serie A",
+// "Frauen-Bundesliga", "LaLiga Hypermotion", "Brasileiro Serie A").
+interface Competition { key: string; group: string; re: RegExp; not?: RegExp }
+export const COMPS: Competition[] = [
+  { key: 'ucl', group: '🏆 Champions League', re: /champions league|liga de campeones|ligue des champions|دوري أبطال أوروبا|دوري الأبطال|\bUCL\b/i, not: /afc champions|caf champions|concacaf|asian champions|global champions/i },
+  { key: 'uel', group: '🏆 Europa League', re: /europa league|liga europa|ligue europa|الدوري الأوروبي|\bUEL\b/i },
+  { key: 'uecl', group: '🏆 Conference League', re: /conference league|دوري المؤتمر|\bUECL\b/i },
+  { key: 'pl', group: '🏆 Premier League', re: /premier league|\bEPL\b|\bsky sports? pl\b|الدوري الإنجليزي الممتاز/i, not: /scottish|welsh|irish|premier league 2\b|\bpl2\b/i },
+  { key: 'facup', group: '🏆 FA Cup', re: /\bFA Cup\b|كأس الاتحاد الإنجليزي/i, not: /youth|trophy|vase|scottish|welsh|irish/i },
+  { key: 'eflcup', group: '🏆 EFL Cup', re: /carabao|\bEFL Cup\b|\bleague cup\b|كأس الرابطة الإنجليزية|كأس كاراباو/i, not: /adib|\buae\b|scottish|welsh|irish|premier sports cup/i },
+  { key: 'champ', group: '🏆 Championship', re: /^champ:|(?:efl|sky bet|english)\s+championship|championship ppv/i },
+  { key: 'laliga', group: '🏆 La Liga', re: /\bla ?liga\b|الدوري الإسباني/i, not: /hypermotion|smartbank|segunda|liga portugal|liga mx|liga f\b/i },
+  { key: 'cdr', group: '🏆 Copa del Rey', re: /copa del rey|كأس ملك إسبانيا|كأس الملك الإسباني/i, not: /barcos|baloncesto/i },
+  { key: 'seriea', group: '🏆 Serie A', re: /\bserie a\b|الدوري الإيطالي/i, not: /brasileir|betano|serie a2|serie [bc]\b|girone|lega pro|primavera/i },
+  { key: 'coppa', group: '🏆 Coppa Italia', re: /coppa italia|كأس إيطاليا/i, not: /serie c|primavera/i },
+  { key: 'bundes', group: '🏆 Bundesliga', re: /bundesliga|الدوري الألماني/i, not: /2\.\s*bundesliga|zweite|regionalliga|3\. liga|austria|österreich|admiral/i },
+  { key: 'pokal', group: '🏆 DFB-Pokal', re: /dfb[- ]?pokal|كأس ألمانيا/i },
+  { key: 'ligue1', group: '🏆 Ligue 1', re: /ligue ?1\b|الدوري الفرنسي/i },
+]
+const UEFA_ALL = ['ucl', 'uel', 'uecl']
+// Shared vetoes: other sports and women's competitions that reuse league names, and
+// non-match programming (a channel airing "Premier League Review" isn't showing it).
+const OTHER_SPORT = /basket|handball|pallamano|volley|superlega|hockey|rugby|darts|netball|cricket|snooker|golf|tennis|boxing|drone|horse|esport|virtual|vela\b/i
+const WOMEN = /women|femen|frauen|femminile|f[ée]minin|\bwsl\b|uwcl|سيدات|نساء/i
+const SHOW = /highlight|hoogtepunten|review|\bshow\b|magazin|stories|\bbest\b|top goals|top \d+|goals? of|legend|classic|rewind|preview|analys|resumen|resúmen|zusammenfassung|replay|re-live|wiederholung|special|especial|feature|weekly|daily|\bnews\b|press conference|conferenza|rueda de prensa|pressekonferenz|weigh|goal rush|greatest|documentar|\bfilm\b|pel[ií]cula|countdown|build-?up|warm-?up|inside|kompakt|\bpur\b|retro|netbusters|full impact|\bep\.? ?\d|episode|folge/i
+const vetoed = (text: string) => OTHER_SPORT.test(text) || WOMEN.test(text) || SHOW.test(text)
+// A programme that is a live match: a "live" tag or a fixture ("X v Y", "X - Y", "X vs Y").
+const LIVE = /\blive\b|ᴸᶦᵛᵉ|\ben directo\b|\ben vivo\b|\bdiretta\b|\ben direct\b|مباشر/i
+const FIXTURE = /\S\s+(?:v|vs\.?|x|-|–|—|@)\s+\S/i
+
+/** Competitions a channel carries by its own name + provider category. A bare
+ *  "UEFA" package (UK| UEFA PPV) can't tell UCL from UEL/UECL — it joins all three. */
+export function staticCompetitions(name: string, category: string): string[] {
+  if (vetoed(name)) return []
+  const keys = COMPS.filter(
+    (c) => (c.re.test(name) || c.re.test(category)) && !c.not?.test(name) && !c.not?.test(category),
+  ).map((c) => c.key)
+  return keys.length || !/\bUEFA\b/i.test(category) ? keys : UEFA_ALL
+}
+
+// A season tag from before last season ("EFL Cup 07/08", "Goal Rush 2017/18") marks a retro replay.
+const seasonYear = (title: string): number | null => {
+  const m = title.match(/\b(\d{4}|\d{2})\/\d{2,4}\b/)
+  return m ? (m[1].length === 4 ? Number(m[1]) : 2000 + Number(m[1])) : null
+}
+
+/** Competitions a programme title proves a channel carries — live matches only. */
+export function learnedCompetitions(title: string, now = new Date()): string[] {
+  if (vetoed(title) || !(LIVE.test(title) || FIXTURE.test(title))) return []
+  const season = seasonYear(title)
+  if (season !== null && season < now.getFullYear() - 1) return []
+  return COMPS.filter((c) => c.re.test(title) && !c.not?.test(title)).map((c) => c.key)
+}
 
 async function apiGet<T>(cfg: XtreamConfig, action: string): Promise<T> {
   const url = `${cfg.host}/player_api.php?username=${cfg.user}&password=${cfg.pass}&action=${action}`
@@ -527,6 +624,7 @@ export async function fetchCuratedChannels(cfg: XtreamConfig): Promise<Channel[]
           group: chBucket,
           isEventSlot,
           q,
+          comps: staticCompetitions(name, group),
         },
       }
       const list = byBucket.get(chBucket)
@@ -596,6 +694,61 @@ export async function fetchCuratedChannels(cfg: XtreamConfig): Promise<Channel[]
   channels.push(...ufcReplays(vod))
   channels.push(...movie4kChannels(vod, vodCatName))
   return channels
+}
+
+// Buckets whose channels may be listed under a competition (football only).
+const COMP_SOURCE = new Set<string>([B.uk, B.fbPpv, B.ar, B.de, B.es, B.it, B.fr])
+// Everything before this bucket is football — competition groups slot in right before it.
+const FOOTBALL_END = B.ar
+// An EPG-learned association is trusted for this long (a cup round is ~monthly).
+const LEARN_DAYS = 60
+
+/**
+ * Curated channels plus one "🏆 …" group per competition, inserted after the
+ * football buckets. Each group lists every football-bucket channel carrying that
+ * competition — by name/category, or learned from the EPG for 24/7 channels (event
+ * slots count only by their CURRENT name) — quality first, then language (EN > AR >
+ * DE/ES), best feed plus one spare per channel. Copies keep the original's tvg-id
+ * so the guide follows them; the EPG endpoint never sees them.
+ */
+export function withCompetitionGroups(channels: Channel[], now = Date.now()): Channel[] {
+  const since = new Date(now - LEARN_DAYS * 864e5).toISOString().slice(0, 10)
+  type Row = { c: Channel; rh: number; rf: number; lang: number; region: number; idx: number }
+  const byComp = new Map<string, Row[]>()
+  channels.forEach((c, idx) => {
+    if (c.vodExt || !COMP_SOURCE.has(c.group)) return
+    const keys = new Set(c.comps)
+    // EPG-learned memberships apply to 24/7 channels only — never to event slots
+    // (their name IS the event) nor to news/highlights channels whose guide merely
+    // mentions a match ("Premier League Weekend Live" on Sky Sports News).
+    if (!c.isEventSlot && !vetoed(c.name)) {
+      for (const [k, seen] of Object.entries(LEARNED[c.tvgId] ?? {})) if (seen >= since) keys.add(k)
+    }
+    if (!keys.size) return
+    const { h: rh, fps: rf } = realRes(c.streamId, c.q ?? 2, c.isEventSlot || EVENT_ONLY.test(c.name))
+    const row: Row = { c, rh, rf, lang: languageRank(c.name), region: regionPref(c.name), idx }
+    for (const k of keys) (byComp.get(k) ?? byComp.set(k, []).get(k)!).push(row)
+  })
+  const groups: Channel[] = []
+  for (const comp of COMPS) {
+    const rows = byComp.get(comp.key)
+    if (!rows) continue
+    rows.sort(
+      (a, b) =>
+        b.rh - a.rh || b.rf - a.rf || (b.c.q ?? 0) - (a.c.q ?? 0) ||
+        a.lang - b.lang || a.region - b.region || a.idx - b.idx,
+    )
+    const seen = new Map<string, number>()
+    for (const r of rows) {
+      const k = chanKey(r.c.name)
+      const n = seen.get(k) ?? 0
+      if (n >= 2) continue // best feed + one spare
+      seen.set(k, n + 1)
+      groups.push({ ...r.c, group: comp.group })
+    }
+  }
+  const at = channels.findIndex((c) => c.group === FOOTBALL_END)
+  return at < 0 ? [...channels, ...groups] : [...channels.slice(0, at), ...groups, ...channels.slice(at)]
 }
 
 const q = (v: string) => v.replace(/"/g, "'")
@@ -821,12 +974,15 @@ export function buildEventEpg(
   // --- programmes ---
   for (const c of slots) nameAsTitle(c)
   const gotProg = new Set<string>() // channels that actually received real programmes
+  const realByCh = new Map<string, string[]>() // their programme blocks, for sibling feeds to borrow
+  const real = (id: string, block: string) => {
+    out.push(block)
+    gotProg.add(id)
+    ;(realByCh.get(id) ?? realByCh.set(id, []).get(id)!).push(block)
+  }
   // myepg real programmes (channel attr already rewritten to our tvg-ids)
   if (myepg) {
-    for (const p of myepg.programmes) {
-      out.push(p)
-      gotProg.add(programmeChannel(p))
-    }
+    for (const p of myepg.programmes) real(programmeChannel(p), p)
   }
   // provider programmes for channels myepg lacks
   const seenProg = new Set<string>()
@@ -837,8 +993,31 @@ export function buildEventEpg(
       const k = m[1] + '|' + (startM ? startM[1] : out.length)
       if (seenProg.has(k)) continue // skip duplicate programme declarations
       seenProg.add(k)
-      gotProg.add(m[1])
-      out.push(m[0])
+      real(m[1], m[0])
+    }
+  }
+  // Parallel feeds of one channel can carry DIFFERENT provider tvg-ids — TNT Sports 1
+  // is "TNTSport1.uk" on the UK/VIP feeds but "tntsports1.uk" on NOW, and only the
+  // latter exists in the guides — so an id with no programmes borrows its name-
+  // sibling's, re-tagged. A donor must be unambiguous: an id the provider also
+  // stamps on a differently-named channel (SkySportsNews.uk on a Main Event feed)
+  // never donates, or it would spread the wrong guide.
+  const sibIds = new Map<string, Set<string>>() // bucket|chanKey -> tvg-ids
+  const idKeys = new Map<string, Set<string>>() // tvg-id -> bucket|chanKeys it appears under
+  for (const c of channels) {
+    if (c.isEventSlot || !c.tvgId) continue
+    const k = `${c.group}|${chanKey(c.name)}`
+    ;(sibIds.get(k) ?? sibIds.set(k, new Set()).get(k)!).add(c.tvgId)
+    ;(idKeys.get(c.tvgId) ?? idKeys.set(c.tvgId, new Set()).get(c.tvgId)!).add(k)
+  }
+  for (const ids of sibIds.values()) {
+    if (ids.size < 2) continue
+    const donor = [...ids].find((id) => realByCh.has(id) && idKeys.get(id)!.size === 1)
+    if (!donor) continue
+    for (const id of ids) {
+      if (gotProg.has(id)) continue
+      for (const p of realByCh.get(donor)!) out.push(p.replace(/\bchannel="[^"]*"/, `channel="${xml(id)}"`))
+      gotProg.add(id)
     }
   }
   // fallback: any regular channel that received no real programmes gets

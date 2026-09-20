@@ -6,6 +6,7 @@ import {
   fetchCuratedChannels,
   providerEpgUrl,
   tokenOk,
+  withCompetitionGroups,
 } from './_lib.js'
 
 export default async function handler(req: any, res: any) {
@@ -16,7 +17,7 @@ export default async function handler(req: any, res: any) {
   }
   try {
     const cfg = configFromEnv()
-    const channels = await fetchCuratedChannels(cfg)
+    const channels = withCompetitionGroups(await fetchCuratedChannels(cfg))
     const proto = req.headers['x-forwarded-proto'] ?? 'https'
     const host = req.headers['x-forwarded-host'] ?? req.headers.host
     const ownEpg = `${proto}://${host}/api/epg?t=${process.env.PLAYLIST_TOKEN}`

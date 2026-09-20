@@ -1,0 +1,41 @@
+name: Learn competitions
+
+# Accumulate which channels air live matches of which competition, from the EPG.
+# Daily is enough: the guides reach ~36h ahead, so each day's matches are seen at
+# least once. Reads only our own /api/epg (no stream slot, no provider creds).
+on:
+  schedule:
+    - cron: '23 5 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: learn-competitions
+  cancel-in-progress: false
+
+jobs:
+  learn:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Learn from the EPG
+        env:
+          PLAYLIST_TOKEN: ${{ secrets.PLAYLIST_TOKEN }}
+        run: bun scripts/learn-competitions.ts
+
+      - name: Commit refreshed cache if changed
+        run: |
+          if git diff --quiet -- api/competition-cache.ts; then
+            echo "No competition changes this run."
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add api/competition-cache.ts
+            git commit -m "chore: learn competition channels from the EPG"
+            git push
+          fi

@@ -7,6 +7,7 @@ import {
   chanKey,
   learnedCompetitions,
   qualityScore,
+  saneFps,
   staticCompetitions,
   withCompetitionGroups,
   type Channel,
@@ -115,27 +116,35 @@ describe('competition groups', () => {
     expect(learnedCompetitions('Manchester City vs Norwich - Carabao Cup 2026 / 2027 - Round 3', new Date('2026-09-20'))).toEqual(['eflcup'])
   })
 
-  test('groups sort quality first, then language, and slot in after the football buckets', () => {
+  test('groups lead the playlist; always-on channels first, then quality, then language', () => {
     const mk = (streamId: number, name: string, group: string, q: number, extra: Partial<Channel> = {}): Channel =>
       ({ streamId, name, logo: '', tvgId: 'x', group, isEventSlot: false, q, comps: staticCompetitions(name, ''), ...extra })
     const channels = [
       mk(900000001, 'UK: SKY SPORTS PREMIER LEAGUE HD', '🏴 Sky Sports & UK Sports', 3),
-      mk(900000002, 'UK: EPL ARSENAL', '⚽ Football — Match PPV', 2, { isEventSlot: true }),
-      mk(900000007, 'DE: BUNDESLIGA REPLAY 1 HD', '📼 Football — Replays', 3),
       mk(900000003, 'AR: BUNDESLIGA 1 ᴿᴬᵂ', '🇸🇦 beIN & Arabic Sports', 4),
       mk(900000004, 'DE: SKY SPORT BUNDESLIGA 1 4K', '🇩🇪 German Sports', 5),
       mk(900000005, 'DE: SKY SPORT BUNDESLIGA 1 HD', '🇩🇪 German Sports', 3),
       mk(900000006, 'DE: SKY SPORT BUNDESLIGA 1 (MOBIL)', '🇩🇪 German Sports', 3),
+      mk(900000008, 'UK: EPL 1 PPV ᵁᴴᴰ ³⁸⁴⁰ᴾ', '⚽ Football — Match PPV', 5, { isEventSlot: true }),
+      mk(900000002, 'UK: EPL ARSENAL', '⚽ Football — Match PPV', 2, { isEventSlot: true }),
+      mk(900000007, 'DE: BUNDESLIGA REPLAY 1 HD', '📼 Football — Replays', 3),
     ]
     const out = withCompetitionGroups(channels)
     const groups = out.map((c) => c.group)
-    expect(groups.indexOf('🏆 Premier League')).toBe(3) // right after the three football-bucket channels
-    expect(groups.lastIndexOf('🏆 Bundesliga')).toBeLessThan(groups.indexOf('🇸🇦 beIN & Arabic Sports'))
+    expect(groups[0]).toBe('🏆 Premier League')
+    expect(groups.lastIndexOf('🏆 Bundesliga')).toBeLessThan(groups.indexOf('🏴 Sky Sports & UK Sports'))
+    // an idle 4K-marked slot never outranks a channel that is actually on air
     expect(out.filter((c) => c.group === '🏆 Premier League').map((c) => c.name))
-      .toEqual(['UK: SKY SPORTS PREMIER LEAGUE HD', 'UK: EPL ARSENAL'])
+      .toEqual(['UK: SKY SPORTS PREMIER LEAGUE HD', 'UK: EPL 1 PPV ᵁᴴᴰ ³⁸⁴⁰ᴾ', 'UK: EPL ARSENAL'])
     // 4K first, then the Arabic RAW at 1080 over the German 720p feeds; best + one spare per channel; replays never
     expect(out.filter((c) => c.group === '🏆 Bundesliga').map((c) => c.name))
       .toEqual(['DE: SKY SPORT BUNDESLIGA 1 4K', 'AR: BUNDESLIGA 1 ᴿᴬᵂ', 'DE: SKY SPORT BUNDESLIGA 1 HD'])
-    expect(out.length).toBe(channels.length + 5)
+    expect(out.length).toBe(channels.length + 6)
+  })
+
+  test('a 100fps reading is the 50p field rate, not a better feed', () => {
+    expect(saneFps(100)).toBe(50)
+    expect(saneFps(50)).toBe(50)
+    expect(saneFps(120)).toBe(0)
   })
 })

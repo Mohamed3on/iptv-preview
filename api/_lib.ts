@@ -127,16 +127,19 @@ export const KEEP: number[] = [
   2064, // US| 24/7 KIDS/FAMILY RAW 60fps
 ]
 
-// Viewer-facing buckets, in display order.
+// Viewer-facing buckets, in display order — by how often each is the way in, most
+// used first at stable positions: the 🏆 competition groups lead (see
+// withCompetitionGroups), then the match-day trio (Sky/UK, the live-match PPV pool,
+// beIN), the other regions by preference, replays, other sports, non-sport, VOD.
 const B = {
   uk: '🏴 Sky Sports & UK Sports',
   fbPpv: '⚽ Football — Match PPV',
-  fbReplay: '📼 Football — Replays',
   ar: '🇸🇦 beIN & Arabic Sports',
   de: '🇩🇪 German Sports',
   es: '🇪🇸 Spanish Sports',
   it: '🇮🇹 Italian Sports',
   fr: '🇫🇷 French Sports',
+  fbReplay: '📼 Football — Replays',
   tennis: '🎾 Tennis',
   ufc: '🥊 UFC & Fight PPV',
   ufcVod: '🎬 UFC PPV Replays (VOD)',
@@ -272,12 +275,13 @@ export function qualityScore(channelName: string, groupName: string): number {
 }
 
 // ffprobe reads r_frame_rate, which on some feeds is the container TICK rate rather
-// than the display rate. 100 is real — sports feeds report the 50p field rate that
-// way — but 120/240/250/300 only ever show up on 24-30fps material (nursery-rhyme
-// loops, documentary channels), where it was floating them above genuine 60fps
-// channels. Anything above 100 is therefore treated as unknown rather than trusted.
+// than the display rate. 100 is a genuine reading, but it is the FIELD rate of 50p
+// sports feeds — the same picture as 50 — so it ranks as 50 rather than outranking
+// every 50p feed. 120/240/250/300 only ever show up on 24-30fps material
+// (nursery-rhyme loops, documentary channels), where it was floating them above
+// genuine 60fps channels, so anything above 100 is treated as unknown.
 export const saneFps = (fps: number): number =>
-  Number.isFinite(fps) && fps > 0 && fps <= 100 ? fps : 0
+  !Number.isFinite(fps) || fps <= 0 || fps > 100 ? 0 : fps === 100 ? 50 : fps
 
 // Resolution/fps used to order feeds WITHIN a marker tier (the marker sets the tier).
 // Probed value when we have it — so the genuinely-highest-res stream floats up — else
@@ -408,22 +412,26 @@ const nameKey = (s: string): string =>
 // to see a cup round or a UEFA week directly). Vetoes keep out other sports and
 // women's/second-tier competitions that reuse the names (volleyball "Serie A",
 // "Frauen-Bundesliga", "LaLiga Hypermotion", "Brasileiro Serie A").
+// Display order: the weekly competitions by region preference (UK, ES, DE, IT), then
+// the secondary UEFA cups, then domestic cups. Groups that exist only while the EPG
+// has seen a round recently (FA Cup, EFL Cup, Coppa, Pokal) trail the block, so their
+// coming and going never shifts the groups everyone uses.
 interface Competition { key: string; group: string; re: RegExp; not?: RegExp }
 export const COMPS: Competition[] = [
+  { key: 'pl', group: '🏆 Premier League', re: /premier league|\bEPL\b|\bsky sports? pl\b|الدوري الإنجليزي الممتاز/i, not: /scottish|welsh|irish|premier league 2\b|\bpl2\b/i },
   { key: 'ucl', group: '🏆 Champions League', re: /champions league|liga de campeones|ligue des champions|دوري أبطال أوروبا|دوري الأبطال|\bUCL\b/i, not: /afc champions|caf champions|concacaf|asian champions|global champions/i },
+  { key: 'laliga', group: '🏆 La Liga', re: /\bla ?liga\b|الدوري الإسباني/i, not: /hypermotion|smartbank|segunda|liga portugal|liga mx|liga f\b/i },
+  { key: 'bundes', group: '🏆 Bundesliga', re: /bundesliga|الدوري الألماني/i, not: /2\.\s*bundesliga|zweite|regionalliga|3\. liga|austria|österreich|admiral/i },
+  { key: 'seriea', group: '🏆 Serie A', re: /\bserie a\b|الدوري الإيطالي/i, not: /brasileir|betano|serie a2|serie [bc]\b|girone|lega pro|primavera/i },
+  { key: 'ligue1', group: '🏆 Ligue 1', re: /ligue ?1\b|الدوري الفرنسي/i },
   { key: 'uel', group: '🏆 Europa League', re: /europa league|liga europa|ligue europa|الدوري الأوروبي|\bUEL\b/i },
   { key: 'uecl', group: '🏆 Conference League', re: /conference league|دوري المؤتمر|\bUECL\b/i },
-  { key: 'pl', group: '🏆 Premier League', re: /premier league|\bEPL\b|\bsky sports? pl\b|الدوري الإنجليزي الممتاز/i, not: /scottish|welsh|irish|premier league 2\b|\bpl2\b/i },
+  { key: 'champ', group: '🏆 Championship', re: /^champ:|(?:efl|sky bet|english)\s+championship|championship ppv/i },
+  { key: 'cdr', group: '🏆 Copa del Rey', re: /copa del rey|كأس ملك إسبانيا|كأس الملك الإسباني/i, not: /barcos|baloncesto/i },
   { key: 'facup', group: '🏆 FA Cup', re: /\bFA Cup\b|كأس الاتحاد الإنجليزي/i, not: /youth|trophy|vase|scottish|welsh|irish/i },
   { key: 'eflcup', group: '🏆 EFL Cup', re: /carabao|\bEFL Cup\b|\bleague cup\b|كأس الرابطة الإنجليزية|كأس كاراباو/i, not: /adib|\buae\b|scottish|welsh|irish|premier sports cup/i },
-  { key: 'champ', group: '🏆 Championship', re: /^champ:|(?:efl|sky bet|english)\s+championship|championship ppv/i },
-  { key: 'laliga', group: '🏆 La Liga', re: /\bla ?liga\b|الدوري الإسباني/i, not: /hypermotion|smartbank|segunda|liga portugal|liga mx|liga f\b/i },
-  { key: 'cdr', group: '🏆 Copa del Rey', re: /copa del rey|كأس ملك إسبانيا|كأس الملك الإسباني/i, not: /barcos|baloncesto/i },
-  { key: 'seriea', group: '🏆 Serie A', re: /\bserie a\b|الدوري الإيطالي/i, not: /brasileir|betano|serie a2|serie [bc]\b|girone|lega pro|primavera/i },
   { key: 'coppa', group: '🏆 Coppa Italia', re: /coppa italia|كأس إيطاليا/i, not: /serie c|primavera/i },
-  { key: 'bundes', group: '🏆 Bundesliga', re: /bundesliga|الدوري الألماني/i, not: /2\.\s*bundesliga|zweite|regionalliga|3\. liga|austria|österreich|admiral/i },
   { key: 'pokal', group: '🏆 DFB-Pokal', re: /dfb[- ]?pokal|كأس ألمانيا/i },
-  { key: 'ligue1', group: '🏆 Ligue 1', re: /ligue ?1\b|الدوري الفرنسي/i },
 ]
 const UEFA_ALL = ['ucl', 'uel', 'uecl']
 // Shared vetoes: other sports and women's competitions that reuse league names, and
@@ -583,7 +591,7 @@ export async function fetchCuratedChannels(cfg: XtreamConfig): Promise<Channel[]
     .filter(([id, name]) => !keepSet.has(id) && autoIncluded(name))
     .map(([id]) => id)
 
-  type Item = { c: Channel; q: number; rh: number; rf: number; lang: number; region: number; backup: number; bein: number; nkey: string; idx: number }
+  type Item = { c: Channel; q: number; rh: number; rf: number; lang: number; region: number; backup: number; bein: number; nkey: string; ck: string; idx: number }
   const byBucket = new Map<string, Item[]>()
 
   const ids = [...KEEP, ...autoIds]
@@ -614,6 +622,7 @@ export async function fetchCuratedChannels(cfg: XtreamConfig): Promise<Channel[]
         backup,
         bein: BEIN.test(name) || BEIN.test(group) ? 0 : 1,
         nkey: nameKey(name),
+        ck: chanKey(name),
         idx,
         c: {
           streamId: s.stream_id,
@@ -652,8 +661,15 @@ export async function fetchCuratedChannels(cfg: XtreamConfig): Promise<Channel[]
         a.lang - b.lang || a.region - b.region || a.backup - b.backup ||
         a.nkey.localeCompare(b.nkey, 'en', { numeric: true }) || a.idx - b.idx,
     )
+    // The bar is FHD+: a sub-1080p copy of a channel that also has a 1080p+ feed here
+    // is redundant, so it goes — HD stays only where nothing better exists. Judged on
+    // EFFECTIVE height (probed where known), so a feed labelled "HEVC 4K" that really
+    // runs 720p is the copy that goes, and an unlabelled feed probed at 1080p50 stays.
+    const bestRes = new Map<string, number>()
+    for (const it of items) bestRes.set(it.ck, Math.max(bestRes.get(it.ck) ?? 0, it.rh))
     const seen = new Map<string, number>()
     for (const it of items) {
+      if (it.rh < 1080 && (bestRes.get(it.ck) ?? 0) >= 1080) continue
       // Arabic bundles the same AD/StarzPlay channel at many quality tiers, so
       // collapse it tier-agnostically there; elsewhere keep tiers distinct.
       const key = isArabic ? dedupeKey(it.c.name) : dedupeKey(it.c.name, it.q)
@@ -698,18 +714,18 @@ export async function fetchCuratedChannels(cfg: XtreamConfig): Promise<Channel[]
 
 // Buckets whose channels may be listed under a competition (football only).
 const COMP_SOURCE = new Set<string>([B.uk, B.fbPpv, B.ar, B.de, B.es, B.it, B.fr])
-// Everything before this bucket is football — competition groups slot in right before it.
-const FOOTBALL_END = B.ar
 // An EPG-learned association is trusted for this long (a cup round is ~monthly).
 const LEARN_DAYS = 60
 
 /**
- * Curated channels plus one "🏆 …" group per competition, inserted after the
- * football buckets. Each group lists every football-bucket channel carrying that
- * competition — by name/category, or learned from the EPG for 24/7 channels (event
- * slots count only by their CURRENT name) — quality first, then language (EN > AR >
- * DE/ES), best feed plus one spare per channel. Copies keep the original's tvg-id
- * so the guide follows them; the EPG endpoint never sees them.
+ * One "🏆 …" group per competition, leading the playlist, then the curated channels.
+ * Each group lists every football-bucket channel carrying that competition — by
+ * name/category, or learned from the EPG for 24/7 channels (event slots count only
+ * by their CURRENT name). Always-on channels come first (an idle PPV slot's "4K"
+ * marker can't be verified, so it never outranks a channel that is actually on air),
+ * then quality, then language (EN > AR > DE/ES); best feed plus one spare per
+ * channel. Copies keep the original's tvg-id so the guide follows them; the EPG
+ * endpoint never sees them.
  */
 export function withCompetitionGroups(channels: Channel[], now = Date.now()): Channel[] {
   const since = new Date(now - LEARN_DAYS * 864e5).toISOString().slice(0, 10)
@@ -735,6 +751,7 @@ export function withCompetitionGroups(channels: Channel[], now = Date.now()): Ch
     if (!rows) continue
     rows.sort(
       (a, b) =>
+        Number(a.c.isEventSlot) - Number(b.c.isEventSlot) ||
         b.rh - a.rh || b.rf - a.rf || (b.c.q ?? 0) - (a.c.q ?? 0) ||
         a.lang - b.lang || a.region - b.region || a.idx - b.idx,
     )
@@ -747,8 +764,7 @@ export function withCompetitionGroups(channels: Channel[], now = Date.now()): Ch
       groups.push({ ...r.c, group: comp.group })
     }
   }
-  const at = channels.findIndex((c) => c.group === FOOTBALL_END)
-  return at < 0 ? [...channels, ...groups] : [...channels.slice(0, at), ...groups, ...channels.slice(at)]
+  return [...groups, ...channels]
 }
 
 const q = (v: string) => v.replace(/"/g, "'")

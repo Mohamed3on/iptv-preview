@@ -1,9 +1,9 @@
 // Regenerate the trimmed playlist as a local file (offline copy of /api/playlist).
 // Usage: bun scripts/build-local.ts   (reads creds from .env.local)
-import { buildM3U, configFromEnv, fetchCuratedChannels, providerEpgUrl } from '../api/_lib.js'
+import { buildM3U, configFromEnv, fetchCuratedChannels, providerEpgUrl, withCompetitionGroups } from '../api/_lib.js'
 
 const cfg = configFromEnv()
-const channels = await fetchCuratedChannels(cfg)
+const channels = withCompetitionGroups(await fetchCuratedChannels(cfg))
 const dest = `${process.env.HOME}/Downloads/StrongTV Sports Trimmed.m3u`
 await Bun.write(dest, buildM3U(cfg, channels, [providerEpgUrl(cfg)]))
 

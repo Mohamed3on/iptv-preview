@@ -4,10 +4,10 @@
 // trusts an entry for 60 days, so a channel stays listed between cup rounds.
 export const LEARNED: Record<string, Record<string, string>> = {
  "AbuDhabiSports1PremiumAr.ae": {
-  "seriea": "2026-09-28"
+  "seriea": "2026-09-29"
  },
  "BeinSports1.fr": {
-  "ligue1": "2026-09-25"
+  "ligue1": "2026-09-29"
  },
  "BeinSports2.fr": {
   "laliga": "2026-09-22",
@@ -17,7 +17,7 @@ export const LEARNED: Record<string, Record<string, string>> = {
   "bundes": "2026-09-25"
  },
  "DAZN1.es": {
-  "bundes": "2026-09-25",
+  "bundes": "2026-09-29",
   "laliga": "2026-09-29",
   "seriea": "2026-09-20"
  },
@@ -26,7 +26,7 @@ export const LEARNED: Record<string, Record<string, string>> = {
   "ligue1": "2026-09-20"
  },
  "DAZN2.es": {
-  "bundes": "2026-09-29",
+  "bundes": "2026-09-30",
   "laliga": "2026-09-28",
   "ligue1": "2026-09-24"
  },
@@ -70,7 +70,7 @@ export const LEARNED: Record<string, Record<string, string>> = {
   "pl": "2026-09-19"
  },
  "SkySportUHD.de": {
-  "pokal": "2026-09-27"
+  "pokal": "2026-09-29"
  },
  "SkySportsMix.uk": {
   "pokal": "2026-09-26",
@@ -91,11 +91,11 @@ export const LEARNED: Record<string, Record<string, string>> = {
  "beINSports1En.qa": {
   "laliga": "2026-09-24",
   "ligue1": "2026-09-23",
-  "pl": "2026-09-28",
+  "pl": "2026-09-30",
   "uel": "2026-09-18"
  },
  "beINSports1Fr.qa": {
-  "ligue1": "2026-09-25"
+  "ligue1": "2026-09-29"
  },
  "beINSports2.qa": {
   "laliga": "2026-09-22",
@@ -123,7 +123,7 @@ export const LEARNED: Record<string, Record<string, string>> = {
   "eflcup": "2026-09-16",
   "laliga": "2026-09-21",
   "ligue1": "2026-09-20",
-  "pl": "2026-09-20",
+  "pl": "2026-09-29",
   "uel": "2026-09-18"
  },
  "beINSports6En.qa": {
@@ -170,8 +170,8 @@ export const LEARNED: Record<string, Record<string, string>> = {
  "mligadecampeones1.es": {
   "pl": "2026-09-21",
   "seriea": "2026-09-20",
-  "ucl": "2026-09-29",
-  "uel": "2026-09-29"
+  "ucl": "2026-09-30",
+  "uel": "2026-09-30"
  },
  "skysport6.de": {
   "pl": "2026-09-20"
@@ -187,7 +187,7 @@ export const LEARNED: Record<string, Record<string, string>> = {
   "pl": "2026-09-20"
  },
  "skysportsfootball.uk": {
-  "eflcup": "2026-09-21"
+  "eflcup": "2026-09-29"
  },
  "skysportsmix.uk": {
   "eflcup": "2026-09-17"
@@ -198,8 +198,11 @@ export const LEARNED: Record<string, Record<string, string>> = {
  "sportdigital.de": {
   "eflcup": "2026-09-27"
  },
+ "sx.1201147": {
+  "ucl": "2026-09-28"
+ },
  "sx.1290226": {
-  "laliga": "2026-09-29"
+  "laliga": "2026-09-30"
  },
  "sx.1467810": {
   "bundes": "2026-09-27",
@@ -227,8 +230,8 @@ export const LEARNED: Record<string, Record<string, string>> = {
   "ucl": "2026-09-23"
  },
  "sx.1556138": {
-  "ligue1": "2026-09-29",
-  "pl": "2026-09-29"
+  "ligue1": "2026-09-30",
+  "pl": "2026-09-30"
  },
  "sx.1683720": {
   "seriea": "2026-09-20"
@@ -237,19 +240,19 @@ export const LEARNED: Record<string, Record<string, string>> = {
   "ucl": "2026-09-21"
  },
  "sx.351704": {
-  "uel": "2026-09-29"
+  "uel": "2026-09-30"
  },
  "sx.351705": {
-  "uel": "2026-09-29"
+  "uel": "2026-09-30"
  },
  "sx.351708": {
-  "seriea": "2026-09-29"
+  "seriea": "2026-09-30"
  },
  "sx.351709": {
-  "seriea": "2026-09-29"
+  "seriea": "2026-09-30"
  },
  "sx.351711": {
-  "uel": "2026-09-29"
+  "uel": "2026-09-30"
  },
  "sx.351713": {
   "seriea": "2026-09-21"
@@ -277,7 +280,7 @@ export const LEARNED: Record<string, Record<string, string>> = {
   "eflcup": "2026-09-18"
  },
  "sx.588045": {
-  "pl": "2026-09-29"
+  "pl": "2026-09-30"
  },
  "sx.621642": {
   "laliga": "2026-09-20"
@@ -290,7 +293,7 @@ export const LEARNED: Record<string, Record<string, string>> = {
   "laliga": "2026-09-20"
  },
  "sx.839972": {
-  "laliga": "2026-09-28"
+  "laliga": "2026-09-29"
  },
  "sx.985090": {
   "eflcup": "2026-09-17",
@@ -299,14 +302,14 @@ export const LEARNED: Record<string, Record<string, string>> = {
   "pl": "2026-09-21"
  },
  "sx.985104": {
-  "ligue1": "2026-09-24"
+  "ligue1": "2026-09-29"
  },
  "tntsports1.uk": {
   "seriea": "2026-09-22",
   "uel": "2026-09-17"
  },
  "tntsports4.uk": {
-  "seriea": "2026-09-23",
+  "seriea": "2026-09-30",
   "uel": "2026-09-18"
  }
 }

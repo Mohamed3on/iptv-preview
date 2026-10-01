@@ -4,7 +4,7 @@
 // trusts an entry for 60 days, so a channel stays listed between cup rounds.
 export const LEARNED: Record<string, Record<string, string>> = {
  "AbuDhabiSports1PremiumAr.ae": {
-  "seriea": "2026-09-30"
+  "seriea": "2026-10-01"
  },
  "BeinSports1.fr": {
   "ligue1": "2026-09-29"
@@ -38,7 +38,7 @@ export const LEARNED: Record<string, Record<string, string>> = {
   "ucl": "2026-10-01"
  },
  "MUTV.uk": {
-  "ucl": "2026-10-01"
+  "ucl": "2026-10-02"
  },
  "PremierSports1.ie": {
   "laliga": "2026-09-20"
@@ -74,7 +74,7 @@ export const LEARNED: Record<string, Record<string, string>> = {
   "pl": "2026-09-19"
  },
  "SkySportUHD.de": {
-  "pokal": "2026-09-29"
+  "pokal": "2026-10-01"
  },
  "SkySportsMix.uk": {
   "pokal": "2026-10-01",
@@ -95,7 +95,7 @@ export const LEARNED: Record<string, Record<string, string>> = {
  "beINSports1En.qa": {
   "laliga": "2026-09-24",
   "ligue1": "2026-09-23",
-  "pl": "2026-10-01",
+  "pl": "2026-10-02",
   "uel": "2026-09-18"
  },
  "beINSports1Fr.qa": {
@@ -159,7 +159,7 @@ export const LEARNED: Record<string, Record<string, string>> = {
   "uel": "2026-09-16"
  },
  "dazn1.de": {
-  "bundes": "2026-09-25",
+  "bundes": "2026-10-01",
   "laliga": "2026-10-01"
  },
  "dazn2.de": {
@@ -175,8 +175,8 @@ export const LEARNED: Record<string, Record<string, string>> = {
  "mligadecampeones1.es": {
   "pl": "2026-09-21",
   "seriea": "2026-09-20",
-  "ucl": "2026-09-30",
-  "uel": "2026-10-01"
+  "ucl": "2026-10-02",
+  "uel": "2026-10-02"
  },
  "skysport6.de": {
   "pl": "2026-09-20"
@@ -192,7 +192,7 @@ export const LEARNED: Record<string, Record<string, string>> = {
   "pl": "2026-09-20"
  },
  "skysportsfootball.uk": {
-  "eflcup": "2026-09-30"
+  "eflcup": "2026-10-01"
  },
  "skysportsmix.uk": {
   "eflcup": "2026-09-17"
@@ -207,7 +207,7 @@ export const LEARNED: Record<string, Record<string, string>> = {
   "ucl": "2026-09-28"
  },
  "sx.1290226": {
-  "laliga": "2026-10-01"
+  "laliga": "2026-10-02"
  },
  "sx.1467810": {
   "bundes": "2026-10-01",
@@ -237,8 +237,8 @@ export const LEARNED: Record<string, Record<string, string>> = {
   "ucl": "2026-09-23"
  },
  "sx.1556138": {
-  "ligue1": "2026-10-01",
-  "pl": "2026-10-01"
+  "ligue1": "2026-10-02",
+  "pl": "2026-10-02"
  },
  "sx.1683720": {
   "seriea": "2026-09-20"
@@ -247,19 +247,19 @@ export const LEARNED: Record<string, Record<string, string>> = {
   "ucl": "2026-09-21"
  },
  "sx.351704": {
-  "uel": "2026-10-01"
+  "uel": "2026-10-02"
  },
  "sx.351705": {
-  "uel": "2026-10-01"
+  "uel": "2026-10-02"
  },
  "sx.351708": {
-  "seriea": "2026-10-01"
+  "seriea": "2026-10-02"
  },
  "sx.351709": {
-  "seriea": "2026-10-01"
+  "seriea": "2026-10-02"
  },
  "sx.351711": {
-  "uel": "2026-10-01"
+  "uel": "2026-10-02"
  },
  "sx.351713": {
   "seriea": "2026-09-21"
@@ -287,7 +287,7 @@ export const LEARNED: Record<string, Record<string, string>> = {
   "eflcup": "2026-09-18"
  },
  "sx.588045": {
-  "pl": "2026-09-30"
+  "pl": "2026-10-01"
  },
  "sx.621642": {
   "laliga": "2026-09-20"
@@ -296,11 +296,14 @@ export const LEARNED: Record<string, Record<string, string>> = {
   "eflcup": "2026-09-24",
   "ligue1": "2026-10-01"
  },
+ "sx.839915": {
+  "laliga": "2026-10-02"
+ },
  "sx.839971": {
   "laliga": "2026-09-20"
  },
  "sx.839972": {
-  "laliga": "2026-09-30"
+  "laliga": "2026-10-01"
  },
  "sx.985090": {
   "eflcup": "2026-09-17",
@@ -317,6 +320,7 @@ export const LEARNED: Record<string, Record<string, string>> = {
  },
  "tntsports4.uk": {
   "seriea": "2026-10-01",
-  "uel": "2026-09-18"
+  "ucl": "2026-10-01",
+  "uel": "2026-10-01"
  }
 }

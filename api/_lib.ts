@@ -17,6 +17,9 @@ import { QUALITY } from './quality-cache.js'
 // Channels seen airing live matches of each competition in the EPG (tvg-id ->
 // competition -> last-seen date), learned daily by scripts/learn-competitions.ts.
 import { LEARNED } from './competition-cache.js'
+// Guide channels Jev matched offline to ours (scripts/match-epg-channels.ts).
+import { EPG_MATCHES } from './epg-matches.js'
+import { askJev, type JevQuestion } from './_jev.js'
 
 // Provider category_ids to keep.
 export const KEEP: number[] = [
@@ -440,9 +443,9 @@ const OTHER_SPORT = /basket|handball|pallamano|volley|superlega|hockey|rugby|dar
 const WOMEN = /women|femen|frauen|femminile|f[ée]minin|\bwsl\b|uwcl|سيدات|نساء/i
 const SHOW = /highlight|hoogtepunten|review|\bshow\b|magazin|stories|\bbest\b|top goals|top \d+|goals? of|legend|classic|rewind|preview|analys|resumen|resúmen|zusammenfassung|replay|re-live|wiederholung|special|especial|feature|weekly|daily|\bnews\b|press conference|conferenza|rueda de prensa|pressekonferenz|weigh|goal rush|greatest|documentar|\bfilm\b|pel[ií]cula|countdown|build-?up|warm-?up|inside|kompakt|\bpur\b|retro|netbusters|full impact|\bep\.? ?\d|episode|folge/i
 const vetoed = (text: string) => OTHER_SPORT.test(text) || WOMEN.test(text) || SHOW.test(text)
-// A programme that is a live match: a "live" tag or a fixture ("X v Y", "X - Y", "X vs Y").
+// A programme that is a live match: a "live" tag or a fixture ("X v Y", "X - Y", "X vs Y", Arabic "X × Y").
 const LIVE = /\blive\b|ᴸᶦᵛᵉ|\ben directo\b|\ben vivo\b|\bdiretta\b|\ben direct\b|مباشر/i
-const FIXTURE = /\S\s+(?:v|vs\.?|x|-|–|—|@)\s+\S/i
+const FIXTURE = /\S\s+(?:v|vs\.?|x|×|-|–|—|@)\s+\S|\S×\S/i
 
 /** Competitions a channel carries by its own name + provider category. A bare
  *  "UEFA" package (UK| UEFA PPV) can't tell UCL from UEL/UECL — it joins all three. */
@@ -460,12 +463,54 @@ const seasonYear = (title: string): number | null => {
   return m ? (m[1].length === 4 ? Number(m[1]) : 2000 + Number(m[1])) : null
 }
 
+/** Whether a programme title could be a current live match: live-tagged or a fixture, no veto,
+ *  no retro season. Only these need their competition decided. */
+export function couldBeLiveMatch(title: string, now = new Date()): boolean {
+  if (vetoed(title) || !(LIVE.test(title) || FIXTURE.test(title))) return false
+  const season = seasonYear(title)
+  return season === null || season >= now.getFullYear() - 1
+}
+
 /** Competitions a programme title proves a channel carries — live matches only. */
 export function learnedCompetitions(title: string, now = new Date()): string[] {
-  if (vetoed(title) || !(LIVE.test(title) || FIXTURE.test(title))) return []
-  const season = seasonYear(title)
-  if (season !== null && season < now.getFullYear() - 1) return []
+  if (!couldBeLiveMatch(title, now)) return []
   return COMPS.filter((c) => c.re.test(title) && !c.not?.test(title)).map((c) => c.key)
+}
+
+// Jev's options: the group names, terse (every option is billed in every question), with a hint
+// only where a name is ambiguous, plus two catch-alls.
+const JEV_HINTS: Record<string, string> = {
+  laliga: "Spain's top division", bundes: "Germany's top division", seriea: "Italy's top division",
+  champ: "England's second tier", eflcup: 'Carabao Cup',
+}
+const jevLabel = (c: Competition) => c.group.replace('🏆 ', '')
+const JEV_COMPS: Record<string, string | null> = Object.fromEntries([
+  ...COMPS.map((c) => [jevLabel(c), JEV_HINTS[c.key] ?? null]),
+  ['other football', 'other leagues or divisions, national teams, friendlies'],
+  ['not football', null],
+])
+
+/**
+ * Jev's verdict on match-like titles (couldBeLiveMatch), for the daily learner. The regexes
+ * miss team-only fixtures and other languages, and match shows that look like fixtures. On 852
+ * hand-labelled guide titles (EN/DE/ES/IT/FR/AR/RU) this scored precision 0.96 and recall 0.92;
+ * the regexes scored 0.63 and 0.42. Throws if Jev is unavailable.
+ */
+export async function jevCompetitions(titles: string[]): Promise<Map<string, string[]>> {
+  const questions: Record<string, JevQuestion> = {}
+  titles.forEach((title, i) => {
+    const t = JSON.stringify(title)
+    questions[`c${i}`] = { type: 'choice', instructions: `Competition of the TV programme ${t}?`, criteria: JEV_COMPS }
+    questions[`m${i}`] = { type: 'noul', instructions: `Is the TV programme ${t} one football match itself (live or in full), not highlights, a show, a preview or a past-season classic?` }
+    questions[`w${i}`] = { type: 'noul', instructions: `Is ${t} women's, youth or reserve football?` }
+  })
+  const a = await askJev('Sports TV guide (EPG) programme titles.', questions)
+  return new Map(titles.map((title, i) => {
+    const { choice = '', probabilities = {} } = a[`c${i}`]
+    const comp = COMPS.find((c) => jevLabel(c) === choice)
+    const yes = comp && probabilities[choice] >= 0.8 && a[`m${i}`].noul! >= 0.6 && a[`w${i}`].noul! < 0.5
+    return [title, yes ? [comp.key] : []]
+  }))
 }
 
 async function apiGet<T>(cfg: XtreamConfig, action: string): Promise<T> {
@@ -713,7 +758,7 @@ export async function fetchCuratedChannels(cfg: XtreamConfig): Promise<Channel[]
 }
 
 // Buckets whose channels may be listed under a competition (football only).
-const COMP_SOURCE = new Set<string>([B.uk, B.fbPpv, B.ar, B.de, B.es, B.it, B.fr])
+export const COMP_SOURCE = new Set<string>([B.uk, B.fbPpv, B.ar, B.de, B.es, B.it, B.fr])
 // An EPG-learned association is trusted for this long (a cup round is ~monthly).
 const LEARN_DAYS = 60
 
@@ -815,31 +860,36 @@ const programmeChannel = (block: string) => block.match(/\bchannel="([^"]*)"/)?.
 export interface MyepgGuide {
   /** <programme> blocks with the channel attr rewritten to our tvg-id */
   programmes: string[]
-  /** our tvg-ids that myepg covered, so provider EPG only fills the rest */
+  /** our tvg-ids that received myepg programmes, so provider EPG only fills the rest */
   covered: Set<string>
 }
 
 /** Our channels keyed by every way a myepg <channel> might name them. */
 interface MyepgLookups {
-  ids: Set<string> // tvg-id (exact id match)
+  ids: Map<string, string> // lower-cased tvg-id -> tvg-id (exact id match)
   byRaw: Map<string, string> // identical full name -> tvg-id
   byExact: Map<string, string> // prefix-stripped name -> tvg-id
   byFuzzy: Map<string, string> // token-sorted name -> tvg-id
 }
 
-// Resolve one myepg <channel> block to one of OUR tvg-ids, in priority order:
-// exact id, identical full name, then same-country looser name. First match wins.
+// Resolve one myepg <channel> block to OUR tvg-ids, in priority order: exact id, identical
+// full name, then same-country looser name (first match wins) — plus our channel whose id
+// differs only in case, and the channels Jev matched to it offline (`matches`), which none
+// of the name rules reach.
 function resolveMyepgChannel(
   block: string,
-  remap: Map<string, string>,
+  remap: Map<string, string[]>,
+  claimed: Set<string>,
   covered: Set<string>,
   lookups: MyepgLookups,
+  matches: Record<string, string[]>,
 ): void {
   const idm = block.match(/\bid="([^"]*)"/)
   if (!idm) return
   const mid = idm[1]
   if (remap.has(mid)) return
-  let our = lookups.ids.has(mid) ? mid : undefined // exact id — always the same channel
+  const sameId = lookups.ids.get(mid.toLowerCase()) // guides vary the case: beinsports3.fr
+  let our = sameId === mid ? mid : undefined // exact id — always the same channel
   if (!our) {
     for (const dm of block.matchAll(/<display-name[^>]*>([^<]*)<\/display-name>/g)) {
       const n = dm[1]
@@ -854,10 +904,15 @@ function resolveMyepgChannel(
       if (cand && epgCountry(mid) && epgCountry(mid) === epgCountry(cand)) { our = cand; break }
     }
   }
-  if (our && !covered.has(our)) {
-    remap.set(mid, our)
-    covered.add(our)
-  }
+  // A channel already claimed in this guide is skipped — except for Jev's matches: guides often
+  // list a channel twice, once with no programmes, and that empty entry may have claimed it.
+  const ours = [...new Set([
+    ...[our, sameId].filter((id): id is string => !!id && !claimed.has(id)),
+    ...(matches[mid] ?? []).filter((id) => lookups.ids.get(id.toLowerCase()) === id),
+  ])].filter((id) => !covered.has(id))
+  if (!ours.length) return
+  remap.set(mid, ours)
+  for (const id of ours) claimed.add(id)
 }
 
 /**
@@ -869,16 +924,20 @@ function resolveMyepgChannel(
  * our channels, so memory stays modest despite the ~170MB/guide payload.
  * Best-effort: a failed source just yields fewer programmes.
  */
-export async function fetchMyepgGuide(urls: string[], channels: Channel[]): Promise<MyepgGuide> {
+export async function fetchMyepgGuide(
+  urls: string[],
+  channels: Channel[],
+  matches: Record<string, string[]> = EPG_MATCHES,
+): Promise<MyepgGuide> {
   const programmes: string[] = []
   const covered = new Set<string>()
   // OUR channels, keyed by every way a myepg <channel> might name them.
-  const lookups: MyepgLookups = { ids: new Set(), byRaw: new Map(), byExact: new Map(), byFuzzy: new Map() }
+  const lookups: MyepgLookups = { ids: new Map(), byRaw: new Map(), byExact: new Map(), byFuzzy: new Map() }
   const put = (m: Map<string, string>, key: string, id: string) => { if (key && !m.has(key)) m.set(key, id) }
   for (const c of channels) {
     if (!isRegular(c)) continue
     const ex = epgExactNorm(c.name)
-    lookups.ids.add(c.tvgId)
+    put(lookups.ids, c.tvgId.toLowerCase(), c.tvgId)
     put(lookups.byRaw, epgRawNorm(c.name), c.tvgId)
     put(lookups.byExact, ex, c.tvgId)
     put(lookups.byFuzzy, epgFuzzyTokens(ex), c.tvgId)
@@ -891,7 +950,11 @@ export async function fetchMyepgGuide(urls: string[], channels: Channel[]): Prom
       if (!resp.ok || !resp.body) continue
       const reader = resp.body.pipeThrough(new DecompressionStream('gzip')).getReader()
       const decoder = new TextDecoder()
-      const remap = new Map<string, string>() // myepg channel id -> our tvg-id
+      const remap = new Map<string, string[]>() // myepg channel id -> our tvg-ids
+      // Ours claimed by a channel of this guide. Only channels an earlier guide actually fed
+      // (`covered`) are closed to it, so an entry without programmes blocks no other guide.
+      const claimed = new Set<string>()
+      const feeder = new Map<string, string>() // our tvg-id -> the one guide channel feeding it
       let buf = ''
       let inProgrammes = false
       while (true) {
@@ -905,7 +968,7 @@ export async function fetchMyepgGuide(urls: string[], channels: Channel[]): Prom
           let i: number
           while ((i = buf.indexOf('</channel>', pos)) >= 0) {
             const s = buf.lastIndexOf('<channel', i)
-            if (s >= 0) resolveMyepgChannel(buf.slice(s, i), remap, covered, lookups)
+            if (s >= 0) resolveMyepgChannel(buf.slice(s, i), remap, claimed, covered, lookups, matches)
             pos = i + 10
           }
           buf = buf.slice(pos)
@@ -922,8 +985,14 @@ export async function fetchMyepgGuide(urls: string[], channels: Channel[]): Prom
               const cs = block.indexOf('channel="')
               if (cs >= 0) {
                 const ce = block.indexOf('"', cs + 9)
-                const our = remap.get(block.slice(cs + 9, ce))
-                if (our) programmes.push(block.slice(0, cs) + `channel="${xml(our)}"` + block.slice(ce + 1))
+                const src = block.slice(cs + 9, ce)
+                for (const our of remap.get(src) ?? []) {
+                  // a Jev match and a name match can both point at ours — never feed it twice
+                  if ((feeder.get(our) ?? src) !== src) continue
+                  feeder.set(our, src)
+                  programmes.push(block.slice(0, cs) + `channel="${xml(our)}"` + block.slice(ce + 1))
+                  covered.add(our)
+                }
               }
             }
             pos = i + 12

@@ -2,7 +2,9 @@ name: Learn competitions
 
 # Accumulate which channels air live matches of which competition, from the EPG.
 # Daily is enough: the guides reach ~36h ahead, so each day's matches are seen at
-# least once. Reads only our own /api/epg (no stream slot, no provider creds).
+# least once. Reads only our own /api/epg and /api/playlist (no stream slot, no
+# provider creds). Jev (TypeSafe) judges each new match-like title once; its verdicts
+# persist in the Actions cache, so a day only pays for titles it hasn't seen.
 on:
   schedule:
     - cron: '23 5 * * *'
@@ -23,10 +25,25 @@ jobs:
 
       - uses: oven-sh/setup-bun@v2
 
+      # Cache entries are immutable: each run saves a new one and restores the latest.
+      - name: Restore Jev verdicts
+        uses: actions/cache/restore@v4
+        with:
+          path: .cache
+          key: jev-${{ github.run_id }}
+          restore-keys: jev-
+
       - name: Learn from the EPG
         env:
           PLAYLIST_TOKEN: ${{ secrets.PLAYLIST_TOKEN }}
+          TYPESAFE_API_KEY: ${{ secrets.TYPESAFE_API_KEY }}
         run: bun scripts/learn-competitions.ts
+
+      - name: Save Jev verdicts
+        uses: actions/cache/save@v4
+        with:
+          path: .cache
+          key: jev-${{ github.run_id }}
 
       - name: Commit refreshed cache if changed
         run: |

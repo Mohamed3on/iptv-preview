@@ -4,6 +4,8 @@
 // a similar name (or list ours as an alias); Jev must pick one (≥0.8) AND confirm it in a
 // separate yes/no (≥0.8), since a wrong guide is worse than none. Verdicts are cached in
 // .cache/jev-epg.json, so a re-run only asks about channels it hasn't judged yet.
+// Run it rarely (after the channel list changes): each run downloads both full guides, and a
+// burst of downloads gets the myepg account blocked for ~30 min — production's guide included.
 // Usage: bun scripts/match-epg-channels.ts   (PLAYLIST_TOKEN, EPG_URLS, TYPESAFE_API_KEY from .env.local)
 import { chanKey } from '../api/_lib.js'
 import { askJev, jevTokens, type JevQuestion } from '../api/_jev.js'

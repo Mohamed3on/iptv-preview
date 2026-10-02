@@ -1,10 +1,13 @@
-import { describe, expect, test } from 'bun:test'
+import { describe, expect, spyOn, test } from 'bun:test'
 import {
   KEEP,
   autoIncluded,
   bucketForCategory,
   buildEventEpg,
   chanKey,
+  couldBeLiveMatch,
+  fetchMyepgGuide,
+  jevCompetitions,
   learnedCompetitions,
   qualityScore,
   saneFps,
@@ -75,6 +78,39 @@ describe('sibling feeds', () => {
     expect(xml).not.toContain('channel="sx.5"><title>Sky Sports News</title>')
     expect(xml).toContain('channel="sx.5"><title>NOW: SKY SPORTS MAIN EVENT</title>')
   })
+
+  test('EPG: guide ids match in any case, and Jev matches feed further channels', async () => {
+    const ar = '🇸🇦 beIN & Arabic Sports'
+    const ch = (streamId: number, name: string, tvgId: string): Channel =>
+      ({ streamId, name, logo: '', tvgId, group: ar, isEventSlot: false, q: 4 })
+    const prog = (id: string, title: string) =>
+      `<programme start="20261002180000 +0000" stop="20261002190000 +0000" channel="${id}"><title>${title}</title></programme>`
+    // The guide lists Sky Sport Bundesliga 10 twice; the entry with our exact name has no programmes.
+    let guide = `<tv><channel id="beinsports3.fr"><display-name>BEIN SPORTS 3</display-name></channel>` +
+      `<channel id="alkassone.qa"><display-name>Alkass One</display-name></channel>` +
+      `<channel id="skysportbundesliga10.de"><display-name>DE: SKY SPORT BUNDESLIGA 10 (MOBIL)</display-name></channel>` +
+      `<channel id="Sky.Sport.Bundesliga.10.de"><display-name>Sky Sport Bundesliga 10</display-name></channel>` +
+      prog('beinsports3.fr', 'Ligue 1: Lens v Nice') + prog('alkassone.qa', 'QSL: Al Sadd v Al Duhail') +
+      prog('Sky.Sport.Bundesliga.10.de', 'BL: FC Bayern München - VfB Stuttgart') + '</tv>'
+    const fetchSpy = spyOn(globalThis, 'fetch').mockImplementation(async () => new Response(Bun.gzipSync(guide)))
+    const channels = [
+      ch(1, '8K: beIN SP⚽RTS 3 FRANCE ᴿᴬᵂ', 'BeinSports3.fr'), ch(2, 'SPO: Al Kass 1 4K', 'AlKassOne.qa'),
+      ch(3, 'F: ALKASS 1 ᴿᴬᵂ', 'sx.3'), ch(4, 'DE: SKY SPORT BUNDESLIGA 10 (MOBIL)', 'SkyBundesliga10.de'),
+    ]
+    const channelOf = (p: string) => p.match(/channel="([^"]*)"/)?.[1]
+    try {
+      const guided = async (matches: Record<string, string[]>) =>
+        (await fetchMyepgGuide(['https://guide.example/epg.xml.gz'], channels, matches)).programmes.map(channelOf)
+      expect(await guided({})).toEqual(['BeinSports3.fr', 'AlKassOne.qa'])
+      const jev = { 'alkassone.qa': ['sx.3'], 'Sky.Sport.Bundesliga.10.de': ['SkyBundesliga10.de'] }
+      expect(await guided(jev)).toEqual(['BeinSports3.fr', 'AlKassOne.qa', 'sx.3', 'SkyBundesliga10.de'])
+      // once the duplicate entry carries programmes too, only the first feeder counts
+      guide = guide.replace('</tv>', prog('skysportbundesliga10.de', 'BL: Schalke 04 - Bayern') + '</tv>')
+      expect(await guided(jev)).toEqual(['BeinSports3.fr', 'AlKassOne.qa', 'sx.3', 'SkyBundesliga10.de'])
+    } finally {
+      fetchSpy.mockRestore()
+    }
+  })
 })
 
 describe('competition groups', () => {
@@ -114,6 +150,40 @@ describe('competition groups', () => {
     expect(learnedCompetitions('EFL Cup 07/08: Chelsea v Spurs', new Date('2026-09-20'))).toEqual([])
     expect(learnedCompetitions('Goal Rush: Champions League 2017/18', new Date('2026-09-20'))).toEqual([])
     expect(learnedCompetitions('Manchester City vs Norwich - Carabao Cup 2026 / 2027 - Round 3', new Date('2026-09-20'))).toEqual(['eflcup'])
+    // Arabic guides write fixtures as "X × Y"
+    expect(learnedCompetitions('الدوري الإيطالي:روما × إنتر ميلان')).toEqual(['seriea'])
+  })
+
+  test('only match-like titles go to Jev', () => {
+    expect(couldBeLiveMatch('Udinese - Cagliari')).toBe(true)
+    expect(couldBeLiveMatch('BL: FC Bayern München - VfB Stuttgart, 1. Spieltag')).toBe(true)
+    expect(couldBeLiveMatch('Premier League Review')).toBe(false)
+    expect(couldBeLiveMatch('EFL Cup 07/08: Chelsea v Spurs', new Date('2026-09-20'))).toBe(false)
+  })
+
+  test('Jev verdicts count only confident live men\'s matches; no key means the regexes decide', async () => {
+    const pick = (choice: string, p: number) => ({ choice, probabilities: { [choice]: p } })
+    const answers = {
+      c0: pick('Serie A', 0.95), m0: { noul: 0.9 }, w0: { noul: 0.1 },
+      c1: pick('Premier League', 0.7), m1: { noul: 0.9 }, w1: { noul: 0.1 }, // competition unsure
+      c2: pick('Bundesliga', 0.99), m2: { noul: 0.9 }, w2: { noul: 0.9 }, // women's
+      c3: pick('Premier League', 0.99), m3: { noul: 0.2 }, w3: { noul: 0.1 }, // not a match
+      c4: pick('other football', 0.99), m4: { noul: 0.95 }, w4: { noul: 0.05 },
+    }
+    const fetchSpy = spyOn(globalThis, 'fetch').mockImplementation(async () =>
+      new Response(JSON.stringify({ answers, usage: { input_tokens: 1 } })))
+    process.env.TYPESAFE_API_KEY = 'test'
+    try {
+      const titles = ['Udinese - Cagliari', 'Ipswich v Hull', 'Bayern - Köln', 'PL: 90in30 - BRI - ARS', 'Al Hilal v Al Nassr']
+      expect([...(await jevCompetitions(titles)).values()]).toEqual([['seriea'], [], [], [], []])
+      // each title rides in its own questions, not in a shared state
+      expect(JSON.parse(String(fetchSpy.mock.calls[0][1]?.body)).questions.c0.instructions).toContain('Udinese - Cagliari')
+      delete process.env.TYPESAFE_API_KEY
+      await expect(jevCompetitions(titles)).rejects.toThrow('TYPESAFE_API_KEY')
+    } finally {
+      fetchSpy.mockRestore()
+      delete process.env.TYPESAFE_API_KEY
+    }
   })
 
   test('groups lead the playlist; always-on channels first, then quality, then language', () => {

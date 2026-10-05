@@ -7,6 +7,7 @@ export const LEARNED: Record<string, Record<string, string>> = {
   "seriea": "2026-10-04"
  },
  "BeinSports1.fr": {
+  "bundes": "2026-10-05",
   "ligue1": "2026-10-02"
  },
  "BeinSports2.fr": {
@@ -23,7 +24,7 @@ export const LEARNED: Record<string, Record<string, string>> = {
   "seriea": "2026-09-20"
  },
  "DAZN2.de": {
-  "bundes": "2026-10-03",
+  "bundes": "2026-10-05",
   "laliga": "2026-10-04",
   "ligue1": "2026-09-20"
  },
@@ -42,8 +43,8 @@ export const LEARNED: Record<string, Record<string, string>> = {
   "ucl": "2026-10-02"
  },
  "PremierSports1.ie": {
-  "laliga": "2026-09-20",
-  "ucl": "2026-10-04",
+  "laliga": "2026-10-06",
+  "ucl": "2026-10-06",
   "uel": "2026-10-01"
  },
  "PremierSports1.uk": {
@@ -54,10 +55,10 @@ export const LEARNED: Record<string, Record<string, string>> = {
   "laliga": "2026-09-30"
  },
  "PremierSports2.uk": {
-  "laliga": "2026-10-05"
+  "laliga": "2026-10-06"
  },
  "SkyBundesligaUHD.de": {
-  "bundes": "2026-10-04"
+  "bundes": "2026-10-06"
  },
  "SkySport1.de": {
   "uel": "2026-09-17"
@@ -95,6 +96,9 @@ export const LEARNED: Record<string, Record<string, string>> = {
  "SkySportsArena.uk": {
   "champ": "2026-10-03"
  },
+ "SkySportsFootball.uk": {
+  "champ": "2026-10-05"
+ },
  "SkySportsMix.uk": {
   "pokal": "2026-10-01",
   "uel": "2026-09-17"
@@ -120,7 +124,8 @@ export const LEARNED: Record<string, Record<string, string>> = {
  "beINSports1Fr.qa": {
   "eflcup": "2026-10-03",
   "laliga": "2026-10-04",
-  "ligue1": "2026-10-04"
+  "ligue1": "2026-10-04",
+  "ucl": "2026-10-05"
  },
  "beINSports2.qa": {
   "laliga": "2026-09-22",
@@ -140,7 +145,7 @@ export const LEARNED: Record<string, Record<string, string>> = {
  "beINSports4En.qa": {
   "eflcup": "2026-09-17",
   "laliga": "2026-09-20",
-  "ligue1": "2026-10-05",
+  "ligue1": "2026-10-06",
   "pl": "2026-09-20",
   "uel": "2026-09-18"
  },
@@ -185,7 +190,7 @@ export const LEARNED: Record<string, Record<string, string>> = {
   "ligue1": "2026-10-02"
  },
  "dazn2.de": {
-  "bundes": "2026-10-03",
+  "bundes": "2026-10-05",
   "laliga": "2026-10-04",
   "ligue1": "2026-09-20"
  },
@@ -215,7 +220,7 @@ export const LEARNED: Record<string, Record<string, string>> = {
   "pl": "2026-09-20"
  },
  "skysportsfootball.uk": {
-  "champ": "2026-10-02",
+  "champ": "2026-10-05",
   "eflcup": "2026-10-03"
  },
  "skysportsmix.uk": {
@@ -235,10 +240,10 @@ export const LEARNED: Record<string, Record<string, string>> = {
   "ucl": "2026-09-28"
  },
  "sx.1290226": {
-  "laliga": "2026-10-05"
+  "laliga": "2026-10-06"
  },
  "sx.1467810": {
-  "bundes": "2026-10-03",
+  "bundes": "2026-10-05",
   "laliga": "2026-10-04",
   "ligue1": "2026-09-20"
  },
@@ -247,12 +252,12 @@ export const LEARNED: Record<string, Record<string, string>> = {
   "laliga": "2026-10-01"
  },
  "sx.1467814": {
-  "bundes": "2026-10-03",
+  "bundes": "2026-10-05",
   "laliga": "2026-10-04",
   "ligue1": "2026-09-20"
  },
  "sx.1467815": {
-  "bundes": "2026-10-03",
+  "bundes": "2026-10-05",
   "laliga": "2026-10-04"
  },
  "sx.1467816": {
@@ -277,8 +282,8 @@ export const LEARNED: Record<string, Record<string, string>> = {
   "ucl": "2026-09-23"
  },
  "sx.1556138": {
-  "ligue1": "2026-10-05",
-  "pl": "2026-10-05"
+  "ligue1": "2026-10-06",
+  "pl": "2026-10-06"
  },
  "sx.1683720": {
   "seriea": "2026-09-20"
@@ -305,17 +310,17 @@ export const LEARNED: Record<string, Record<string, string>> = {
   "seriea": "2026-10-03"
  },
  "sx.287860": {
-  "seriea": "2026-10-05",
-  "ucl": "2026-10-04"
+  "seriea": "2026-10-06",
+  "ucl": "2026-10-05"
  },
  "sx.351700": {
-  "seriea": "2026-10-05"
+  "seriea": "2026-10-06"
  },
  "sx.351702": {
-  "seriea": "2026-10-05"
+  "seriea": "2026-10-06"
  },
  "sx.351703": {
-  "seriea": "2026-10-05"
+  "seriea": "2026-10-06"
  },
  "sx.351704": {
   "uel": "2026-10-03"
@@ -339,14 +344,14 @@ export const LEARNED: Record<string, Record<string, string>> = {
   "pl": "2026-10-05"
  },
  "sx.479814": {
-  "bundes": "2026-10-04"
+  "bundes": "2026-10-06"
  },
  "sx.479818": {
   "eflcup": "2026-09-18"
  },
  "sx.479820": {
   "eflcup": "2026-09-18",
-  "pl": "2026-10-05"
+  "pl": "2026-10-06"
  },
  "sx.479821": {
   "pokal": "2026-09-21"
@@ -359,7 +364,7 @@ export const LEARNED: Record<string, Record<string, string>> = {
  },
  "sx.486676": {
   "eflcup": "2026-09-18",
-  "pl": "2026-10-05"
+  "pl": "2026-10-06"
  },
  "sx.588045": {
   "champ": "2026-10-02",
@@ -382,7 +387,7 @@ export const LEARNED: Record<string, Record<string, string>> = {
   "pl": "2026-10-05"
  },
  "sx.839915": {
-  "laliga": "2026-10-04",
+  "laliga": "2026-10-05",
   "ligue1": "2026-10-04"
  },
  "sx.839971": {
@@ -400,7 +405,8 @@ export const LEARNED: Record<string, Record<string, string>> = {
  "sx.985104": {
   "eflcup": "2026-10-03",
   "laliga": "2026-10-03",
-  "ligue1": "2026-10-03"
+  "ligue1": "2026-10-03",
+  "ucl": "2026-10-05"
  },
  "tntsports1.uk": {
   "seriea": "2026-09-22",

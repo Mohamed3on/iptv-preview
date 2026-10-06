@@ -7,7 +7,8 @@ export const LEARNED: Record<string, Record<string, string>> = {
   "seriea": "2026-10-04"
  },
  "BeinSports1.fr": {
-  "bundes": "2026-10-05",
+  "bundes": "2026-10-06",
+  "eflcup": "2026-10-06",
   "ligue1": "2026-10-02"
  },
  "BeinSports2.fr": {
@@ -21,6 +22,7 @@ export const LEARNED: Record<string, Record<string, string>> = {
  "DAZN1.es": {
   "bundes": "2026-09-29",
   "laliga": "2026-09-29",
+  "pl": "2026-10-06",
   "seriea": "2026-09-20"
  },
  "DAZN2.de": {
@@ -40,11 +42,11 @@ export const LEARNED: Record<string, Record<string, string>> = {
   "ucl": "2026-10-01"
  },
  "MUTV.uk": {
-  "ucl": "2026-10-02"
+  "ucl": "2026-10-07"
  },
  "PremierSports1.ie": {
-  "laliga": "2026-10-06",
-  "ucl": "2026-10-06",
+  "laliga": "2026-10-07",
+  "ucl": "2026-10-07",
   "uel": "2026-10-01"
  },
  "PremierSports1.uk": {
@@ -55,10 +57,10 @@ export const LEARNED: Record<string, Record<string, string>> = {
   "laliga": "2026-09-30"
  },
  "PremierSports2.uk": {
-  "laliga": "2026-10-06"
+  "laliga": "2026-10-07"
  },
  "SkyBundesligaUHD.de": {
-  "bundes": "2026-10-06"
+  "bundes": "2026-10-07"
  },
  "SkySport1.de": {
   "uel": "2026-09-17"
@@ -88,7 +90,7 @@ export const LEARNED: Record<string, Record<string, string>> = {
   "ucl": "2026-10-03"
  },
  "SkySportUHD.de": {
-  "pokal": "2026-10-04"
+  "pokal": "2026-10-07"
  },
  "SkySportUno.it": {
   "seriea": "2026-10-04"
@@ -137,7 +139,7 @@ export const LEARNED: Record<string, Record<string, string>> = {
   "pl": "2026-09-28"
  },
  "beINSports3En.qa": {
-  "laliga": "2026-09-20",
+  "laliga": "2026-10-07",
   "ligue1": "2026-09-20",
   "pl": "2026-09-20",
   "uel": "2026-09-18"
@@ -145,7 +147,7 @@ export const LEARNED: Record<string, Record<string, string>> = {
  "beINSports4En.qa": {
   "eflcup": "2026-09-17",
   "laliga": "2026-09-20",
-  "ligue1": "2026-10-06",
+  "ligue1": "2026-10-07",
   "pl": "2026-09-20",
   "uel": "2026-09-18"
  },
@@ -203,7 +205,7 @@ export const LEARNED: Record<string, Record<string, string>> = {
  "mligadecampeones1.es": {
   "pl": "2026-09-21",
   "seriea": "2026-09-20",
-  "ucl": "2026-10-04",
+  "ucl": "2026-10-07",
   "uel": "2026-10-05"
  },
  "skysport6.de": {
@@ -220,7 +222,7 @@ export const LEARNED: Record<string, Record<string, string>> = {
   "pl": "2026-09-20"
  },
  "skysportsfootball.uk": {
-  "champ": "2026-10-05",
+  "champ": "2026-10-06",
   "eflcup": "2026-10-03"
  },
  "skysportsmix.uk": {
@@ -240,7 +242,7 @@ export const LEARNED: Record<string, Record<string, string>> = {
   "ucl": "2026-09-28"
  },
  "sx.1290226": {
-  "laliga": "2026-10-06"
+  "laliga": "2026-10-07"
  },
  "sx.1467810": {
   "bundes": "2026-10-05",
@@ -269,7 +271,7 @@ export const LEARNED: Record<string, Record<string, string>> = {
   "laliga": "2026-10-01"
  },
  "sx.1492147": {
-  "ucl": "2026-10-04"
+  "ucl": "2026-10-07"
  },
  "sx.1492150": {
   "seriea": "2026-10-04"
@@ -282,8 +284,8 @@ export const LEARNED: Record<string, Record<string, string>> = {
   "ucl": "2026-09-23"
  },
  "sx.1556138": {
-  "ligue1": "2026-10-06",
-  "pl": "2026-10-06"
+  "ligue1": "2026-10-07",
+  "pl": "2026-10-07"
  },
  "sx.1683720": {
   "seriea": "2026-09-20"
@@ -307,20 +309,20 @@ export const LEARNED: Record<string, Record<string, string>> = {
   "ucl": "2026-09-21"
  },
  "sx.285331": {
-  "seriea": "2026-10-03"
+  "seriea": "2026-10-06"
  },
  "sx.287860": {
-  "seriea": "2026-10-06",
-  "ucl": "2026-10-05"
+  "seriea": "2026-10-07",
+  "ucl": "2026-10-07"
  },
  "sx.351700": {
-  "seriea": "2026-10-06"
+  "seriea": "2026-10-07"
  },
  "sx.351702": {
-  "seriea": "2026-10-06"
+  "seriea": "2026-10-07"
  },
  "sx.351703": {
-  "seriea": "2026-10-06"
+  "seriea": "2026-10-07"
  },
  "sx.351704": {
   "uel": "2026-10-03"
@@ -341,10 +343,10 @@ export const LEARNED: Record<string, Record<string, string>> = {
   "seriea": "2026-09-21"
  },
  "sx.479709": {
-  "pl": "2026-10-05"
+  "pl": "2026-10-07"
  },
  "sx.479814": {
-  "bundes": "2026-10-06"
+  "bundes": "2026-10-07"
  },
  "sx.479818": {
   "eflcup": "2026-09-18"
@@ -387,7 +389,7 @@ export const LEARNED: Record<string, Record<string, string>> = {
   "pl": "2026-10-05"
  },
  "sx.839915": {
-  "laliga": "2026-10-05",
+  "laliga": "2026-10-06",
   "ligue1": "2026-10-04"
  },
  "sx.839971": {

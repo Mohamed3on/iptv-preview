@@ -8,8 +8,10 @@ set -euo pipefail
 
 : "${SERVER:?set SERVER=root@<ip>}"
 CACHE=/opt/iptv-preview/api/quality-cache.ts
-before=$(mktemp)
-trap 'rm -f "$before"' EXIT
+before=$(mktemp) seed=$(mktemp)
+# The probe works on the box's copy; the repo's seed copy is put back when it's done.
+cp api/quality-cache.ts "$seed"
+trap 'mv "$seed" api/quality-cache.ts; rm -f "$before"' EXIT
 
 rsync -a "$SERVER:$CACHE" "$before"
 cp "$before" api/quality-cache.ts

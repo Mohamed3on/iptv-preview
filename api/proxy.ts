@@ -64,30 +64,20 @@ async function destinationOk(hostname: string, selfHost: string): Promise<boolea
   }
 }
 
-export default async function handler(req: any, res: any) {
-  const sameOrigin = req.headers['sec-fetch-site'] === 'same-origin'
+export default async function handler(req: Request): Promise<Response> {
+  const sameOrigin = req.headers.get('sec-fetch-site') === 'same-origin'
   // Soft caller gate (defense-in-depth; the allowlist below is the real SSRF
   // control, since Sec-Fetch-Site is spoofable by non-browser clients).
-  if (!sameOrigin && !tokenOk(req.url)) {
-    res.statusCode = 403
-    res.end('Forbidden')
-    return
-  }
-  let target = new URL(req.url ?? '/', 'http://x').searchParams.get('url')
-  if (!target || !/^https?:\/\//i.test(target)) {
-    res.statusCode = 400
-    res.end('Bad url')
-    return
-  }
-  const selfHost = String(req.headers['x-forwarded-host'] ?? req.headers.host ?? '')
+  if (!sameOrigin && !tokenOk(req.url)) return new Response('Forbidden', { status: 403 })
+  let target = new URL(req.url).searchParams.get('url')
+  if (!target || !/^https?:\/\//i.test(target)) return new Response('Bad url', { status: 400 })
+  const selfHost = req.headers.get('x-forwarded-host') ?? req.headers.get('host') ?? ''
   try {
     let resp: Response | undefined
     for (let hop = 0; hop < 5; hop++) {
       const u = new URL(target)
       if (!(await destinationOk(u.hostname, selfHost))) {
-        res.statusCode = 403
-        res.end('Destination not allowed')
-        return
+        return new Response('Destination not allowed', { status: 403 })
       }
       resp = await fetch(target, {
         headers: { 'User-Agent': 'VLC/3.0.18' },
@@ -101,18 +91,12 @@ export default async function handler(req: any, res: any) {
       }
       break
     }
-    if (!resp) {
-      res.statusCode = 502
-      res.end('Upstream error')
-      return
-    }
-    res.statusCode = resp.status
+    if (!resp) return new Response('Upstream error', { status: 502 })
+    const headers = new Headers({ 'Cache-Control': 'public, s-maxage=900' })
     const ct = resp.headers.get('content-type')
-    if (ct) res.setHeader('Content-Type', ct)
-    res.setHeader('Cache-Control', 'public, s-maxage=900')
-    res.end(Buffer.from(await resp.arrayBuffer()))
+    if (ct) headers.set('Content-Type', ct)
+    return new Response(await resp.arrayBuffer(), { status: resp.status, headers })
   } catch {
-    res.statusCode = 502
-    res.end('Upstream error')
+    return new Response('Upstream error', { status: 502 })
   }
 }

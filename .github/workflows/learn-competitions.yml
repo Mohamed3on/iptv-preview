@@ -12,6 +12,7 @@ on:
 
 permissions:
   contents: write
+  actions: write # dispatch the deploy after committing
 
 concurrency:
   group: learn-competitions
@@ -46,6 +47,8 @@ jobs:
           key: jev-${{ github.run_id }}
 
       - name: Commit refreshed cache if changed
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           if git diff --quiet -- api/competition-cache.ts; then
             echo "No competition changes this run."
@@ -55,4 +58,6 @@ jobs:
             git add api/competition-cache.ts
             git commit -m "chore: learn competition channels from the EPG"
             git push
+            # A GITHUB_TOKEN push starts no workflows, so deploy explicitly.
+            gh workflow run deploy.yml
           fi

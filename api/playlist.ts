@@ -9,29 +9,26 @@ import {
   withCompetitionGroups,
 } from './_lib.js'
 
-export default async function handler(req: any, res: any) {
-  if (!tokenOk(req.url)) {
-    res.statusCode = 403
-    res.end('Forbidden')
-    return
-  }
+export default async function handler(req: Request): Promise<Response> {
+  if (!tokenOk(req.url)) return new Response('Forbidden', { status: 403 })
   try {
     const cfg = configFromEnv()
     const channels = withCompetitionGroups(await fetchCuratedChannels(cfg))
-    const proto = req.headers['x-forwarded-proto'] ?? 'https'
-    const host = req.headers['x-forwarded-host'] ?? req.headers.host
+    const proto = req.headers.get('x-forwarded-proto') ?? 'https'
+    const host = req.headers.get('x-forwarded-host') ?? req.headers.get('host')
     const ownEpg = `${proto}://${host}/api/epg?t=${process.env.PLAYLIST_TOKEN}`
     // EPG_URLS: comma-separated preferred EPG sources (e.g. myepg.top links);
     // falls back to the provider's xmltv. Own PPV epg is always appended.
     const preferred = (process.env.EPG_URLS ?? providerEpgUrl(cfg)).split(',').filter(Boolean)
-    const body = buildM3U(cfg, channels, [...preferred, ownEpg])
-    res.setHeader('Content-Type', 'audio/x-mpegurl; charset=utf-8')
-    res.setHeader('Content-Disposition', 'inline; filename="playlist.m3u"')
-    res.setHeader('Cache-Control', 'public, s-maxage=1800, stale-while-revalidate=3600')
-    res.setHeader('Access-Control-Allow-Origin', '*')
-    res.end(body)
+    return new Response(buildM3U(cfg, channels, [...preferred, ownEpg]), {
+      headers: {
+        'Content-Type': 'audio/x-mpegurl; charset=utf-8',
+        'Content-Disposition': 'inline; filename="playlist.m3u"',
+        'Cache-Control': 'public, s-maxage=1800, stale-while-revalidate=3600',
+        'Access-Control-Allow-Origin': '*',
+      },
+    })
   } catch (e) {
-    res.statusCode = 502
-    res.end(e instanceof Error ? e.message : 'upstream error')
+    return new Response(e instanceof Error ? e.message : 'upstream error', { status: 502 })
   }
 }

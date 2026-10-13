@@ -1,0 +1,14 @@
+[Unit]
+Description=iptv-preview: re-probe feed quality for %i minutes (holds the account's one connection slot)
+After=iptv-preview.service
+
+# Start by hand when nobody is watching: systemctl start --no-block iptv-quality@30
+[Service]
+Type=oneshot
+User=iptv
+WorkingDirectory=/opt/iptv-preview
+EnvironmentFile=/opt/iptv-preview/.env
+ExecStartPre=/bin/cp api/quality-cache.ts /tmp/iptv-quality-cache.ts
+ExecStart=/usr/local/bin/bun scripts/probe-quality.ts 8 refresh mins=%i
+# The server reads the cache at startup, so restart it when the probe changed it.
+ExecStartPost=+/bin/sh -c 'cmp -s /tmp/iptv-quality-cache.ts /opt/iptv-preview/api/quality-cache.ts || systemctl restart iptv-preview'

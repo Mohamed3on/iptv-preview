@@ -24,7 +24,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: oven-sh/setup-bun@v2
+      # Pinned: this job holds the box's root SSH key.
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+
+      # Cloudflare challenges runner IPs at iptv.mohamed3on.com, so reach the box's
+      # endpoints over SSH instead (the deploy key, see deploy.yml).
+      - name: Tunnel to the box
+        env:
+          SSH_KEY: ${{ secrets.HETZNER_SSH_KEY }}
+        run: |
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_ed25519 && chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -H 65.108.153.112 >> ~/.ssh/known_hosts
+          ssh -fN -o ExitOnForwardFailure=yes -L 8790:127.0.0.1:8790 root@65.108.153.112
 
       # Cache entries are immutable: each run saves a new one and restores the latest.
       - name: Restore Jev verdicts
@@ -38,6 +50,7 @@ jobs:
         env:
           PLAYLIST_TOKEN: ${{ secrets.PLAYLIST_TOKEN }}
           TYPESAFE_API_KEY: ${{ secrets.TYPESAFE_API_KEY }}
+          EPG_ENDPOINT: http://127.0.0.1:8790/api/epg
         run: bun scripts/learn-competitions.ts
 
       - name: Save Jev verdicts

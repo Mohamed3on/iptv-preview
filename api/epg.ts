@@ -10,12 +10,8 @@ import {
   tokenOk,
 } from './_lib.js'
 
-export default async function handler(req: any, res: any) {
-  if (!tokenOk(req.url)) {
-    res.statusCode = 403
-    res.end('Forbidden')
-    return
-  }
+export default async function handler(req: Request): Promise<Response> {
+  if (!tokenOk(req.url)) return new Response('Forbidden', { status: 403 })
   try {
     const cfg = configFromEnv()
     const epgUrls = (process.env.EPG_URLS ?? '').split(',').map((s) => s.trim()).filter(Boolean)
@@ -27,15 +23,18 @@ export default async function handler(req: any, res: any) {
       providerEpgPromise,
       fetchMyepgGuide(epgUrls, channels),
     ])
-    res.setHeader('Content-Type', 'application/xml; charset=utf-8')
     // EPG changes slowly (programmes are known days ahead) but each cache miss
-    // pulls ~47MB (2 myepg guides + provider) — so cache 6h to bound Vercel
-    // bandwidth; stale-while-revalidate serves instantly while refreshing.
-    res.setHeader('Cache-Control', 'public, s-maxage=21600, stale-while-revalidate=86400')
-    res.setHeader('Access-Control-Allow-Origin', '*')
-    res.end(buildEventEpg(channels, providerXml, myepg))
+    // pulls ~47MB (2 myepg guides + provider), and a burst of guide downloads gets
+    // the myepg account blocked — so cache 6h; stale-while-revalidate serves
+    // instantly while refreshing.
+    return new Response(buildEventEpg(channels, providerXml, myepg), {
+      headers: {
+        'Content-Type': 'application/xml; charset=utf-8',
+        'Cache-Control': 'public, s-maxage=21600, stale-while-revalidate=86400',
+        'Access-Control-Allow-Origin': '*',
+      },
+    })
   } catch (e) {
-    res.statusCode = 502
-    res.end(e instanceof Error ? e.message : 'upstream error')
+    return new Response(e instanceof Error ? e.message : 'upstream error', { status: 502 })
   }
 }

@@ -20,6 +20,12 @@ bun install
 bun dev
 ```
 
+## Hosting
+
+The app and its API — the trimmed playlist (`/api/playlist?t=…`) and EPG (`/api/epg?t=…`) for TiviMate — run at **https://iptv.mohamed3on.com** on the Hetzner box shared with truescore (`root@65.108.153.112`). `server.ts` runs under systemd (`deploy/iptv-preview.service`, `127.0.0.1:8790`), and the Cloudflare Tunnel `iptv-preview` (`cloudflared.service`) routes the hostname to it. Secrets live in `/opt/iptv-preview/.env` (`XTREAM_HOST/USER/PASS`, `PLAYLIST_TOKEN`, `EPG_URLS`).
+
+Every push to `master` deploys (`.github/workflows/deploy.yml`, needs the `HETZNER_SSH_KEY` secret). To deploy by hand: `SERVER=root@65.108.153.112 ./deploy/sync.sh`. Logs: `ssh root@65.108.153.112 'journalctl -u iptv-preview -f'`.
+
 ## Tech Stack
 
 - React + TypeScript + Vite

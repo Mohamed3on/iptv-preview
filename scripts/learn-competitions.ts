@@ -13,7 +13,7 @@ import { COMP_SOURCE, couldBeLiveMatch, jevCompetitions, learnedCompetitions } f
 import { jevTokens } from '../api/_jev.js'
 import { LEARNED } from '../api/competition-cache.js'
 
-const endpoint = process.env.EPG_ENDPOINT ?? 'https://iptv-preview.vercel.app/api/epg'
+const endpoint = process.env.EPG_ENDPOINT ?? 'https://iptv.mohamed3on.com/api/epg'
 const token = process.env.PLAYLIST_TOKEN
 const local = endpoint.startsWith('file:')
 if (!token && !local) throw new Error('PLAYLIST_TOKEN missing')

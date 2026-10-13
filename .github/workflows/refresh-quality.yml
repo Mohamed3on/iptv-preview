@@ -15,6 +15,7 @@ on:
 
 permissions:
   contents: write
+  actions: write # dispatch the deploy after committing
 
 concurrency:
   group: refresh-quality
@@ -48,6 +49,8 @@ jobs:
           bun scripts/probe-quality.ts 8 refresh "mins=$MINUTES"
 
       - name: Commit refreshed cache if changed
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           if git diff --quiet -- api/quality-cache.ts; then
             echo "No quality changes this run."
@@ -57,4 +60,6 @@ jobs:
             git add api/quality-cache.ts
             git commit -m "chore: refresh feed quality cache"
             git push
+            # A GITHUB_TOKEN push starts no workflows, so deploy explicitly.
+            gh workflow run deploy.yml
           fi

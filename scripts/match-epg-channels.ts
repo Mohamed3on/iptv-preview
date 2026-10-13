@@ -10,7 +10,7 @@
 import { chanKey } from '../api/_lib.js'
 import { askJev, jevTokens, type JevQuestion } from '../api/_jev.js'
 
-const api = process.env.API_BASE ?? 'https://iptv-preview.vercel.app/api'
+const api = process.env.API_BASE ?? 'https://iptv.mohamed3on.com/api'
 const get = async (url: string) => {
   const resp = await fetch(url, { headers: { 'User-Agent': 'VLC/3.0.18' } })
   if (!resp.ok) throw new Error(`${url.replace(/\?.*/, '')} -> HTTP ${resp.status}`)

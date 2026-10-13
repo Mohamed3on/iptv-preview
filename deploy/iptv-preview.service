@@ -1,0 +1,21 @@
+[Unit]
+Description=iptv-preview: trimmed StrongTV playlist + EPG (Bun), behind the Cloudflare Tunnel
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=iptv
+WorkingDirectory=/opt/iptv-preview
+EnvironmentFile=/opt/iptv-preview/.env
+Environment=NODE_ENV=production
+ExecStart=/usr/local/bin/bun server.ts
+Restart=on-failure
+RestartSec=5
+# The box is shared with truescore; an EPG build peaks near 1GB.
+MemoryMax=2G
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

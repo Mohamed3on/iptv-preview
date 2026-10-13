@@ -20,6 +20,7 @@ import { LEARNED } from './competition-cache.js'
 // Guide channels Jev matched offline to ours (scripts/match-epg-channels.ts).
 import { EPG_MATCHES } from './epg-matches.js'
 import { askJev, type JevQuestion } from './_jev.js'
+import { readFile, writeFile } from 'node:fs/promises'
 
 // Provider category_ids to keep.
 export const KEEP: number[] = [
@@ -613,16 +614,35 @@ function movie4kChannels(vod: VodStream[], catName: Map<number, string>): Channe
   return out
 }
 
-/** Fetch + filter provider channels into ordered, quality-sorted buckets. */
-export async function fetchCuratedChannels(cfg: XtreamConfig): Promise<Channel[]> {
-  const [cats, streams, vod, vodCats] = await Promise.all([
+// The provider sometimes answers the VOD calls with an empty list — for the whole account,
+// for hours (2026-10-13, after repeated pulls of the 74MB catalogue) — and the movie groups
+// would vanish from TiviMate. So the last good VOD entries are kept on disk and served
+// until the catalogue comes back.
+const LAST_GOOD_VOD = new URL('../.cache/vod-last-good.json', import.meta.url)
+
+async function vodChannels(cfg: XtreamConfig): Promise<Channel[]> {
+  const [vod, vodCats] = await Promise.all([
+    apiGet<VodStream[]>(cfg, 'get_vod_streams').catch(() => []),
+    apiGet<Category[]>(cfg, 'get_vod_categories').catch(() => []),
+  ])
+  if (vod.length && vodCats.length) {
+    const vodCatName = new Map(vodCats.map((c) => [Number(c.category_id), c.category_name]))
+    const channels = [...ufcReplays(vod), ...movie4kChannels(vod, vodCatName)]
+    await writeFile(LAST_GOOD_VOD, JSON.stringify(channels)).catch(() => {})
+    return channels
+  }
+  return JSON.parse(await readFile(LAST_GOOD_VOD, 'utf8').catch(() => '[]'))
+}
+
+/** Fetch + filter provider channels into ordered, quality-sorted buckets. `vod: false`
+ *  leaves out the on-demand entries (and the 74MB catalogue download), for the EPG. */
+export async function fetchCuratedChannels(cfg: XtreamConfig, vod = true): Promise<Channel[]> {
+  const [cats, streams, vodList] = await Promise.all([
     apiGet<Category[]>(cfg, 'get_live_categories'),
     apiGet<Stream[]>(cfg, 'get_live_streams'),
-    apiGet<VodStream[]>(cfg, 'get_vod_streams'),
-    apiGet<Category[]>(cfg, 'get_vod_categories'),
+    vod ? vodChannels(cfg) : [],
   ])
   const catName = new Map(cats.map((c) => [Number(c.category_id), c.category_name]))
-  const vodCatName = new Map(vodCats.map((c) => [Number(c.category_id), c.category_name]))
   const byCat = new Map<number, Stream[]>()
   for (const s of streams) {
     const id = Number(s.category_id)
@@ -752,8 +772,7 @@ export async function fetchCuratedChannels(cfg: XtreamConfig): Promise<Channel[]
 
   // On-demand UFC PPV replays + the 4K movie library (appended after the live,
   // EPG-tagged channels; both are VOD with no tvg-id, so they get no EPG row).
-  channels.push(...ufcReplays(vod))
-  channels.push(...movie4kChannels(vod, vodCatName))
+  channels.push(...vodList)
   return channels
 }
 

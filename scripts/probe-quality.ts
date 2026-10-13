@@ -66,7 +66,7 @@ const better = (a: Meta | null, b: Meta | null | undefined): boolean =>
 let cache: Record<string, Meta | null> = {}
 try { cache = { ...(await import('../api/quality-cache.ts')).QUALITY } } catch { /* fresh run */ }
 
-const channels = await fetchCuratedChannels(cfg)
+const channels = await fetchCuratedChannels(cfg, false) // live feeds only; VOD is never probed
 // A feed "matches its marker" when its real height reaches the tier's nominal resolution.
 const nominalH = (q: number) => (q >= 5 ? 2160 : q >= 4 ? 1080 : q >= 3 ? 720 : 0)
 const targets = channels.filter((c) => {

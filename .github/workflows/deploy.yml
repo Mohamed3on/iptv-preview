@@ -1,0 +1,46 @@
+name: Deploy
+
+# Ship master to the Hetzner box (deploy/sync.sh) on every push, as truescore does.
+# Markdown-only pushes skip it: a deploy restarts the server, which empties its cache.
+on:
+  push:
+    branches: [master]
+    paths-ignore: ['**.md']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Pinned: this job holds the box's root SSH key.
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+
+      - run: bun install --frozen-lockfile
+
+      - name: Configure SSH
+        env:
+          SSH_KEY: ${{ secrets.HETZNER_SSH_KEY }}
+        run: |
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          # printf adds the trailing newline OpenSSH needs to parse the key.
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_ed25519 && chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -H 65.108.153.112 >> ~/.ssh/known_hosts
+
+      - name: Sync to Hetzner
+        run: SERVER=root@65.108.153.112 ./deploy/sync.sh
+
+      - name: Smoke test
+        # Against localhost over SSH (Cloudflare challenges runner IPs): a playlist build
+        # proves the server, the token and the provider all work.
+        run: |
+          ssh root@65.108.153.112 'curl -sf --retry 5 --retry-connrefused --retry-delay 2 --max-time 120 \
+            "http://127.0.0.1:8790/api/playlist?t=$(sed -n s/^PLAYLIST_TOKEN=//p /opt/iptv-preview/.env)" | head -c 7' | grep -q '#EXTM3U'

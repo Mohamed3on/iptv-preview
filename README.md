@@ -29,7 +29,7 @@ The box also keeps the generated caches current, restarting the server when one 
 - `iptv-learn.timer` relearns `api/competition-cache.ts` from the EPG daily at 05:23 UTC.
 - `systemctl start --no-block iptv-quality@30` re-probes feed quality into `api/quality-cache.ts` for 30 minutes. It holds the account's one connection slot, so run it when nobody is watching.
 
-The repo's copies of those two files only seed a fresh box; a deploy never overwrites the box's. Deploy with `SERVER=root@65.108.153.112 ./deploy/sync.sh`. Logs: `ssh root@65.108.153.112 'journalctl -u iptv-preview -f'` (or `-u iptv-learn`, `-u 'iptv-quality@*'`).
+The repo's copies of those two files only seed a fresh box; a deploy never overwrites the box's. Every push to `master` deploys (`.github/workflows/deploy.yml`, needs the `HETZNER_SSH_KEY` secret); by hand: `SERVER=root@65.108.153.112 ./deploy/sync.sh`. Logs: `ssh root@65.108.153.112 'journalctl -u iptv-preview -f'` (or `-u iptv-learn`, `-u 'iptv-quality@*'`).
 
 ## Tech Stack
 

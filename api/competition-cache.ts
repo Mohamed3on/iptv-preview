@@ -1,6 +1,6 @@
 // Channels seen airing LIVE matches of each competition in the EPG:
 //   tvg-id -> { competition key (see COMPS in _lib.ts) -> last seen, YYYY-MM-DD }
-// Written by scripts/learn-competitions.ts (daily GitHub Action); the playlist
+// Written by scripts/learn-competitions.ts (daily, iptv-learn.timer on the box); the playlist
 // trusts an entry for 60 days, so a channel stays listed between cup rounds.
 export const LEARNED: Record<string, Record<string, string>> = {
  "AbuDhabiSports1PremiumAr.ae": {

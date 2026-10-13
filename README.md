@@ -22,9 +22,14 @@ bun dev
 
 ## Hosting
 
-The app and its API — the trimmed playlist (`/api/playlist?t=…`) and EPG (`/api/epg?t=…`) for TiviMate — run at **https://iptv.mohamed3on.com** on the Hetzner box shared with truescore (`root@65.108.153.112`). `server.ts` runs under systemd (`deploy/iptv-preview.service`, `127.0.0.1:8790`), and the Cloudflare Tunnel `iptv-preview` (`cloudflared.service`) routes the hostname to it. Secrets live in `/opt/iptv-preview/.env` (`XTREAM_HOST/USER/PASS`, `PLAYLIST_TOKEN`, `EPG_URLS`).
+The app and its API — the trimmed playlist (`/api/playlist?t=…`) and EPG (`/api/epg?t=…`) for TiviMate — run at **https://iptv.mohamed3on.com** on the Hetzner box shared with truescore (`root@65.108.153.112`). `server.ts` runs under systemd (`deploy/iptv-preview.service`, `127.0.0.1:8790`), and the Cloudflare Tunnel `iptv-preview` (`cloudflared.service`) routes the hostname to it. Secrets live in `/opt/iptv-preview/.env` (`XTREAM_HOST/USER/PASS`, `PLAYLIST_TOKEN`, `EPG_URLS`, `TYPESAFE_API_KEY`).
 
-Every push to `master` deploys (`.github/workflows/deploy.yml`, needs the `HETZNER_SSH_KEY` secret). To deploy by hand: `SERVER=root@65.108.153.112 ./deploy/sync.sh`. Logs: `ssh root@65.108.153.112 'journalctl -u iptv-preview -f'`.
+The box also keeps the generated caches current, restarting the server when one changes:
+
+- `iptv-learn.timer` relearns `api/competition-cache.ts` from the EPG daily at 05:23 UTC.
+- `systemctl start --no-block iptv-quality@30` re-probes feed quality into `api/quality-cache.ts` for 30 minutes. It holds the account's one connection slot, so run it when nobody is watching.
+
+The repo's copies of those two files only seed a fresh box; a deploy never overwrites the box's. Deploy with `SERVER=root@65.108.153.112 ./deploy/sync.sh`. Logs: `ssh root@65.108.153.112 'journalctl -u iptv-preview -f'` (or `-u iptv-learn`, `-u 'iptv-quality@*'`).
 
 ## Tech Stack
 

@@ -92,10 +92,9 @@ export default async function handler(req: Request): Promise<Response> {
       break
     }
     if (!resp) return new Response('Upstream error', { status: 502 })
-    const headers = new Headers({ 'Cache-Control': 'public, s-maxage=900' })
     const ct = resp.headers.get('content-type')
-    if (ct) headers.set('Content-Type', ct)
-    return new Response(await resp.arrayBuffer(), { status: resp.status, headers })
+    // Streamed through, never buffered: it relays ~20MB guides and GitHub files of any size.
+    return new Response(resp.body, { status: resp.status, headers: ct ? { 'Content-Type': ct } : {} })
   } catch {
     return new Response('Upstream error', { status: 502 })
   }

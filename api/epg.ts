@@ -18,7 +18,7 @@ export default async function handler(req: Request): Promise<Response> {
     // provider EPG doesn't need the channel list — kick it off first so its ~70MB
     // download overlaps curation; myepg needs the channels, so it waits for them
     const providerEpgPromise = fetchProviderEpg(cfg)
-    const channels = await fetchCuratedChannels(cfg)
+    const channels = await fetchCuratedChannels(cfg, false) // VOD entries carry no guide
     const [providerXml, myepg] = await Promise.all([
       providerEpgPromise,
       fetchMyepgGuide(epgUrls, channels),

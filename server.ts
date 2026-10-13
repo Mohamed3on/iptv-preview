@@ -10,7 +10,7 @@ import proxy from './api/proxy'
 type Handler = (req: Request) => Promise<Response>
 type Entry = { body: Blob; init: ResponseInit; fresh: number; stale: number }
 
-const routes: Record<string, Handler> = { '/api/epg': epg, '/api/playlist': playlist, '/api/proxy': proxy }
+const routes: Record<string, Handler> = { '/api/epg': epg, '/api/playlist': playlist }
 const cache = new Map<string, Entry>()
 const building = new Map<string, Promise<Entry>>()
 
@@ -52,6 +52,9 @@ Bun.serve({
   idleTimeout: 255,
   async fetch(req) {
     const { pathname } = new URL(req.url)
+    // The proxy relays files of any size, so it bypasses the cache: holding its responses
+    // in memory would let anyone fill this process with GitHub files.
+    if (pathname === '/api/proxy') return proxy(req)
     const handler = routes[pathname]
     if (handler) return cached(req, handler)
     const file = Bun.file(dist + (pathname === '/' ? '/index.html' : pathname))

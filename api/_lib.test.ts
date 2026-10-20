@@ -79,14 +79,23 @@ describe('sibling feeds', () => {
     expect(xml).toContain('channel="sx.5"><title>NOW: SKY SPORTS MAIN EVENT</title>')
   })
 
-  test("EPG: the provider's mixed-case .qa guides are moved 3h earlier", () => {
+  test('EPG: guides on the late Qatari clock are moved 3h earlier', () => {
     const ch = (streamId: number, tvgId: string): Channel =>
       ({ streamId, name: `beIN ${streamId}`, logo: '', tvgId, group: '🇸🇦 beIN & Arabic Sports', isEventSlot: false, q: 4 })
-    const prog = (id: string) =>
-      `<programme start="20261020210000 +0200" stop="20261021000000 +0200" channel="${id}"><title>Sabah vs Dortmund</title></programme>`
-    const xml = buildEventEpg([ch(1, 'beINSports1En.qa'), ch(2, 'beinsports2.qa')], prog('beINSports1En.qa') + prog('beinsports2.qa'))
-    expect(xml).toContain('start="20261020210000 +0500" stop="20261021000000 +0500" channel="beINSports1En.qa"')
-    expect(xml).toContain('start="20261020210000 +0200" stop="20261021000000 +0200" channel="beinsports2.qa"')
+    const prog = (id: string, start: string, title = 'Sabah vs Dortmund') =>
+      `<programme start="${start}" stop="${start}" channel="${id}"><title>${title}</title></programme>`
+    // provider: mixed-case id on the late clock, lowercase twin on the right one
+    const provider = prog('beINSports1En.qa', '20261020210000 +0200') + prog('beinsports2.qa', '20261020183000 +0200', 'PSG vs Barcelona')
+    // myepg mirrors of each clock, already re-tagged to our ids (and in UTC)
+    const myepg = {
+      programmes: [prog('sx.1', '20261020190000 +0000'), prog('sx.2', '20261020163000 +0000', 'PSG vs Barcelona')],
+      covered: new Set(['sx.1', 'sx.2']),
+    }
+    const xml = buildEventEpg([ch(1, 'beINSports1En.qa'), ch(2, 'beinsports2.qa'), ch(3, 'sx.1'), ch(4, 'sx.2')], provider, myepg)
+    expect(xml).toContain('start="20261020210000 +0500" stop="20261020210000 +0500" channel="beINSports1En.qa"')
+    expect(xml).toContain('start="20261020183000 +0200" stop="20261020183000 +0200" channel="beinsports2.qa"')
+    expect(xml).toContain('start="20261020190000 +0300" stop="20261020190000 +0300" channel="sx.1"')
+    expect(xml).toContain('start="20261020163000 +0000" stop="20261020163000 +0000" channel="sx.2"')
   })
 
   test('EPG: guide ids match in any case, and Jev matches feed further channels', async () => {

@@ -79,6 +79,16 @@ describe('sibling feeds', () => {
     expect(xml).toContain('channel="sx.5"><title>NOW: SKY SPORTS MAIN EVENT</title>')
   })
 
+  test("EPG: the provider's mixed-case .qa guides are moved 3h earlier", () => {
+    const ch = (streamId: number, tvgId: string): Channel =>
+      ({ streamId, name: `beIN ${streamId}`, logo: '', tvgId, group: '🇸🇦 beIN & Arabic Sports', isEventSlot: false, q: 4 })
+    const prog = (id: string) =>
+      `<programme start="20261020210000 +0200" stop="20261021000000 +0200" channel="${id}"><title>Sabah vs Dortmund</title></programme>`
+    const xml = buildEventEpg([ch(1, 'beINSports1En.qa'), ch(2, 'beinsports2.qa')], prog('beINSports1En.qa') + prog('beinsports2.qa'))
+    expect(xml).toContain('start="20261020210000 +0500" stop="20261021000000 +0500" channel="beINSports1En.qa"')
+    expect(xml).toContain('start="20261020210000 +0200" stop="20261021000000 +0200" channel="beinsports2.qa"')
+  })
+
   test('EPG: guide ids match in any case, and Jev matches feed further channels', async () => {
     const ar = '🇸🇦 beIN & Arabic Sports'
     const ch = (streamId: number, name: string, tvgId: string): Channel =>

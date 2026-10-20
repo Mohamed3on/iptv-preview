@@ -8,29 +8,37 @@ import {
   fetchMyepgGuide,
   fetchProviderEpg,
   tokenOk,
+  type MyepgGuide,
 } from './_lib.js'
+
+// The guide downloads (~47MB of myepg + the ~70MB provider guide) change slowly, and a
+// burst of them gets the myepg account blocked, so they are reused for 6h. The response
+// itself is NOT: a PPV slot's guide entry is its channel name, which changes from match to
+// match, so a guide built hours ago shows the previous match (and its 24h window runs out).
+const GUIDE_TTL = 6 * 3600_000
+let guides: { at: number; job: Promise<[string, MyepgGuide]> } | undefined
 
 export default async function handler(req: Request): Promise<Response> {
   if (!tokenOk(req.url)) return new Response('Forbidden', { status: 403 })
   try {
     const cfg = configFromEnv()
     const epgUrls = (process.env.EPG_URLS ?? '').split(',').map((s) => s.trim()).filter(Boolean)
-    // provider EPG doesn't need the channel list — kick it off first so its ~70MB
-    // download overlaps curation; myepg needs the channels, so it waits for them
-    const providerEpgPromise = fetchProviderEpg(cfg)
-    const channels = await fetchCuratedChannels(cfg, false) // VOD entries carry no guide
-    const [providerXml, myepg] = await Promise.all([
-      providerEpgPromise,
-      fetchMyepgGuide(epgUrls, channels),
-    ])
-    // EPG changes slowly (programmes are known days ahead) but each cache miss
-    // pulls ~47MB (2 myepg guides + provider), and a burst of guide downloads gets
-    // the myepg account blocked — so cache 6h; stale-while-revalidate serves
-    // instantly while refreshing.
+    const channelsPromise = fetchCuratedChannels(cfg, false) // VOD entries carry no guide
+    if (!guides || Date.now() - guides.at > GUIDE_TTL) {
+      // provider EPG doesn't need the channel list, so its download overlaps curation;
+      // myepg needs the channels, so it waits for them
+      const providerEpgPromise = fetchProviderEpg(cfg)
+      const job = channelsPromise.then((channels) =>
+        Promise.all([providerEpgPromise, fetchMyepgGuide(epgUrls, channels)]))
+      guides = { at: Date.now(), job }
+      job.catch(() => { if (guides?.job === job) guides = undefined })
+    }
+    const [channels, [providerXml, myepg]] = await Promise.all([channelsPromise, guides.job])
+    // Rebuilt every 15 min with no stale serving: a stale copy is exactly the old-names guide.
     return new Response(buildEventEpg(channels, providerXml, myepg), {
       headers: {
         'Content-Type': 'application/xml; charset=utf-8',
-        'Cache-Control': 'public, s-maxage=21600, stale-while-revalidate=86400',
+        'Cache-Control': 'public, s-maxage=900',
         'Access-Control-Allow-Origin': '*',
       },
     })

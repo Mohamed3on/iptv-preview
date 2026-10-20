@@ -1090,6 +1090,16 @@ export function buildEventEpg(
   }
   // provider programmes for channels myepg lacks
   const seenProg = new Set<string>()
+  // The provider's mixed-case Qatari ids (beINSports1En.qa, AlKassTwo.qa, …) run 3h late
+  // against their lowercase twins (beinsports1.qa) and the real kickoffs, so the guide
+  // showed the match before — relabel their offset (+0200 -> +0500) to put them right.
+  const qaLate = (id: string) => /[A-Z]/.test(id) && id.endsWith('.qa')
+  const lessThree = (block: string) =>
+    block.replace(/\b(start|stop)="(\d{14}) ([+-])(\d\d)(\d\d)"/g, (_, k, ts, sign, hh, mm) => {
+      const off = (sign === '-' ? -1 : 1) * (Number(hh) * 60 + Number(mm)) + 180
+      const a = Math.abs(off)
+      return `${k}="${ts} ${off < 0 ? '-' : '+'}${String(Math.floor(a / 60)).padStart(2, '0')}${String(a % 60).padStart(2, '0')}"`
+    })
   if (providerXml && wantIds.size) {
     for (const m of providerXml.matchAll(/<programme\b[^>]*\bchannel="([^"]*)"[^>]*>[\s\S]*?<\/programme>/g)) {
       if (!wantIds.has(m[1])) continue
@@ -1097,7 +1107,7 @@ export function buildEventEpg(
       const k = m[1] + '|' + (startM ? startM[1] : out.length)
       if (seenProg.has(k)) continue // skip duplicate programme declarations
       seenProg.add(k)
-      real(m[1], m[0])
+      real(m[1], qaLate(m[1]) ? lessThree(m[0]) : m[0])
     }
   }
   // Parallel feeds of one channel can carry DIFFERENT provider tvg-ids — TNT Sports 1

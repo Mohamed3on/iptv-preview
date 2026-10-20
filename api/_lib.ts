@@ -851,7 +851,7 @@ const xml = (v: string) =>
   v.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 
 const xmltvTime = (d: Date) =>
-  d.toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, '') + ' +0000'
+  d.toISOString().replace(/[-:T]/g, '').replace(/\.\d+Z$/, '') + ' +0000'
 
 // Name normalization for matching our channels against myepg display-names.
 // Drops the provider's "REGION:" prefix, glues "ITV 1" -> "itv1"; fuzzy also

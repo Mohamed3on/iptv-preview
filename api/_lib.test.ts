@@ -15,6 +15,7 @@ import {
   withCompetitionGroups,
   type Channel,
 } from './_lib.js'
+import { LEARNED } from './competition-cache.js'
 
 describe('sports playlist curation', () => {
   test('does not reintroduce expired 2026 tournament packages', () => {
@@ -229,6 +230,35 @@ describe('competition groups', () => {
     expect(out.filter((c) => c.group === '🏆 Bundesliga').map((c) => c.name))
       .toEqual(['DE: SKY SPORT BUNDESLIGA 1 4K', 'AR: BUNDESLIGA 1 ᴿᴬᵂ', 'DE: SKY SPORT BUNDESLIGA 1 HD'])
     expect(out.length).toBe(channels.length + 6)
+  })
+
+  test('an overflow channel (Sky Sports Golf) joins a competition only around its match', () => {
+    const [tvgId, { pl: seen }] = Object.entries(LEARNED).find(([, comps]) => comps.pl)!
+    const at = (days: number) => Date.parse(seen) + days * 864e5
+    const plNames = (name: string, now: number) =>
+      withCompetitionGroups([{ streamId: 1, name, logo: '', tvgId, group: '🏴 Sky Sports & UK Sports', isEventSlot: false, q: 4 }], now)
+        .filter((c) => c.group === '🏆 Premier League').map((c) => c.name)
+    expect(plNames('NOW: SKY SPORTS GOLF ᴿᴬᵂ', at(0))).toEqual(['NOW: SKY SPORTS GOLF ᴿᴬᵂ'])
+    expect(plNames('NOW: SKY SPORTS GOLF ᴿᴬᵂ', at(1))).toEqual(['NOW: SKY SPORTS GOLF ᴿᴬᵂ'])
+    expect(plNames('NOW: SKY SPORTS GOLF ᴿᴬᵂ', at(3))).toEqual([])
+    expect(plNames('UK: SKY SPORTS MAIN EVENT', at(3))).toEqual(['UK: SKY SPORTS MAIN EVENT'])
+    expect(plNames('UK: SKY SPORTS NEWS', at(0))).toEqual([])
+  })
+
+  test('SG Hub Premier, HK Now Premier Sports and NZ Sky PL carry the Premier League', () => {
+    for (const name of ['SG: HUB PREMIER 2 ᵁᴴᴰ ³⁸⁴⁰ᴾ', 'HK: NOW PREMIER SPORTS 1 4K', 'NZ: SKY SPORTS PREMIER LEAGUE 4K'])
+      expect(staticCompetitions(name, '')).toEqual(['pl'])
+    expect(staticCompetitions('UK: PREMIER SPORTS 1', '')).toEqual([])
+    // listed only under 🏆 Premier League, and never merged with the UK channel of the same name
+    const mk = (streamId: number, name: string, group: string): Channel =>
+      ({ streamId, name, logo: '', tvgId: 'x', group, isEventSlot: false, q: 5, comps: staticCompetitions(name, '') })
+    const out = withCompetitionGroups([
+      mk(1, 'UK: SKY SPORTS PREMIER LEAGUE 4K', '🏴 Sky Sports & UK Sports'),
+      mk(2, 'NOW: SKY SPORTS PREMIER LEAGUE 4K', '🏴 Sky Sports & UK Sports'),
+      mk(3, 'NZ: SKY SPORTS PREMIER LEAGUE 4K', '🌏 Premier League abroad'),
+    ])
+    expect(out.filter((c) => c.group === '🏆 Premier League').map((c) => c.streamId).sort()).toEqual([1, 2, 3])
+    expect(out.filter((c) => c.group !== '🏆 Premier League').map((c) => c.streamId)).toEqual([1, 2])
   })
 
   test('a 100fps reading is the 50p field rate, not a better feed', () => {

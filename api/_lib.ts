@@ -49,6 +49,10 @@ export const KEEP: number[] = [
   1614, // UK| LIGUE 1 PPV
   1972, // UK| SOCCER REPLAY RAW
   662,  // 4K| UHD 3840P (Sky Sports/TNT/Eleven/V Sport 4K event feeds)
+  // Premier League from abroad, for matches no UK channel shows — PL channels only (CAT_ONLY)
+  2032, // 8K| SPORT ON AIR (SG Hub Premier 1-11, NZ Sky Sport Premier League)
+  872,  // NZ| NEW ZEALAND RAW (NZ Sky Sports Premier League 4K)
+  56,   // HK| HONGKONG 4K/HD (HK Now Premier Sports 4K)
   // Tennis
   1429, // TS| TENNIS TV PPV (ATP)
   1096, // TS| TENNIS LIVE
@@ -143,6 +147,8 @@ const B = {
   es: '🇪🇸 Spanish Sports',
   it: '🇮🇹 Italian Sports',
   fr: '🇫🇷 French Sports',
+  // SG/NZ/HK Premier League channels — listed only under 🏆 Premier League
+  plAbroad: '🌏 Premier League abroad',
   fbReplay: '📼 Football — Replays',
   tennis: '🎾 Tennis',
   ufc: '🥊 UFC & Fight PPV',
@@ -161,6 +167,7 @@ const BUCKET_ORDER: string[] = Object.values(B)
 const CAT_BUCKET: Record<number, string> = {
   1731: B.uk, 1726: B.uk, 1640: B.uk, 978: B.uk,
   1729: B.uk, 1728: B.uk, 1964: B.uk, 1965: B.uk, 662: B.uk,
+  2032: B.plAbroad, 872: B.plAbroad, 56: B.plAbroad,
   1830: B.fbPpv, 1441: B.fbPpv, 952: B.fbPpv, 1865: B.fbPpv, 755: B.fbPpv,
   769: B.fbPpv, 921: B.fbPpv, 575: B.fbPpv, 976: B.fbPpv, 977: B.fbPpv,
   1614: B.fbPpv, 433: B.fbPpv, 1672: B.fbPpv, 2018: B.fbPpv, 2231: B.fbPpv,
@@ -375,9 +382,16 @@ const BEIN = /bein/i
 // idle or show low-res filler in between, so a probe below their marker is that
 // filler, not the feed — trust the marker instead (see realRes).
 const EVENT_ONLY = /\(\s*EVENT\s*ONLY\s*\)/i
-// Cat 662 (4K| UHD 3840P) mixes 4K sport feeds (Sky/TNT/Eleven/ESPN/V Sport) with
-// lifestyle/shopping/news 4K (Cocina, QVC, Museum, Bloomberg…) — keep only sport.
-const SPORT_4K_662 = /sport|tnt|espn|bein|eleven|dazn/i
+// Mixed categories we take only some channels from. Cat 662 (4K| UHD 3840P) mixes 4K
+// sport feeds (Sky/TNT/Eleven/ESPN/V Sport) with lifestyle/shopping/news 4K (Cocina,
+// QVC, Museum, Bloomberg…) — keep only sport. The SG/NZ/HK ones are there for Premier
+// League matches no UK channel shows — keep only their PL channels.
+const CAT_ONLY: Record<number, RegExp> = {
+  662: /sport|tnt|espn|bein|eleven|dazn/i,
+  2032: /^SG: HUB PREMIER|^NZ: SKY SPORTS? PREMIER LEAGUE/i,
+  872: /PREMIER LEAGUE/i,
+  56: /NOW PREMIER SPORTS/i,
+}
 // Russian kids channels (Nick/Cartoon Network/Disney) sit in the general RU
 // category — no dedicated RU kids category exists — so route them out by name.
 const RU_KIDS = /nick|cartoon\s*network|disney\s*(?:channel|jr|junior|xd)|карусел|мульт|малыш/i
@@ -422,7 +436,7 @@ const nameKey = (s: string): string =>
 // coming and going never shifts the groups everyone uses.
 interface Competition { key: string; group: string; re: RegExp; not?: RegExp }
 export const COMPS: Competition[] = [
-  { key: 'pl', group: '🏆 Premier League', re: /premier league|\bEPL\b|\bsky sports? pl\b|الدوري الإنجليزي الممتاز/i, not: /scottish|welsh|irish|premier league 2\b|\bpl2\b/i },
+  { key: 'pl', group: '🏆 Premier League', re: /premier league|\bEPL\b|\bsky sports? pl\b|hub premier|now premier sports|الدوري الإنجليزي الممتاز/i, not: /scottish|welsh|irish|premier league 2\b|\bpl2\b/i },
   { key: 'ucl', group: '🏆 Champions League', re: /champions league|liga de campeones|ligue des champions|دوري أبطال أوروبا|دوري الأبطال|\bUCL\b/i, not: /afc champions|caf champions|concacaf|asian champions|global champions/i },
   { key: 'laliga', group: '🏆 La Liga', re: /\bla ?liga\b|الدوري الإسباني/i, not: /hypermotion|smartbank|segunda|liga portugal|liga mx|liga f\b/i },
   { key: 'bundes', group: '🏆 Bundesliga', re: /bundesliga|الدوري الألماني/i, not: /2\.\s*bundesliga|zweite|regionalliga|3\. liga|austria|österreich|admiral/i },
@@ -669,7 +683,7 @@ export async function fetchCuratedChannels(cfg: XtreamConfig, vod = true): Promi
     for (const s of byCat.get(id) ?? []) {
       const name = String(s.name ?? '').trim()
       if (!name || SEPARATOR.test(name)) continue
-      if (id === 662 && !SPORT_4K_662.test(name)) continue // 662: keep only its sport feeds
+      if (CAT_ONLY[id] && !CAT_ONLY[id].test(name)) continue
       if (isEventSlot && DEAD_SLOT.test(name)) continue
       const q = qualityScore(name, group)
       if (q === 0) continue // explicit SD/LQ feeds
@@ -777,9 +791,13 @@ export async function fetchCuratedChannels(cfg: XtreamConfig, vod = true): Promi
 }
 
 // Buckets whose channels may be listed under a competition (football only).
-export const COMP_SOURCE = new Set<string>([B.uk, B.fbPpv, B.ar, B.de, B.es, B.it, B.fr])
+export const COMP_SOURCE = new Set<string>([B.uk, B.fbPpv, B.ar, B.de, B.es, B.it, B.fr, B.plAbroad])
 // An EPG-learned association is trusted for this long (a cup round is ~monthly).
 const LEARN_DAYS = 60
+// A channel named for another sport (Sky Sports Golf/Cricket/Darts) shows football only
+// when Sky overflows a match onto it, so it's listed only from the day the learner sees
+// the match (dated by kick-off) until the day after.
+const OVERFLOW_DAYS = 1
 
 /**
  * One "🏆 …" group per competition, leading the playlist, then the curated channels.
@@ -793,6 +811,7 @@ const LEARN_DAYS = 60
  */
 export function withCompetitionGroups(channels: Channel[], now = Date.now()): Channel[] {
   const since = new Date(now - LEARN_DAYS * 864e5).toISOString().slice(0, 10)
+  const overflowSince = new Date(now - OVERFLOW_DAYS * 864e5).toISOString().slice(0, 10)
   type Row = { c: Channel; rh: number; rf: number; lang: number; region: number; idx: number }
   const byComp = new Map<string, Row[]>()
   channels.forEach((c, idx) => {
@@ -801,8 +820,9 @@ export function withCompetitionGroups(channels: Channel[], now = Date.now()): Ch
     // EPG-learned memberships apply to 24/7 channels only — never to event slots
     // (their name IS the event) nor to news/highlights channels whose guide merely
     // mentions a match ("Premier League Weekend Live" on Sky Sports News).
-    if (!c.isEventSlot && !vetoed(c.name)) {
-      for (const [k, seen] of Object.entries(LEARNED[c.tvgId] ?? {})) if (seen >= since) keys.add(k)
+    if (!c.isEventSlot && !WOMEN.test(c.name) && !SHOW.test(c.name)) {
+      const from = OTHER_SPORT.test(c.name) ? overflowSince : since
+      for (const [k, seen] of Object.entries(LEARNED[c.tvgId] ?? {})) if (seen >= from) keys.add(k)
     }
     if (!keys.size) return
     const { h: rh, fps: rf } = realRes(c.streamId, c.q ?? 2, c.isEventSlot || EVENT_ONLY.test(c.name))
@@ -821,14 +841,15 @@ export function withCompetitionGroups(channels: Channel[], now = Date.now()): Ch
     )
     const seen = new Map<string, number>()
     for (const r of rows) {
-      const k = chanKey(r.c.name)
+      // An abroad channel is another broadcaster's even when named alike (NZ Sky Sport PL ≠ UK's).
+      const k = (r.c.group === B.plAbroad ? 'abroad ' : '') + chanKey(r.c.name)
       const n = seen.get(k) ?? 0
       if (n >= 2) continue // best feed + one spare
       seen.set(k, n + 1)
       groups.push({ ...r.c, group: comp.group })
     }
   }
-  return [...groups, ...channels]
+  return [...groups, ...channels.filter((c) => c.group !== B.plAbroad)]
 }
 
 const q = (v: string) => v.replace(/"/g, "'")

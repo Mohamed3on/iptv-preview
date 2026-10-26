@@ -764,7 +764,8 @@ export async function fetchCuratedChannels(cfg: XtreamConfig, vod = true): Promi
 
   // Mint stable synthetic tvg-ids for channels the provider left untagged, so they
   // can still carry EPG in TiviMate (which maps EPG to channels by id only). Prefer
-  // a twin's id so duplicate feeds share its guide; else a per-stream id. Identical-
+  // a twin's id — even a twin the dedupe dropped — so duplicate feeds share its guide
+  // (and its EPG-learned competitions); else a per-stream id. Identical-
   // name myepg matches then attach to these; the country guard can't misfire on them
   // (synthetic ids have no country suffix).
   //
@@ -775,7 +776,7 @@ export async function fetchCuratedChannels(cfg: XtreamConfig, vod = true): Promi
   // provider put on one of them, and myepg's guide lights up all of them.
   const sibKey = (c: Channel) => `${c.group}|${epgExactNorm(c.name)}`
   const sibId = new Map<string, string>()
-  for (const c of channels) {
+  for (const { c } of [...byBucket.values()].flat()) {
     if (!isRegular(c)) continue
     const k = sibKey(c)
     if (k && !sibId.has(k)) sibId.set(k, c.tvgId)

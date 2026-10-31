@@ -17,9 +17,9 @@ rsync -a "$SERVER:$CACHE" "$before"
 cp "$before" api/quality-cache.ts
 bun scripts/probe-quality.ts 8 refresh "mins=${1:-30}"
 if cmp -s "$before" api/quality-cache.ts; then
-  echo "No better readings; the box keeps its cache."
+  echo "No changed readings; the box keeps its cache."
 else
   rsync -a api/quality-cache.ts "$SERVER:$CACHE"
   ssh "$SERVER" "chown iptv:iptv $CACHE && systemctl restart iptv-preview"
-  echo "Pushed the better readings to the box and restarted the server."
+  echo "Pushed the new readings to the box and restarted the server."
 fi

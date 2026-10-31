@@ -27,7 +27,7 @@ The app and its API — the trimmed playlist (`/api/playlist?t=…`) and EPG (`/
 The box owns the two generated caches, and the server restarts when one changes:
 
 - `iptv-learn.timer` relearns `api/competition-cache.ts` from the EPG daily at 05:23 UTC.
-- Feed quality (`api/quality-cache.ts`) is probed from your Mac, because the provider refuses streams from the box's IP: `SERVER=root@<server-ip> ./deploy/probe-quality.sh 30` pulls the box's cache, re-probes for 30 minutes and pushes it back. It holds the account's one connection slot, so run it when nobody is watching.
+- Feed quality (`api/quality-cache.ts`) is probed from your Mac, because the provider refuses streams from the box's IP: `SERVER=root@<server-ip> ./deploy/probe-quality.sh 30` pulls the box's cache, re-probes for 30 minutes and pushes it back. Each run first re-checks readings older than 14 days, then chases feeds below their label. It runs nightly at 04:30 from the launch agent `deploy/com.mohamed.iptv-probe.plist` (install: `cp deploy/com.mohamed.iptv-probe.plist ~/Library/LaunchAgents/ && launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.mohamed.iptv-probe.plist`; log: `~/Library/Logs/iptv-probe.log`). It holds the account's one connection slot, so it won't start while someone is watching and stops as soon as someone starts.
 
 The repo's copies of those two files only seed a fresh box; a deploy never overwrites the box's. Every push to `master` deploys (`.github/workflows/deploy.yml`, needs the `HETZNER_SSH_KEY` secret); by hand: `SERVER=root@<server-ip> ./deploy/sync.sh`. Logs: `ssh root@<server-ip> 'journalctl -u iptv-preview -f'` (or `-u iptv-learn`).
 

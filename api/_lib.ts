@@ -303,11 +303,17 @@ export const saneFps = (fps: number): number =>
 // between matches, so a probe BELOW the marker is that filler, not live quality —
 // fall back to the nominal tier (fps unknown) instead of demoting it. A probe AT/ABOVE
 // the marker is genuine live quality and is always kept.
-function realRes(streamId: number, markerQ: number, trustMarker: boolean): { h: number; fps: number } {
+//
+// "(MOBIL)"/"(MOBILE)" and provider-labelled "720P" feeds are adaptive restreams: the
+// same feed reads 540p25 one moment and 1080p50 the next, and the cache keeps the peak,
+// so their probe is capped at the 720p25 they mostly deliver — below every steady 1080p feed.
+const MOBILE = /\(MOBILE?\)|720P/i
+function realRes(streamId: number, markerQ: number, trustMarker: boolean, name: string): { h: number; fps: number } {
   const nominal = markerQ >= 5 ? 2160 : markerQ === 4 ? 1080 : markerQ === 3 ? 720 : markerQ === 2 ? 540 : 360
   const m = QUALITY[String(streamId)]
-  if (m && !(trustMarker && m.h < nominal)) return { h: m.h, fps: saneFps(m.fps) }
-  return { h: nominal, fps: 0 }
+  if (!m || (trustMarker && m.h < nominal)) return { h: nominal, fps: 0 }
+  const r = { h: m.h, fps: saneFps(m.fps) }
+  return MOBILE.test(name) ? { h: Math.min(r.h, 720), fps: Math.min(r.fps, 25) } : r
 }
 
 // 1 for a feed probed with Dolby Atmos audio — breaks ties between equal-res/fps feeds.
@@ -694,7 +700,7 @@ export async function fetchCuratedChannels(cfg: XtreamConfig, vod = true): Promi
       const chBucket = id === 6 && RU_KIDS.test(name) ? B.kidsRu : bucket
       // Feeds that only light up during a match (PPV slots, beIN's "(EVENT ONLY)"
       // 4K slots) keep their marker tier when probed low — that's idle filler.
-      const { h: rh, fps: rf } = realRes(s.stream_id, q, isEventSlot || EVENT_ONLY.test(name))
+      const { h: rh, fps: rf } = realRes(s.stream_id, q, isEventSlot || EVENT_ONLY.test(name), name)
       const item: Item = {
         q,
         rh,
@@ -829,7 +835,7 @@ export function withCompetitionGroups(channels: Channel[], now = Date.now()): Ch
       for (const [k, seen] of Object.entries(LEARNED[c.tvgId] ?? {})) if (seen >= from) keys.add(k)
     }
     if (!keys.size) return
-    const { h: rh, fps: rf } = realRes(c.streamId, c.q ?? 2, c.isEventSlot || EVENT_ONLY.test(c.name))
+    const { h: rh, fps: rf } = realRes(c.streamId, c.q ?? 2, c.isEventSlot || EVENT_ONLY.test(c.name), c.name)
     const row: Row = { c, rh, rf, lang: languageRank(c.name), region: regionPref(c.name), idx }
     for (const k of keys) (byComp.get(k) ?? byComp.set(k, []).get(k)!).push(row)
   })

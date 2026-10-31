@@ -69,7 +69,9 @@ async function connectionSlots(): Promise<{ max: number; active: number }> {
 async function freeConnectionSlots(): Promise<number> {
   const { max, active } = await connectionSlots()
   if (active >= max) {
-    throw new Error(`No free IPTV connection slots (${active}/${max}); stop playback before probing`)
+    // Not an error: the nightly run just skips a night when someone's watching.
+    console.log(`No free IPTV connection slots (${active}/${max}); someone's watching, so no probing this run`)
+    process.exit(0)
   }
   return max - active
 }

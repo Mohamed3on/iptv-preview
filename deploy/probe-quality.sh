@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Re-probe feed quality from this Mac and hand the result to the box, which owns
-# api/quality-cache.ts. It runs here because the provider refuses streams from the
-# box's IP (HTTP 511). It holds the account's one connection slot, so run it when
-# nobody is watching. From the repo root:
+# Re-probe feed quality off the box and hand the result to the box, which owns
+# api/quality-cache.ts. It runs elsewhere (nightly on GitHub Actions, or a Mac) because
+# the provider refuses streams from the box's IP (HTTP 511). It holds the account's one
+# connection slot, so the probe skips/stops when someone is watching. From the repo root:
 #   SERVER=root@<server-ip> ./deploy/probe-quality.sh [minutes, default 30]
 set -euo pipefail
 

@@ -1,5 +1,7 @@
 // GET /api/playlist?t=TOKEN — trimmed M3U, rebuilt from the provider on each
 // cache miss so channel names (esp. PPV event slots) stay current.
+// Add &vpn=1 for a copy whose streams use the provider's VPN-only front, for watching with
+// a VPN on (the normal fronts block VPN IPs, and the VPN front blocks everyone else).
 import {
   buildM3U,
   configFromEnv,
@@ -8,6 +10,8 @@ import {
   tokenOk,
   withCompetitionGroups,
 } from './_lib.js'
+
+const VPN_HOST = 'http://apps.g1ming-hub.sbs'
 
 export default async function handler(req: Request): Promise<Response> {
   if (!tokenOk(req.url)) return new Response('Forbidden', { status: 403 })
@@ -20,7 +24,8 @@ export default async function handler(req: Request): Promise<Response> {
     // EPG_URLS: comma-separated preferred EPG sources (e.g. myepg.top links);
     // falls back to the provider's xmltv. Own PPV epg is always appended.
     const preferred = (process.env.EPG_URLS ?? providerEpgUrl(cfg)).split(',').filter(Boolean)
-    return new Response(buildM3U(cfg, channels, [...preferred, ownEpg]), {
+    const vpn = new URL(req.url).searchParams.get('vpn') === '1'
+    return new Response(buildM3U(vpn ? { ...cfg, host: VPN_HOST } : cfg, channels, [...preferred, ownEpg]), {
       headers: {
         'Content-Type': 'audio/x-mpegurl; charset=utf-8',
         'Content-Disposition': 'inline; filename="playlist.m3u"',

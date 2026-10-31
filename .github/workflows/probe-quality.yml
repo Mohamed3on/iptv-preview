@@ -4,10 +4,10 @@ name: Probe feed quality
 # which pulls the box's api/quality-cache.ts, probes, and pushes it back. It runs here
 # because the provider refuses streams from the box's IP (HTTP 511). The account has ONE
 # connection slot: the probe won't start while someone is watching and stops as soon as
-# someone starts, so a scheduled run at 03:30 UTC is safe.
+# someone starts, so it runs when nobody watches.
 on:
   schedule:
-    - cron: '30 3 * * *'
+    - cron: '0 2 * * *' # nightly
   workflow_dispatch:
     inputs:
       minutes:

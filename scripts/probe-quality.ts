@@ -26,7 +26,7 @@
 // below-marker result is chased back up by the gap pass on later runs; PPV/event feeds
 // are floored at their marker by realRes in api/_lib.ts, so an idle re-probe can't bury them.
 //
-// BUSY SLOT: a probe that finds no signal checks the account (slotHeld); if the one slot
+// BUSY SLOT: a probe that finds no signal checks the account; if the one connection slot
 // is taken, someone started watching, so the run stops at once instead of
 // recording their channel-switches as dead feeds.
 //
@@ -77,17 +77,6 @@ async function freeConnectionSlots(): Promise<number> {
 }
 
 const CONC = Math.max(1, Math.min(requestedConcurrency, await freeConnectionSlots()))
-
-// active_cons flickers to "in use" for a few seconds with nobody watching, so the slot
-// counts as taken only when it reads in use at three checks ~10s apart.
-async function slotHeld(): Promise<boolean> {
-  for (let i = 0; i < 3; i++) {
-    if (i) await Bun.sleep(5000)
-    const { max, active } = await connectionSlots()
-    if (active < max) return false
-  }
-  return true
-}
 
 // Strictly-better reading (height, then fps, then Atmos) — keeps the cache monotonic in refresh mode.
 const better = (a: Meta | null, b: Meta | null | undefined): boolean =>
@@ -185,7 +174,10 @@ const worker = async () => {
     const old = cache[id]
     const reverify = REFRESH && isStale(old)
     const m = await probeBest(id, REFRESH && !reverify ? 3 : 1)
-    if (!m && (await slotHeld())) { busy = true; break } // someone's watching; this feed stays due for the next run
+    if (!m) {
+      const { max, active } = await connectionSlots()
+      if (active >= max) { busy = true; break } // someone's watching; this feed stays due for the next run
+    }
     // Initial: record result (null = probed). Re-verify: the current reading replaces the
     // stale one (no signal keeps the old reading, re-dated so it waits STALE_DAYS again).
     // Gaps: only upgrade, never downgrade a fresh peak.

@@ -205,6 +205,12 @@ if (busy) {
 } else if (done < ids.length) {
   console.log(`Budget of ${BUDGET_MIN}min reached — ${ids.length - done} feeds left for the next run.`)
 }
+// Not one picture means the provider refused this machine (GitHub runners can get HTTP 511,
+// like the box), not that every feed died: fail loudly so deploy/probe-quality.sh pushes nothing.
+if (done > 0 && ok === 0 && !busy) {
+  console.error(`No feed returned a picture (${done} tried) — the provider is refusing this machine, so this run is discarded.`)
+  process.exit(1)
+}
 dirty = true; await flush()
 
 // Count over what this run actually ATTEMPTED (`done`), not the whole target list —

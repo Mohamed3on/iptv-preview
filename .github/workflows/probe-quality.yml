@@ -7,7 +7,7 @@ name: Probe feed quality
 # someone starts, so it runs when nobody watches.
 on:
   schedule:
-    - cron: '0 2 * * *' # nightly
+    - cron: '23 2 * * *' # off the hour, when GitHub drops the most scheduled runs
   workflow_dispatch:
     inputs:
       minutes:

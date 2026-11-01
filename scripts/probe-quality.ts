@@ -177,13 +177,22 @@ const deadline = t0 + BUDGET_MIN * 60_000
 let cursor = 0
 let busy = false
 let ok = 0 // probes that actually returned video this run
+// The panel counts a connection from ~6s after it opens until ~5s after it closes, so a
+// probe open longer than ~5s (a hung feed, a slow read) still shows as this run's own
+// connection for a while. Quicker probes are never counted.
+let lastCounted = 0
 const worker = async () => {
   while (cursor < ids.length && Date.now() < deadline && !busy) {
     const id = ids[cursor++]
     const old = cache[id]
     const reverify = REFRESH && isStale(old)
+    const started = Date.now()
     const m = await probeBest(id, REFRESH && !reverify ? 3 : 1)
+    if (Date.now() - started > 5000) lastCounted = Date.now()
     if (!m) {
+      // Let this run's own connection drop off before deciding someone else is watching.
+      const wait = lastCounted + 10_000 - Date.now()
+      if (wait > 0) await Bun.sleep(wait)
       const { max, active } = await connectionSlots()
       if (active >= max) { busy = true; break } // someone's watching; this feed stays due for the next run
     } else ok++

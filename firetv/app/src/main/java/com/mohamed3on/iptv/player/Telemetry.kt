@@ -91,7 +91,7 @@ class Telemetry(
                         put("rank", feed.rank); put("route", routeName); put("ms", now() - tunedAt); put("tile", tile)
                     }
                 }
-                channel != null && channel.identity == before.requested?.identity && feed != null && before.feed != null && feed.id != before.feed.id ->
+                channel != null && channel.identity == before.requested?.identity && feed != null && before.feed != null && feed.id != before.feed.id && feed.family == before.feed.family ->
                     record("failover") { put("from", before.feed.id); put("to", feed.id); put("playing", before.phase == Phase.Playing) }
                 before.phase == Phase.Playing && s.phase == Phase.Connecting && feed != null && feed.id == before.feed?.id ->
                     record("stall") { put("id", feed.id) }

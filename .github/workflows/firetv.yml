@@ -1,0 +1,77 @@
+name: Fire TV app
+
+# Build the Fire TV app and copy it to the box, where the app updates itself from it.
+# This job holds the signing key: every action is pinned by SHA, each secret reaches only
+# the step that needs it, and nothing is uploaded or cached that holds the baked-in token
+# (no artifacts, no releases, no Gradle build cache or build directories).
+on:
+  push:
+    branches: [master]
+    paths: ['firetv/**']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: firetv
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: firetv
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # versionCode is the commit count
+          persist-credentials: false
+
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      # Validates the Gradle wrapper's checksum; caches dependencies only.
+      - uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
+        with:
+          gradle-home-cache-excludes: caches/build-cache-1
+
+      - name: Unit tests
+        run: ./gradlew --no-build-cache testReleaseUnitTest
+
+      - name: Build signed APK
+        env:
+          ANDROID_KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+          IPTV_KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          IPTV_KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          IPTV_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          IPTV_SERVER_URL: ${{ secrets.APP_SERVER_URL }}
+          IPTV_APP_TOKEN: ${{ secrets.APP_TOKEN }}
+        run: |
+          export IPTV_KEYSTORE_FILE="$RUNNER_TEMP/release.jks"
+          printf '%s' "$ANDROID_KEYSTORE_B64" | base64 -d > "$IPTV_KEYSTORE_FILE"
+          ./gradlew --no-build-cache assembleRelease
+          rm -f "$IPTV_KEYSTORE_FILE"
+
+      # The APK first, then the manifest that points at it, so the app never sees a
+      # manifest for a half-copied APK (rsync writes a temp file and renames it).
+      - name: Copy to the box
+        env:
+          SSH_KEY: ${{ secrets.APP_DEPLOY_SSH_KEY }}
+          HOST: ${{ secrets.SERVER_HOST }}
+        run: |
+          apk=app/build/outputs/apk/release/app-release.apk
+          code=$(git rev-list --count HEAD)
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/app_deploy && chmod 600 ~/.ssh/app_deploy
+          ssh-keyscan -H "$HOST" >> ~/.ssh/known_hosts 2>/dev/null
+          printf '{"versionCode":%s,"versionName":"1.%s","sha256":"%s"}\n' \
+            "$code" "$code" "$(sha256sum "$apk" | cut -d' ' -f1)" > "$RUNNER_TEMP/version.json"
+          # The key may only write /opt/iptv-preview/app (rrsync -wo), so paths are relative to it.
+          ssh_cmd='ssh -i ~/.ssh/app_deploy -o IdentitiesOnly=yes'
+          rsync -t -e "$ssh_cmd" "$apk" "iptvapp@$HOST:app.apk"
+          rsync -t -e "$ssh_cmd" "$RUNNER_TEMP/version.json" "iptvapp@$HOST:version.json"
+          rm -f ~/.ssh/app_deploy

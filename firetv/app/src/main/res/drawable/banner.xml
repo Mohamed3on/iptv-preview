@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 320x180 TV launcher banner: "IPTV" on a dark ground. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="320dp"
+    android:height="180dp"
+    android:viewportWidth="320"
+    android:viewportHeight="180">
+    <path android:fillColor="#FF12161C" android:pathData="M0,0h320v180h-320z" />
+    <path
+        android:fillColor="#FFF2F4F7"
+        android:fillType="evenOdd"
+        android:pathData="M40,50h14v80h-14z M74,50h14v80h-14z M88,50H112Q124,50 124,62V84Q124,96 112,96H88z M88,64H108Q110,64 110,66V80Q110,82 108,82H88z M144,50h56v14h-56z M165,64h14v66h-14z M220,50h15l15,58l15,-58h15l-23,80h-14z" />
+</vector>

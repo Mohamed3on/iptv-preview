@@ -26,3 +26,12 @@ dist-ssr
 
 # Jev verdict caches (scripts/learn-competitions.ts, scripts/match-epg-channels.ts)
 .cache
+
+# Fire TV app (firetv/): signing material and build output never enter the repo
+*.jks
+*.keystore
+local.properties
+keystore.properties
+.gradle/
+.kotlin/
+firetv/**/build/

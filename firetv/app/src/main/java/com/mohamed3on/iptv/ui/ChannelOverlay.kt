@@ -76,9 +76,14 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import android.view.KeyEvent as AndroidKeyEvent
+import java.text.Normalizer
 
 /** A Live now row: a confirmed match ([programme] set) or an unconfirmed event slot. [via] is the 🏆 row it was found on. */
-data class LiveEntry(val title: String, val programme: Programme?, val via: Channel, val tune: Channel, val comp: String? = null) {
+data class LiveEntry(
+    val title: String, val programme: Programme?, val via: Channel, val tune: Channel, val comp: String? = null,
+    /** Other channels showing the same match. */
+    val alsoOn: Int = 0,
+) {
     val confirmed get() = programme != null
 }
 
@@ -107,8 +112,57 @@ fun Feed.liveNow(airing: List<Airing>): LiveNow {
         }
     }
     val slots = trophy.filter { it.slot && it.fixture }.distinctBy { it.name }.map { LiveEntry(it.name, null, it, bestOf(it)) }
-    return LiveNow(matches, slots)
+    return LiveNow(sameMatchOnce(matches), slots)
 }
+
+/**
+ * Broadcasters title one match differently ("Live: LaLiga - Athletic Bilbao - Real Sociedad",
+ * "Athletic Bilbao vs Real Sociedad - Spanish La Liga"), so rows are one match when they share the
+ * competition, overlap in time and name two of the same teams' words. The first row (best channel)
+ * is kept; it shows the clearest title of the group (a "v"/"vs" one, then the shortest).
+ */
+private fun sameMatchOnce(matches: List<LiveEntry>): List<LiveEntry> {
+    val groups = mutableListOf<MutableList<LiveEntry>>()
+    for (m in matches) {
+        val words = teamWords(m.title)
+        val group = groups.firstOrNull { g ->
+            val first = g.first()
+            first.comp == m.comp && first.programme!!.start < m.programme!!.stop && m.programme.start < first.programme.stop &&
+                (teamWords(first.title) intersect words).size >= 2
+        }
+        if (group != null) group += m else groups += mutableListOf(m)
+    }
+    return groups.map { g ->
+        val title = g.map { it.title }.sortedWith(compareBy({ !VERSUS.containsMatchIn(it) }, { it.length })).first()
+        g.first().copy(title = fixtureOf(title), alsoOn = g.drop(1).map { it.tune.family }.distinct().count { it != g.first().tune.family })
+    }
+}
+
+private val VERSUS = Regex("\\s(v|vs\\.?)\\s", RegexOption.IGNORE_CASE)
+private val LIVE_PREFIX = Regex("^live\\s*[:\\-]?\\s*", RegexOption.IGNORE_CASE)
+private val SUPERSCRIPT = Regex("[\\u1D2C-\\u1DBF\\u2070-\\u209F\\u00B2\\u00B3\\u00B9]+")
+
+/**
+ * Just the fixture from a broadcaster's title: "LALIGA EA SPORTS 2026/2027 MD11 : Getafe CF vs
+ * Sevilla FC" → "Getafe CF vs Sevilla FC", "Athletic Bilbao vs Real Sociedad - Spanish LaLiga
+ * 2026/2027 - Week 11" → "Athletic Bilbao vs Real Sociedad". Other titles are cleaned like channel names.
+ */
+internal fun fixtureOf(title: String): String {
+    var t = title.replace(SUPERSCRIPT, "").replace(LIVE_PREFIX, "").trim()
+    t.substringAfterLast(":", "").trim().let { if (it.contains(" - ") || VERSUS.containsMatchIn(it)) t = it }
+    if (VERSUS.containsMatchIn(t)) return t.split(" - ").firstOrNull { VERSUS.containsMatchIn(it) }?.trim() ?: t
+    // No fixture: a coverage title, often shouted with a feed prefix ("IT: DAZN DIRETTA GOL SERIE A HD").
+    return if (t.contains(" - ")) t else displayName(t)
+}
+/** Words that name a competition or the coverage, never a team. */
+private val NOT_TEAM = setOf(
+    "live", "liga", "laliga", "league", "premier", "spanish", "english", "italian", "german", "french", "serie",
+    "bundesliga", "ligue", "champions", "europa", "conference", "football", "sports", "sport", "primera", "primeira",
+    "matchday", "round", "final", "copa", "coppa", "cup", "pokal", "championship",
+)
+private fun teamWords(title: String): Set<String> =
+    Regex("\\p{L}{4,}").findAll(Normalizer.normalize(title, Normalizer.Form.NFD).replace(Regex("\\p{M}"), "").lowercase())
+        .map { it.value }.filterNot { it in NOT_TEAM }.toSet()
 
 private fun Feed.bestOf(channel: Channel) = familyMembers(channel.family).firstOrNull() ?: channel
 
@@ -562,7 +616,7 @@ private fun LiveRow(entry: LiveEntry, clock: State<Long>, playing: Boolean, focu
             Text(title, style = Type.headline, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Space.s)) {
-            Text(if (programme != null) channel else "Not confirmed", style = Type.body, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+            Text(if (programme == null) "Not confirmed" else if (entry.alsoOn > 0) "$channel · +${entry.alsoOn} more" else channel, style = Type.body, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
             if (programme != null) Progress(programme, clock)
         }
         Text(entry.comp ?: entry.via.group, style = Type.caption, maxLines = 1, overflow = TextOverflow.Ellipsis)

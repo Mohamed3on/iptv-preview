@@ -61,6 +61,26 @@ class LiveNowTest {
         assertEquals(pl, result.matches.single().via.group)
     }
 
+    @Test fun oneMatchTitledDifferentlyByEachBroadcasterIsOneRow() {
+        val a = ch(1, sky, sky, "$sky|a", 0, "a.uk")
+        val b = ch(2, sky, sky, "$sky|b", 0, "b.uk")
+        val c = ch(3, tnt, tnt, "$tnt|c", 0, "c.uk")
+        val d = ch(4, tnt, tnt, "$tnt|d", 0, "d.uk")
+        val f = feed(a, b, c, d, a.copy(group = pl), b.copy(group = pl), c.copy(group = pl), d.copy(group = pl))
+        val result = live(
+            f,
+            match("a.uk", "Live: LaLiga - Athletic Bilbao - Real Sociedad"),
+            match("b.uk", "Athletic Bilbao vs Real Sociedad - Spanish La Liga"),
+            match("c.uk", "LaLiga 26/27 : Athletic Bilbao - Real Sociedad", start = now - 600),
+            match("d.uk", "Live: LaLiga - Real Madrid v Getafe"),
+        )
+        assertEquals(2, result.matches.size)
+        val bilbao = result.matches.first()
+        assertEquals(a, bilbao.tune)
+        assertEquals(2, bilbao.alsoOn)
+        assertEquals("Athletic Bilbao vs Real Sociedad", bilbao.title)
+    }
+
     @Test fun downFromTheSecondLiveNowMatchTunesTheThirdNotTheNextChannelOfItsGroup() {
         val a = ch(1, sky, sky, "$sky|a", 0, "a.uk")
         val b = ch(2, sky, sky, "$sky|b", 0, "b.uk")

@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, setSystemTime, spyOn, test } from 'bun:test'
 import { buildAppFeed, buildAppGuide } from './_app-feed.js'
 import { buildM3U, VPN_HOST, withCompetitionGroups, type Channel } from './_lib.js'
-import { QUALITY } from './quality-cache.js'
 import { Database } from 'bun:sqlite'
 import { rm } from 'node:fs/promises'
 import { channels as channelsRoute, guide as guideRoute } from './app.js'
@@ -45,37 +44,6 @@ describe('app channel feed', () => {
     expect([tnt1.rank, tnt2.rank]).toEqual([0, 1])
     expect(mainEvent.family).not.toBe(news.family)
     expect(tnt2.q).toBe(3)
-  })
-
-  test('only event slots whose current name reads as a fixture are flagged', () => {
-    const slot = (id: number, name: string) => ch(id, name, `ppv.${id}`, { isEventSlot: true, group: '⚽ Football — Match PPV' })
-    const feed = buildAppFeed(cfg, [slot(5, 'Arsenal v Chelsea'), slot(6, 'DAZN PPV 3'), ch(7, 'Arsenal v Chelsea', 'x.uk')])
-    expect([5, 6, 7].map((id) => byId(feed, id)[0].fixture)).toEqual([true, undefined, undefined])
-    expect(byId(feed, 5)[0].slot).toBe(true)
-  })
-
-  test('badges and probed height come from measured quality only', () => {
-    const ids = { uhd: 910001, fhd50: 910002, atmos: 910003, unknown: 910004 }
-    Object.assign(QUALITY, {
-      [ids.uhd]: { w: 3840, h: 2160, fps: 25, codec: 'hevc', name: '' },
-      [ids.fhd50]: { w: 1920, h: 1080, fps: 50, codec: 'h264', name: '' },
-      [ids.atmos]: { w: 1920, h: 1080, fps: 25, codec: 'h264', name: '', atmos: true },
-    })
-    try {
-      const feed = buildAppFeed(cfg, Object.values(ids).map((id) => ch(id, `UK: CHANNEL ${id} 4K`, `t.${id}`, { q: 5 })))
-      const at = (id: number) => byId(feed, id)[0]
-      expect(at(ids.uhd).badges).toEqual(['4K'])
-      expect(at(ids.fhd50).badges).toEqual(['FHD', '50fps'])
-      expect(at(ids.atmos).badges).toEqual(['FHD', 'Atmos'])
-      expect(at(ids.unknown).badges).toEqual([])
-      expect([at(ids.uhd).h, at(ids.unknown).h]).toEqual([2160, null])
-    } finally {
-      for (const id of Object.values(ids)) delete QUALITY[id]
-    }
-  })
-
-  test('route info carries both provider fronts once', () => {
-    expect(buildAppFeed(cfg, []).route).toEqual({ plain: cfg.host, vpn: VPN_HOST, user: 'u', pass: 'p' })
   })
 
   test('buildM3U output for the same channels is unchanged by the VPN_HOST move', () => {

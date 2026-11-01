@@ -178,8 +178,8 @@ let cursor = 0
 let busy = false
 let ok = 0 // probes that actually returned video this run
 // The panel counts a connection from ~6s after it opens until ~5s after it closes, so a
-// probe open longer than ~5s (a hung feed, a slow read) still shows as this run's own
-// connection for a while. Quicker probes are never counted.
+// probe open longer than a few seconds (a hung feed, a slow read) still shows as this run's own
+// connection for a while (margins doubled over the one measurement).
 let lastCounted = 0
 const worker = async () => {
   while (cursor < ids.length && Date.now() < deadline && !busy) {
@@ -188,13 +188,17 @@ const worker = async () => {
     const reverify = REFRESH && isStale(old)
     const started = Date.now()
     const m = await probeBest(id, REFRESH && !reverify ? 3 : 1)
-    if (Date.now() - started > 5000) lastCounted = Date.now()
+    if (Date.now() - started > 3000) lastCounted = Date.now()
     if (!m) {
       // Let this run's own connection drop off before deciding someone else is watching.
-      const wait = lastCounted + 10_000 - Date.now()
+      const wait = lastCounted + 20_000 - Date.now()
       if (wait > 0) await Bun.sleep(wait)
       const { max, active } = await connectionSlots()
-      if (active >= max) { busy = true; break } // someone's watching; this feed stays due for the next run
+      if (active >= max) { // someone's watching; this feed stays due for the next run
+        busy = true
+        console.log(`Slot in use after feed ${id} (${((Date.now() - started) / 1000).toFixed(1)}s ago it started, last counted probe ${lastCounted ? ((Date.now() - lastCounted) / 1000).toFixed(1) + 's ago' : 'never'})`)
+        break
+      }
     } else ok++
     // Initial: record result (null = probed). Re-verify: the current reading replaces the
     // stale one; no signal keeps it due, just tried (see RE-VERIFICATION).

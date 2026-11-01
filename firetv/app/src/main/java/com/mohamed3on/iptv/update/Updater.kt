@@ -57,7 +57,7 @@ class Updater(
     suspend fun check() {
         if (!lock.tryLock()) return
         try {
-            withContext(Dispatchers.IO) { runCatching { fetch() } }
+            withContext(Dispatchers.IO) { runCatching { fetch() }.onFailure { Log.w(TAG, "check failed: ${it.javaClass.simpleName}") } }
         } finally {
             lock.unlock()
         }
@@ -66,20 +66,33 @@ class Updater(
     private fun fetch() {
         val apk = File(dir, "update.apk")
         val manifest = get("version") { json.decodeFromString<Manifest>(it.string()) } ?: return
+        Log.i(TAG, "server ${manifest.versionCode}, installed $installed")
         if (manifest.versionCode <= installed) {
             apk.delete() // an update that is now installed
             return
         }
         if (_ready.value?.versionCode == manifest.versionCode) return
 
-        val tmp = File(dir, "update.apk.tmp")
+        // Ends in .apk: the platform's APK reader can refuse other names, which would fail the package check.
+        val tmp = File(dir, "update-download.apk")
         try {
             val digest = MessageDigest.getInstance("SHA-256")
             get("apk") { body -> DigestInputStream(body.byteStream(), digest).use { input -> tmp.outputStream().use { input.copyTo(it) } } } ?: return
             val hex = digest.digest().joinToString("") { "%02x".format(it) }
-            if (!hex.equals(manifest.sha256, ignoreCase = true)) return
-            if (packageOf(tmp) != context.packageName) return
-            if (!tmp.renameTo(apk)) return
+            if (!hex.equals(manifest.sha256, ignoreCase = true)) {
+                Log.w(TAG, "download failed its checksum")
+                return
+            }
+            val pkg = packageOf(tmp)
+            if (pkg != context.packageName) {
+                Log.w(TAG, "download is not this app (${pkg ?: "unreadable"})")
+                return
+            }
+            if (!tmp.renameTo(apk)) {
+                Log.w(TAG, "could not keep the download")
+                return
+            }
+            Log.i(TAG, "update ${manifest.versionName} ready")
             _ready.value = UpdateReady(manifest.versionCode, manifest.versionName, apk)
         } finally {
             tmp.delete()

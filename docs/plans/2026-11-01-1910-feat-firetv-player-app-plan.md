@@ -149,7 +149,6 @@ The user watches live TV through TiviMate on a Fire TV Stick 4K, fed by this rep
 
 #### Deferred to Follow-Up Work
 
-- `/api/proxy` hardening (found during security review, unrelated to this app): it skips the token on a client-supplied `Sec-Fetch-Site: same-origin` and trusts `x-forwarded-host`.
 - Server-resized logos (small WebP at one size): only if U13 shows logo decoding costs list smoothness.
 
 ### Dependencies / Assumptions

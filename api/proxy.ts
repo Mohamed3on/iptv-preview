@@ -71,7 +71,9 @@ export default async function handler(req: Request): Promise<Response> {
   if (!sameOrigin && !tokenOk(req.url)) return new Response('Forbidden', { status: 403 })
   let target = new URL(req.url).searchParams.get('url')
   if (!target || !/^https?:\/\//i.test(target)) return new Response('Bad url', { status: 400 })
-  const selfHost = req.headers.get('x-forwarded-host') ?? req.headers.get('host') ?? ''
+  // Host only: the server listens on loopback behind the tunnel, which routes by Host, so it
+  // is our own hostname. X-Forwarded-Host is client-supplied and would allowlist any domain.
+  const selfHost = req.headers.get('host') ?? ''
   try {
     let resp: Response | undefined
     for (let hop = 0; hop < 5; hop++) {

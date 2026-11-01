@@ -32,6 +32,8 @@ import androidx.compose.runtime.State
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
@@ -42,6 +44,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
@@ -58,6 +61,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.tv.material3.Text
 import com.mohamed3on.iptv.data.Channel
+import com.mohamed3on.iptv.data.ChannelIdentity
 import com.mohamed3on.iptv.data.Feed
 import com.mohamed3on.iptv.data.GuideDb
 import com.mohamed3on.iptv.player.LiveQuality
@@ -85,7 +89,10 @@ import com.mohamed3on.iptv.ui.theme.Type
 import com.mohamed3on.iptv.ui.theme.bottomScrim
 import com.mohamed3on.iptv.ui.theme.leftScrim
 import com.mohamed3on.iptv.ui.theme.material
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -98,7 +105,8 @@ private val CARD_WIDTH = 560.dp
 
 /**
  * The full-screen player (R10, R14): the video, with chrome only when asked for. The channel
- * banner rises on launch and on every zap, and sinks back 4s later; OK opens the channel list; a stream
+ * banner rises on launch and on every zap, and sinks back 4s later; OK opens the channel list (Left, on
+ * its groups), Right the recent channels, and ⏩/⏪ step through Live now; a stream
  * that can't recover gets a card saying why. The remote follows [keyAction]; [session] is null
  * until the activity has started its player (the video surface is shown regardless). While
  * [tiles] has any, they replace the full-screen video (U11).
@@ -131,22 +139,41 @@ private fun PlayerChrome(feed: Feed, session: StreamSession, audio: AudioTracks?
     // The last zap's direction, for the banner's motion; null for a jump (Back to the previous channel).
     var down by remember { mutableStateOf<Boolean?>(true) }
     val focus = remember { FocusRequester() }
+    val scope = rememberCoroutineScope()
+    // The channel list's search and place, kept between openings; each opening is a fresh list.
+    val memory = remember { ListMemory() }
+    var opens by remember { mutableStateOf(0) }
+    var openInGroups by remember { mutableStateOf(false) }
+    // Until the open layer has taken focus, the player still holds it: arrow keys then wait, rather
+    // than moving focus into the layer wherever they happen to point.
+    var layerFocused by remember { mutableStateOf(false) }
+    // A brief line in the banner for the channel it was said on ("No matches on right now").
+    var note by remember { mutableStateOf<Pair<ChannelIdentity?, String>?>(null) }
+    var bannerKick by remember { mutableStateOf(0) }
 
     // Until the debounced tune starts, the feed playing is still the previous channel's (KTD9).
     val tuning = state.phase == Phase.Connecting || state.feed?.family != state.requested?.family
     val problem = problemOf(state).takeIf { state.feed?.family == state.requested?.family }
 
     var banner by remember { mutableStateOf(true) }
-    LaunchedEffect(state.requested?.identity, tuning) {
+    LaunchedEffect(state.requested?.identity, tuning, bannerKick) {
         banner = true
         if (!tuning) {
             delay(BANNER_MS)
             banner = false
+            note = null
         }
     }
     // Focus rests on the player itself whenever nothing else holds it, so the remote reaches keyAction.
     LaunchedEffect(layer, problem?.button) {
         if (layer == Layer.None && problem?.button == null) focus.requestFocus()
+    }
+
+    // A new list each time, even when reopened while the last one is still sliding away.
+    fun openList(groups: Boolean) {
+        opens++
+        openInGroups = groups
+        layer = Layer.ChannelList
     }
 
     fun perform(action: KeyAction) {
@@ -159,8 +186,27 @@ private fun PlayerChrome(feed: Feed, session: StreamSession, audio: AudioTracks?
                 down = null
                 session.zap(action.to, feed)
             }
-            is KeyAction.OpenOverlay -> layer = Layer.ChannelList
+            is KeyAction.OpenOverlay -> openList(groups = action.groups)
             KeyAction.OpenPanel -> layer = Layer.QuickPanel
+            KeyAction.OpenRecent -> layer = Layer.Recent
+            is KeyAction.LiveZap -> scope.launch {
+                val g = guide
+                val now = System.currentTimeMillis() / 1000
+                // The guide can be swapped (and the old file closed) mid-read after a download.
+                val matches = withContext(Dispatchers.IO) {
+                    runCatching { feed.liveNow(g?.airingMatches(now).orEmpty()).context.distinctBy { it.identity } }.getOrNull()
+                } ?: return@launch
+                val from = session.state.value.requested
+                val to = stepThrough(matches, from, action.down)
+                if (matches.isEmpty()) note = from?.identity to "No matches on right now"
+                if (to == null) {
+                    bannerKick++
+                    return@launch
+                }
+                down = action.down
+                zapContext = matches
+                session.zap(to, feed)
+            }
             KeyAction.Close -> {
                 layer = Layer.None
                 pick = null
@@ -177,7 +223,7 @@ private fun PlayerChrome(feed: Feed, session: StreamSession, audio: AudioTracks?
 
     fun pickTile(purpose: Pick) {
         pick = purpose
-        layer = Layer.ChannelList
+        openList(groups = false)
     }
 
     Box(
@@ -186,6 +232,7 @@ private fun PlayerChrome(feed: Feed, session: StreamSession, audio: AudioTracks?
             // Bubbles up from whatever is focused: an open layer's own keys never get here as player keys.
             .onKeyEvent { event ->
                 val key = remoteKey(event.nativeKeyEvent.keyCode) ?: return@onKeyEvent false
+                if ((layer == Layer.ChannelList || layer == Layer.Recent) && !layerFocused && key != RemoteKey.Back) return@onKeyEvent true
                 val action = keyAction(key, PlayerKeys(state.requested, graph.history.last, graph.history.previous, layer, zapContext, multiView), feed)
                 if (action == KeyAction.Pass) return@onKeyEvent false
                 if (event.type == KeyEventType.KeyDown) perform(action)
@@ -220,7 +267,10 @@ private fun PlayerChrome(feed: Feed, session: StreamSession, audio: AudioTracks?
                 ) { channel ->
                     // Live badges once the playing feed is measured; the server's probed ones until then.
                     val liveBadges = live?.takeIf { channel?.identity == state.requested?.identity && it.first == state.feed?.id }?.second?.badges
-                    if (channel != null) Banner(channel, feed, guide, clock, tuning && channel.identity == state.requested?.identity, liveBadges ?: channel.badges)
+                    if (channel != null) Banner(
+                        channel, feed, guide, clock, tuning && channel.identity == state.requested?.identity, liveBadges ?: channel.badges,
+                        note = note?.takeIf { it.first == channel.identity }?.second,
+                    )
                 }
             }
         }
@@ -243,9 +293,9 @@ private fun PlayerChrome(feed: Feed, session: StreamSession, audio: AudioTracks?
             exit = fadeOut(Motion.panel()),
             modifier = Modifier.fillMaxSize(),
         ) {
-            Box(Modifier.fillMaxSize().leftScrim()) {
+            Box(Modifier.fillMaxSize().leftScrim().onFocusChanged { layerFocused = it.hasFocus }) {
                 val selectedTile = grid.tiles.getOrNull(grid.selected)?.channel
-                ChannelOverlay(
+                key(opens) { ChannelOverlay(
                     updateRow = updateRow(graph.updater),
                     feed = feed,
                     guide = guide,
@@ -253,6 +303,14 @@ private fun PlayerChrome(feed: Feed, session: StreamSession, audio: AudioTracks?
                     current = selectedTile ?: state.requested,
                     context = zapContext.takeIf { !multiView },
                     open = layer == Layer.ChannelList,
+                    memory = memory,
+                    startInGroups = openInGroups,
+                    // Watching, not picking a tile: a row tunes behind the open list first (preview).
+                    onPreview = if (pick == null && !multiView) { channel, context ->
+                        zapContext = context
+                        down = null
+                        session.zap(channel, feed)
+                    } else null,
                     onPick = { channel, context ->
                         layer = Layer.None
                         val purpose = pick
@@ -274,8 +332,32 @@ private fun PlayerChrome(feed: Feed, session: StreamSession, audio: AudioTracks?
                         }
                     },
                     modifier = Modifier.animateEnterExit(enter = Motion.fromLeft(reduced), exit = Motion.toLeft(reduced)),
-                )
+                ) }
             }
+        }
+
+        AnimatedVisibility(
+            visible = layer == Layer.Recent,
+            enter = Motion.fromRight(reduced),
+            exit = Motion.toRight(reduced),
+            modifier = Modifier.align(Alignment.CenterEnd).padding(Space.safe).onFocusChanged { layerFocused = it.hasFocus },
+        ) {
+            RecentSheet(
+                feed = feed,
+                guide = guide,
+                clock = clock,
+                recent = remember { graph.history.recent },
+                current = state.requested,
+                open = layer == Layer.Recent,
+                onPick = { channel ->
+                    layer = Layer.None
+                    if (channel.identity != state.requested?.identity) {
+                        down = null
+                        zapContext = null
+                        session.zap(channel, feed)
+                    }
+                },
+            )
         }
 
         AnimatedVisibility(
@@ -334,9 +416,9 @@ private fun PlayerChrome(feed: Feed, session: StreamSession, audio: AudioTracks?
     }
 }
 
-/** Logo, name and badges, now and next, and where the channel sits in its group. */
+/** Logo, name and badges, now and next, and where the channel sits in its group; above that, a passing [note]. */
 @Composable
-private fun Banner(channel: Channel, feed: Feed, guide: GuideDb?, clock: State<Long>, tuning: Boolean, badges: List<String>) {
+private fun Banner(channel: Channel, feed: Feed, guide: GuideDb?, clock: State<Long>, tuning: Boolean, badges: List<String>, note: String?) {
     val group = feed.channelsIn(channel.group)
     val position = group.indexOfFirst { it.identity == channel.identity }
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(Space.xl), verticalAlignment = Alignment.CenterVertically) {
@@ -350,6 +432,7 @@ private fun Banner(channel: Channel, feed: Feed, guide: GuideDb?, clock: State<L
             Guide(channel, guide, clock)
         }
         Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(Space.xs)) {
+            if (note != null) Text(note, style = Type.headline, maxLines = 1)
             Text(channel.group, style = Type.caption, maxLines = 1)
             if (position >= 0) Text("${position + 1} of ${group.size}", style = Type.caption)
         }

@@ -30,6 +30,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -71,11 +72,15 @@ import com.mohamed3on.iptv.ui.theme.ProgressLine
 import com.mohamed3on.iptv.ui.theme.Space
 import com.mohamed3on.iptv.ui.theme.Type
 import com.mohamed3on.iptv.ui.theme.edgeFade
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import android.os.SystemClock
+import android.util.Log
 import android.view.KeyEvent as AndroidKeyEvent
 import java.text.Normalizer
 
@@ -230,8 +235,11 @@ private data object SearchBoxItem : Item {
 private class HitItem(val hit: SearchHit) : Item {
     override val key = "h|${hit.tune.family}|${hit.programme.start}|${hit.programme.title}"
 }
-private data object EventsHeading : Item {
-    override val key = "events"
+private data object ChannelsHeading : Item {
+    override val key = "channels"
+}
+private data object ProgrammesHeading : Item {
+    override val key = "programmes"
 }
 private data class Note(val title: String, val hint: String? = null) : Item {
     override val key get() = "note"
@@ -247,20 +255,24 @@ private val Item.target get() = when (this) {
 
 /**
  * Null while Live now is still loading. Search shows a hint until 2 characters are [typed], then
- * what was [found] (nothing more while the first search runs).
+ * what was [found] (nothing more while the first search runs): channels by name, then programmes,
+ * each under its title only when it has rows.
  */
 private fun itemsOf(source: Source, feed: Feed, live: LiveNow?, typed: Boolean, found: SearchResults?): List<Item>? = when (source) {
     SearchSource -> buildList {
         add(SearchBoxItem)
         when {
-            !typed -> add(Note("Type a team, player or event"))
+            !typed -> add(Note("Type a channel, team, player or event"))
             found == null -> {}
-            found.hits.isEmpty() && found.slots.isEmpty() -> add(Note("No matches for “${found.query.trim()}”", "Try part of a team or player name."))
+            found.count == 0 -> add(Note("No matches for “${found.query.trim()}”", "Try part of a channel, team or player name."))
             else -> {
-                found.hits.mapTo(this, ::HitItem)
-                if (found.slots.isNotEmpty()) {
-                    add(EventsHeading)
-                    found.slots.mapTo(this, ::ChannelItem)
+                if (found.channels.isNotEmpty()) {
+                    add(ChannelsHeading)
+                    found.channels.mapTo(this, ::ChannelItem)
+                }
+                if (found.hits.isNotEmpty()) {
+                    add(ProgrammesHeading)
+                    found.hits.mapTo(this, ::HitItem)
                 }
             }
         }
@@ -278,18 +290,45 @@ private fun itemsOf(source: Source, feed: Feed, live: LiveNow?, typed: Boolean, 
     }
 }
 
+/** What a finished search ran with, so reopening the list never runs it again. */
+internal class Searched(private val query: String, private val feed: Feed, private val guide: GuideDb?) {
+    fun matches(query: String, feed: Feed, guide: GuideDb?) = query == this.query && feed === this.feed && guide === this.guide
+}
+
+/**
+ * What the channel list keeps between openings, for the app session: the search (query, results,
+ * the result last focused) and whether Search was on screen, so reopening goes back to it.
+ */
+class ListMemory {
+    internal var query by mutableStateOf("")
+    internal var found by mutableStateOf<SearchResults?>(null)
+    internal var searching by mutableStateOf(false)
+    internal var searched: Searched? = null
+    /** The search result last focused; null when the keyboard was. */
+    internal var searchFocus: String? = null
+    internal var inSearch = false
+}
+
+private const val SEARCH_TAG = "IptvSearch"
+/** About half a second of frames for a row to be composed and placed before focus gives up on it. */
+private const val FOCUS_FRAMES = 30
+
 /**
  * The channel list over the still-playing video (R5, R6, R21, R22, F2): groups on the left, the shown
- * group's channels with now/next, and a channel's schedule on Right. Focus opens on [current] — in
- * Live now when it was tuned from there ([context]) — and moving through the groups shows each one.
+ * group's channels with now/next, and a channel's schedule on Right. Focus opens on [current]'s row —
+ * in Live now when it was tuned from there ([context]) — or on its group in the groups column with
+ * [startInGroups]. When Search was on screen at the last close, it opens there instead, on the result
+ * last focused ([memory] keeps the search for the app session). Moving through the groups shows each one.
  *
- * [onPick] gets the chosen channel and the zap context it carries (Live now's tune list, else null:
- * its group). The player tunes it; U11's pick mode passes its own. [open] is false while the overlay
- * leaves, so focus may go back to the player. [updateRow] (U12) is a slot at the top of the groups
- * column, above Search; it renders nothing until filled (use [GroupRow]).
+ * Choosing a row hands [onPreview] the channel and the zap context it carries (Live now's tune list,
+ * else null: its group): the player tunes it behind the still-open list, which keeps its place.
+ * Choosing the row playing, or any row when there is no [onPreview] (U11's pick mode), goes to
+ * [onPick], which closes the list. [open] is false while the overlay leaves, so focus may go back to
+ * the player. [updateRow] (U12) is a slot at the top of the groups column, above Search; it renders
+ * nothing until filled (use [GroupRow]).
  *
- * Search (R7, R8, R26, F3) shows a keyboard and its results in the channel column; a live result
- * tunes with no context, so Up/Down then follow that channel's group.
+ * Search (R7, R8, R26, F3) shows a keyboard and its results in the channel column; a result tunes
+ * with no context, so Up/Down then follow that channel's group.
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -300,12 +339,16 @@ fun ChannelOverlay(
     current: Channel?,
     context: List<Channel>?,
     open: Boolean,
+    memory: ListMemory,
+    startInGroups: Boolean,
     onPick: (channel: Channel, context: List<Channel>?) -> Unit,
+    onPreview: ((channel: Channel, context: List<Channel>?) -> Unit)?,
     modifier: Modifier = Modifier,
     updateRow: LazyListScope.() -> Unit = {},
 ) {
     val reduced = LocalReducedMotion.current
     val stay by rememberUpdatedState(open)
+    val playing by rememberUpdatedState(current)
     val scope = rememberCoroutineScope()
 
     val live by produceState<LiveNow?>(null, feed, guide) {
@@ -320,24 +363,50 @@ fun ChannelOverlay(
 
     var shown by remember {
         mutableStateOf(
-            if (current != null && context?.any { it.identity == current.identity } == true) LiveSource
-            else GroupSource(current?.group ?: feed.groups.first()),
+            when {
+                memory.inSearch && !startInGroups -> SearchSource
+                current != null && context?.any { it.identity == current.identity } == true -> LiveSource
+                else -> GroupSource(current?.group ?: feed.groups.first())
+            },
         )
     }
     // A refresh can drop the 🏆 group on screen; fall back to the first group.
     val source = shown.takeUnless { it is GroupSource && it.name !in feed.groups } ?: GroupSource(feed.groups.first())
-    var query by remember { mutableStateOf("") }
+    SideEffect { memory.inSearch = source == SearchSource }
+    val inSearch = source == SearchSource
+    LaunchedEffect(feed, inSearch) { if (inSearch) withContext(Dispatchers.IO) { feed.prepareSearch() } }
+    val query = memory.query
     val typed = searchNorm(query).trim().length >= 2
-    // Each keystroke restarts the wait, so a search runs once typing pauses; the last results stay meanwhile.
-    val found by produceState<SearchResults?>(null, query, feed, guide) {
+    // Each keystroke restarts the wait, so a search runs once typing pauses; the last results stay
+    // meanwhile, and the busy line shows only for a search slow enough to notice.
+    LaunchedEffect(query, feed, guide) {
         if (!typed) {
-            value = null
-            return@produceState
+            memory.found = null
+            memory.searched = null
+            memory.searching = false
+            return@LaunchedEffect
         }
+        if (memory.searched?.matches(query, feed, guide) == true) return@LaunchedEffect
         delay(150)
-        value = withContext(Dispatchers.IO) { runCatching { feed.search(guide, query, clock.value) }.getOrNull() } ?: return@produceState
+        val busy = launch {
+            delay(120)
+            memory.searching = true
+        }
+        try {
+            val started = SystemClock.elapsedRealtime()
+            val results = withContext(Dispatchers.IO) { runCatching { feed.search(guide, query, clock.value) }.getOrNull() } ?: return@LaunchedEffect
+            Log.d(SEARCH_TAG, "q=${query.trim().length} chars, ${SystemClock.elapsedRealtime() - started} ms, ${results.count} hits")
+            memory.found = results
+            memory.searched = Searched(query, feed, guide)
+        } finally {
+            busy.cancel()
+            memory.searching = false
+        }
     }
-    val items = remember(source, feed, live, typed, found) { itemsOf(source, feed, live, typed, found) }
+    val found = memory.found
+    val items = remember(source, feed, live.takeIf { source == LiveSource }, typed, found.takeIf { source == SearchSource }) {
+        itemsOf(source, feed, live, typed, found)
+    }
 
     // Now/next for the whole shown group in one query, off the main thread, again each minute.
     val tvgIds = remember(items) { items?.mapNotNull { (it as? ChannelItem)?.channel?.tvgId?.takeIf(String::isNotEmpty) }?.distinct().orEmpty() }
@@ -355,6 +424,8 @@ fun ChannelOverlay(
     var focusedIndex by remember { mutableStateOf(0) }
     var wantChannels by remember { mutableStateOf(true) }
     var inChannels by remember { mutableStateOf(false) }
+    var inGroups by remember { mutableStateOf(false) }
+    var onKeyboard by remember { mutableStateOf(false) }
     var entryKey by remember { mutableStateOf<String?>(null) }
     var details by remember { mutableStateOf<Channel?>(null) }
     // The pane keeps its channel while it slides away.
@@ -362,55 +433,87 @@ fun ChannelOverlay(
     val rowFocus = remember { FocusRequester() }
     val groupFocus = remember { FocusRequester() }
     val keyFocus = remember { FocusRequester() }
+    // One focus move at a time: a newer one cancels any still waiting for its target.
+    val focusing = remember { arrayOfNulls<Job>(1) }
+    fun moveFocus(block: suspend CoroutineScope.() -> Unit) {
+        focusing[0]?.cancel()
+        focusing[0] = scope.launch(block = block)
+    }
 
+    /** The row last focused here, else the playing channel's (the same row, else the same stream), else the first. */
     fun entryIndex(list: List<Item>): Int {
         lastFocused[source.key]?.let { k -> list.indexOfFirst { it.key == k }.takeIf { it >= 0 }?.let { return it } }
-        current?.let { c -> list.indexOfFirst { it.target?.identity == c.identity }.takeIf { it >= 0 }?.let { return it } }
+        current?.let { c ->
+            list.indexOfFirst { it.target?.identity == c.identity }.takeIf { it >= 0 }?.let { return it }
+            list.indexOfFirst { it.target?.id == c.id }.takeIf { it >= 0 }?.let { return it }
+        }
         return list.indexOfFirst { it.focusable }
     }
 
+    /** The search result focused last, if it is still in [list]. */
+    fun resumeIndex(list: List<Item>): Int? = memory.searchFocus?.let { k -> list.indexOfFirst { it.key == k }.takeIf { it >= 0 } }
+
     val groupsState = remember {
-        val at = if (source == LiveSource) 0 else feed.groups.indexOf((source as GroupSource).name) + 1
+        val at = (source as? GroupSource)?.let { feed.groups.indexOf(it.name) + 1 } ?: 0
         LazyListState((at - 2).coerceAtLeast(0))
     }
-    val listState = remember(source.key) { LazyListState(items?.let { (entryIndex(it) - 1).coerceAtLeast(0) } ?: 0) }
+    val listState = remember(source.key) {
+        LazyListState(items?.let { ((if (source == SearchSource) resumeIndex(it) ?: 0 else entryIndex(it)) - 1).coerceAtLeast(0) } ?: 0)
+    }
 
-    /** Entering the channel column lands on [index], else the row last or now playing; in Search, on the keyboard. */
-    fun focusChannels(index: Int? = null) {
+    /**
+     * Entering the channel column lands on [index], else the row last or now playing; in Search, on the
+     * keyboard, or with [resume] on the result focused last. The target takes focus once it is composed
+     * and placed, asked again each frame for a moment, so a list still settling never drops it.
+     */
+    fun focusChannels(index: Int? = null, resume: Boolean = false) {
         val list = items ?: return
-        if (index == null && source == SearchSource) {
-            scope.launch {
+        val i = index ?: if (source == SearchSource) (if (resume) resumeIndex(list) else null) else entryIndex(list)
+        if (i == null) {
+            moveFocus {
                 listState.scrollToItem(0)
-                settle()
-                runCatching { keyFocus.requestFocus() }
+                repeat(FOCUS_FRAMES) {
+                    withFrameNanos {}
+                    runCatching { keyFocus.requestFocus() }
+                    if (inChannels && onKeyboard) return@moveFocus
+                }
             }
             return
         }
-        val i = index ?: entryIndex(list)
         if (i !in list.indices || !list[i].focusable) return
-        entryKey = list[i].key
-        scope.launch {
+        val key = list[i].key
+        entryKey = key
+        moveFocus {
             if (listState.layoutInfo.visibleItemsInfo.none { it.index == i }) listState.scrollToItem((i - 1).coerceAtLeast(0))
-            settle()
-            runCatching { rowFocus.requestFocus() }
+            repeat(FOCUS_FRAMES) {
+                withFrameNanos {}
+                runCatching { rowFocus.requestFocus() }
+                if (inChannels && focusedKey == key) return@moveFocus
+            }
         }
     }
 
+    /** The groups column, on the shown source's row, once the column has laid out and scrolled to it. */
     fun focusGroups() {
-        scope.launch {
-            val info = groupsState.layoutInfo
-            if (info.visibleItemsInfo.none { it.key == source.key }) {
-                // The update row (U12) and Search come first, then Live now, then the groups.
-                val first = info.totalItemsCount - feed.groups.size - 1
-                val at = when (source) {
-                    SearchSource -> first - 1
-                    LiveSource -> first
-                    is GroupSource -> first + 1 + feed.groups.indexOf(source.name)
+        moveFocus {
+            repeat(FOCUS_FRAMES) {
+                withFrameNanos {}
+                val info = groupsState.layoutInfo
+                if (info.totalItemsCount == 0) return@repeat
+                if (info.visibleItemsInfo.none { it.key == source.key }) {
+                    // The update row (U12) and Search come first, then Live now, then the groups.
+                    val first = info.totalItemsCount - feed.groups.size - 1
+                    val at = when (source) {
+                        SearchSource -> first - 1
+                        LiveSource -> first
+                        is GroupSource -> first + 1 + feed.groups.indexOf(source.name)
+                    }
+                    groupsState.scrollToItem((at - 2).coerceAtLeast(0))
+                } else {
+                    runCatching { groupFocus.requestFocus() }
+                    if (inGroups) return@moveFocus
                 }
-                groupsState.scrollToItem((at - 2).coerceAtLeast(0))
             }
-            settle()
-            runCatching { groupFocus.requestFocus() }
         }
     }
 
@@ -419,6 +522,13 @@ fun ChannelOverlay(
         focusChannels()
     }
 
+    /** A row chosen: tuned behind the list to preview it, or, when it is the one playing, watched full screen. */
+    fun choose(channel: Channel, context: List<Channel>?) {
+        val preview = onPreview
+        if (preview != null && channel.id != playing?.id) preview(channel, context) else onPick(channel, context)
+    }
+    val watchHint = onPreview != null
+
     // Focus opens on the current channel once its list exists, and never lands nowhere: when a refresh
     // drops the focused row, the nearest row takes it; an emptied list hands focus to its group.
     var opened by remember { mutableStateOf(false) }
@@ -426,8 +536,8 @@ fun ChannelOverlay(
         val list = items ?: return@LaunchedEffect
         if (!opened) {
             opened = true
-            if (list.any { it.focusable }) focusChannels() else focusGroups()
-        } else if (wantChannels && details == null && list.none { it.key == focusedKey }) {
+            if (!startInGroups && (source == SearchSource || list.any { it.focusable })) focusChannels(resume = true) else focusGroups()
+        } else if (focusedKey != null && wantChannels && details == null && list.none { it.key == focusedKey }) {
             val near = list.indices.filter { list[it].focusable }.minByOrNull { kotlin.math.abs(it - focusedIndex) }
             if (near != null) focusChannels(near) else focusGroups()
         }
@@ -476,6 +586,7 @@ fun ChannelOverlay(
                         .width(GROUPS_WIDTH)
                         .fillMaxHeight()
                         .edgeFade()
+                        .onFocusChanged { inGroups = it.hasFocus }
                         .onKeyEvent {
                             if (it.nativeKeyEvent.keyCode != AndroidKeyEvent.KEYCODE_DPAD_RIGHT) return@onKeyEvent false
                             if (it.type == KeyEventType.KeyDown) focusChannels()
@@ -553,39 +664,48 @@ fun ChannelOverlay(
                                 focusedKey = item.key
                                 focusedIndex = index
                                 lastFocused[source.key] = item.key
+                                if (source == SearchSource) memory.searchFocus = item.key
                                 wantChannels = true
+                                onKeyboard = false
                             }
                             when (item) {
-                                is ChannelItem -> ChannelRow(
-                                    item.channel, nowNext[item.channel.tvgId], clock,
-                                    playing = item.channel.id == current?.id, focus = focus, onFocused = onFocused,
-                                    onClick = { onPick(item.channel, null) },
-                                )
-                                is LiveItem -> LiveRow(
-                                    item.entry, clock, playing = item.entry.tune.id == current?.id, focus = focus, onFocused = onFocused,
-                                    onClick = { onPick(item.entry.tune, live?.context) },
-                                )
+                                is ChannelItem -> {
+                                    val on = item.channel.id == current?.id
+                                    ChannelRow(
+                                        item.channel, nowNext[item.channel.tvgId], clock,
+                                        playing = on, watchHint = watchHint && on, focus = focus, onFocused = onFocused,
+                                        onClick = { choose(item.channel, null) },
+                                    )
+                                }
+                                is LiveItem -> {
+                                    val on = item.entry.tune.id == current?.id
+                                    LiveRow(
+                                        item.entry, clock, playing = on, watchHint = watchHint && on, focus = focus, onFocused = onFocused,
+                                        onClick = { choose(item.entry.tune, live?.context) },
+                                    )
+                                }
                                 NoMatches -> Text("No matches on right now", style = Type.body, modifier = Modifier.padding(horizontal = Space.m, vertical = Space.m))
-                                SlotsHeading -> Text(
-                                    "Event channels · not confirmed",
-                                    style = Type.caption,
-                                    modifier = Modifier.padding(start = Space.m, top = Space.l, bottom = Space.xs),
-                                )
+                                SlotsHeading -> SectionTitle("Event channels · not confirmed")
+                                ChannelsHeading -> SectionTitle("Channels")
+                                ProgrammesHeading -> SectionTitle("Programmes")
                                 // Typing is not a row: a refresh while on the keyboard leaves focus there.
                                 SearchBoxItem -> SearchBox(
-                                    query, onQuery = { query = it }, entry = keyFocus, onFocused = { wantChannels = false },
+                                    query, busy = memory.searching, onQuery = { memory.query = it }, entry = keyFocus,
+                                    onFocused = {
+                                        wantChannels = false
+                                        onKeyboard = true
+                                        memory.searchFocus = null
+                                    },
                                     onDown = { focusChannels(list.indexOfFirst { it.focusable }) },
                                 )
-                                is HitItem -> HitRow(
-                                    item.hit, clock, playing = item.hit.tune.id == current?.id, focus = focus, onFocused = onFocused,
-                                    onPick = { onPick(item.hit.tune, null) },
-                                )
+                                is HitItem -> {
+                                    val on = item.hit.tune.id == current?.id
+                                    HitRow(
+                                        item.hit, clock, playing = on, watchHint = watchHint && on, focus = focus, onFocused = onFocused,
+                                        onPick = { choose(item.hit.tune, null) },
+                                    )
+                                }
                                 is Note -> Empty(item.title, item.hint)
-                                EventsHeading -> Text(
-                                    "Event channels",
-                                    style = Type.caption,
-                                    modifier = Modifier.padding(start = Space.m, top = Space.l, bottom = Space.xs),
-                                )
                             }
                         }
                     }
@@ -603,10 +723,10 @@ fun ChannelOverlay(
     }
 }
 
-/** Two frames: the new focus target is composed and placed before it is asked to take focus. */
-private suspend fun settle() {
-    withFrameNanos {}
-    withFrameNanos {}
+/** A section's title in the channel column, in sentence case. */
+@Composable
+private fun SectionTitle(text: String) {
+    Text(text, style = Type.caption, modifier = Modifier.padding(start = Space.m, top = Space.l, bottom = Space.xs))
 }
 
 /** A groups-column entry; [marked] shows a quiet accent bar while the channel column has focus. */
@@ -652,14 +772,16 @@ internal fun RowFrame(
 
 /**
  * Name and badges, then now (with progress) and next. Until the guide lookup returns, the lines are
- * held empty at full height, so rows never jump as data fills in.
+ * held empty at full height, so rows never jump as data fills in. [watchHint] puts [WATCH_HINT] in
+ * place of next.
  */
 @Composable
-private fun ChannelRow(
+internal fun ChannelRow(
     channel: Channel,
     guide: NowNext?,
     clock: State<Long>,
     playing: Boolean,
+    watchHint: Boolean,
     focus: FocusRequester?,
     onFocused: () -> Unit,
     onClick: () -> Unit,
@@ -685,13 +807,17 @@ private fun ChannelRow(
             }
         }
         val next = lines?.next
-        Text(remember(next) { next?.let { "Next · ${clockTime(it.start)} ${it.title}" } ?: "" }, style = Type.caption, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        if (watchHint) Hint(WATCH_HINT)
+        else Text(remember(next) { next?.let { "Next · ${clockTime(it.start)} ${it.title}" } ?: "" }, style = Type.caption, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 
-/** A match: its title first, then the channel it tunes and the competition. Slots say they're unconfirmed. */
+/**
+ * A match: its title first, then the channel it tunes and the competition. Slots say they're
+ * unconfirmed. [watchHint] puts [WATCH_HINT] in place of the competition.
+ */
 @Composable
-private fun LiveRow(entry: LiveEntry, clock: State<Long>, playing: Boolean, focus: FocusRequester?, onFocused: () -> Unit, onClick: () -> Unit) {
+private fun LiveRow(entry: LiveEntry, clock: State<Long>, playing: Boolean, watchHint: Boolean, focus: FocusRequester?, onFocused: () -> Unit, onClick: () -> Unit) {
     val programme = entry.programme
     val title = remember(entry) { if (programme != null) entry.title else displayName(entry.title) }
     val channel = remember(entry.tune.name) { displayName(entry.tune.name) }
@@ -705,7 +831,8 @@ private fun LiveRow(entry: LiveEntry, clock: State<Long>, playing: Boolean, focu
             Text(if (programme == null) "Not confirmed" else if (entry.alsoOn > 0) "$channel · +${entry.alsoOn} more" else channel, style = Type.body, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
             if (programme != null) Progress(programme, clock)
         }
-        Text(entry.comp ?: entry.via.group, style = Type.caption, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        if (watchHint) Hint(WATCH_HINT)
+        else Text(entry.comp ?: entry.via.group, style = Type.caption, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 
@@ -716,6 +843,15 @@ internal fun Progress(programme: Programme, clock: State<Long>) {
         fraction = { (clock.value - programme.start).toFloat() / (programme.stop - programme.start).coerceAtLeast(1) },
         modifier = Modifier.width(INLINE_PROGRESS),
     )
+}
+
+/** On the playing row while the list previews: OK on it again goes full screen. */
+internal const val WATCH_HINT = "Playing · OK to watch full screen"
+
+/** A quiet note in place of a row's last line. */
+@Composable
+internal fun Hint(text: String) {
+    Text(text, style = Type.caption.copy(color = Palette.textSecondary), maxLines = 1, overflow = TextOverflow.Ellipsis)
 }
 
 /** The channel playing now. */

@@ -7,7 +7,7 @@ import com.mohamed3on.iptv.data.Watched
 import com.mohamed3on.iptv.data.resolve
 
 /** The remote keys the full-screen player answers to (R10). */
-enum class RemoteKey { Up, Down, Left, Right, Ok, Menu, Back }
+enum class RemoteKey { Up, Down, Left, Right, Ok, Menu, Back, FastForward, Rewind }
 
 fun remoteKey(keyCode: Int): RemoteKey? = when (keyCode) {
     KeyEvent.KEYCODE_DPAD_UP -> RemoteKey.Up
@@ -17,11 +17,13 @@ fun remoteKey(keyCode: Int): RemoteKey? = when (keyCode) {
     KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER -> RemoteKey.Ok
     KeyEvent.KEYCODE_MENU -> RemoteKey.Menu
     KeyEvent.KEYCODE_BACK -> RemoteKey.Back
+    KeyEvent.KEYCODE_MEDIA_FAST_FORWARD -> RemoteKey.FastForward
+    KeyEvent.KEYCODE_MEDIA_REWIND -> RemoteKey.Rewind
     else -> null
 }
 
 /** What sits over the video. Back closes it before anything else. */
-enum class Layer { None, ChannelList, QuickPanel, Diagnostics }
+enum class Layer { None, ChannelList, Recent, QuickPanel, Diagnostics }
 
 /**
  * What a key press needs to know: the requested channel, the watch history, what is open, and the
@@ -41,9 +43,13 @@ sealed interface KeyAction {
     data class Zap(val to: Channel, val down: Boolean) : KeyAction
     /** Back to the channel watched before this one. */
     data class Previous(val to: Channel) : KeyAction
-    /** The channel list (U9), focused on [at]. */
-    data class OpenOverlay(val at: Channel) : KeyAction
+    /** The channel list (U9), focused on [at]'s row, or on its group in the groups column with [groups]. */
+    data class OpenOverlay(val at: Channel, val groups: Boolean = false) : KeyAction
     data object OpenPanel : KeyAction
+    /** The channels watched last, in a sheet from the right. */
+    data object OpenRecent : KeyAction
+    /** The next (or previous) match in Live now, which becomes the zap context. */
+    data class LiveZap(val down: Boolean) : KeyAction
     /** Multi-view: moves the selection, and the sound, toward [key]. */
     data class MoveTile(val key: RemoteKey) : KeyAction
     /** Multi-view: the selected tile goes full screen; the others stop (R18, AE7). */
@@ -64,10 +70,16 @@ fun keyAction(key: RemoteKey, screen: PlayerKeys, feed: Feed): KeyAction {
         else -> KeyAction.Pass
     }
     if (key == RemoteKey.Menu) return KeyAction.OpenPanel
-    if (screen.multiView) return if (key == RemoteKey.Ok || key == RemoteKey.Back) KeyAction.Promote else KeyAction.MoveTile(key)
+    if (screen.multiView) return when (key) {
+        RemoteKey.Ok, RemoteKey.Back -> KeyAction.Promote
+        RemoteKey.FastForward, RemoteKey.Rewind -> KeyAction.Ignore
+        else -> KeyAction.MoveTile(key)
+    }
     val current = screen.current ?: return KeyAction.Ignore
     return when (key) {
-        RemoteKey.Left, RemoteKey.Right -> KeyAction.Ignore
+        RemoteKey.Left -> KeyAction.OpenOverlay(current, groups = true)
+        RemoteKey.Right -> KeyAction.OpenRecent
+        RemoteKey.FastForward, RemoteKey.Rewind -> KeyAction.LiveZap(down = key == RemoteKey.FastForward)
         RemoteKey.Up, RemoteKey.Down -> {
             val down = key == RemoteKey.Down
             val next = screen.context?.let { neighbour(it, current, down) } ?: feed.zapNeighbour(current, down)
@@ -99,3 +111,8 @@ private fun neighbour(list: List<Channel>, from: Channel, down: Boolean): Channe
     if (i < 0) return null
     return list[(i + if (down) 1 else -1).mod(list.size)].takeIf { it.identity != from.identity }
 }
+
+/** The step [down] (or up) through [list] from [from]; from outside it, its first (or last) channel. */
+internal fun stepThrough(list: List<Channel>, from: Channel?, down: Boolean): Channel? =
+    if (from != null && list.any { it.identity == from.identity }) neighbour(list, from, down)
+    else if (down) list.firstOrNull() else list.lastOrNull()

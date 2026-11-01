@@ -1,6 +1,7 @@
 package com.mohamed3on.iptv.data
 
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
 
 /** A channel as the user sees it: 🏆 copies share a stream id, so the group is part of who it is (KTD5). */
@@ -35,11 +36,15 @@ fun Feed.resolve(watched: Watched): Channel? =
 fun Feed.startAction(last: Watched?): StartAction =
     last?.let(::resolve)?.let(StartAction::Play) ?: StartAction.OpenList(channels.first().group)
 
-/** Last and previous channel, persisted (KTD5). */
+/** Last and previous channel, and the few watched before them, persisted (KTD5). */
 class WatchHistory(private val store: KeyValueStore) {
     var last: Watched? = read(LAST)
         private set
     var previous: Watched? = read(PREVIOUS)
+        private set
+    /** The last [RECENT_CAP] distinct channels watched (by identity), newest first. */
+    var recent: List<Watched> = store.get(RECENT)?.let { runCatching { json.decodeFromString(recentSerializer, it) }.getOrNull() }
+        ?: listOfNotNull(last, previous)
         private set
 
     /** Records that [channel] started playing; the channel it replaced becomes the previous one. */
@@ -51,6 +56,10 @@ class WatchHistory(private val store: KeyValueStore) {
         }
         last = now
         store.put(LAST, json.encodeToString(Watched.serializer(), now))
+        if (recent.firstOrNull() != now) {
+            recent = (listOf(now) + recent.filter { it.identity != now.identity }).take(RECENT_CAP)
+            store.put(RECENT, json.encodeToString(recentSerializer, recent))
+        }
     }
 
     private fun read(key: String) =
@@ -59,6 +68,9 @@ class WatchHistory(private val store: KeyValueStore) {
     private companion object {
         const val LAST = "watch.last"
         const val PREVIOUS = "watch.previous"
+        const val RECENT = "watch.recent"
+        const val RECENT_CAP = 10
         val json = Json
+        val recentSerializer = ListSerializer(Watched.serializer())
     }
 }

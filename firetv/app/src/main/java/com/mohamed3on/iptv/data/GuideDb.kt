@@ -51,16 +51,17 @@ class GuideDb private constructor(private val db: SQLiteDatabase) : Closeable {
 
     /**
      * Programmes whose search form contains [norm] (normalized like the server's `norm`), running at
-     * [nowSec] or starting within a day of it, in start order — so the running ones come first.
-     * Never synthetic filler (KTD4, R26).
+     * [nowSec] or starting within a day of it, in start order — so the running ones come first — at
+     * most [limit] of them. Never synthetic filler (KTD4, R26).
      */
-    fun search(norm: String, nowSec: Long): List<Airing> =
-        airings("stop > ? AND start < ? AND norm LIKE ?", nowSec.toString(), (nowSec + 86_400).toString(), "%$norm%")
+    fun search(norm: String, nowSec: Long, limit: Int): List<Airing> =
+        airings("stop > ? AND start < ? AND norm LIKE ?", nowSec.toString(), (nowSec + 86_400).toString(), "%$norm%", limit = limit)
 
-    private fun airings(where: String, vararg args: String): List<Airing> =
+    /** [limit] -1 is SQLite's "no limit". */
+    private fun airings(where: String, vararg args: String, limit: Int = -1): List<Airing> =
         db.rawQuery(
             "SELECT tvg_id, norm, start, stop, title, descr, synthetic, \"match\", comp FROM programmes " +
-                "WHERE synthetic = 0 AND $where ORDER BY start",
+                "WHERE synthetic = 0 AND $where ORDER BY start LIMIT $limit",
             args,
         ).use { c -> buildList { while (c.moveToNext()) add(Airing(c.getString(0), c.getString(1), c.programme(2), c.getString(8))) } }
 

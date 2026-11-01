@@ -19,7 +19,8 @@ export default async function handler(req: Request): Promise<Response> {
     const cfg = configFromEnv()
     const channels = withCompetitionGroups(await fetchCuratedChannels(cfg))
     const proto = req.headers.get('x-forwarded-proto') ?? 'https'
-    const host = req.headers.get('x-forwarded-host') ?? req.headers.get('host')
+    // Host, not the client-supplied X-Forwarded-Host: the cached playlist is shared by URL.
+    const host = req.headers.get('host')
     const ownEpg = `${proto}://${host}/api/epg?t=${process.env.PLAYLIST_TOKEN}`
     // EPG_URLS: comma-separated preferred EPG sources (e.g. myepg.top links);
     // falls back to the provider's xmltv. Own PPV epg is always appended.

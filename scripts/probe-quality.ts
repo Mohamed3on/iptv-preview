@@ -22,7 +22,7 @@
 // RE-VERIFICATION: a peak can go stale — a feed's source changes, or an adaptive restream
 // was caught at its best moment once — and the monotonic rule would keep it forever. So
 // every reading carries the day it was taken (`at`), and refresh first re-probes readings
-// older than STALE_DAYS (oldest first), REPLACING them with what the feed shows now. A
+// older than STALE_DAYS (in playlist order), REPLACING them with what the feed shows now. A
 // below-marker result is chased back up by the gap pass on later runs; PPV/event feeds
 // are floored at their marker by realRes in api/_lib.ts, so an idle re-probe can't bury them.
 // A re-probe with NO signal proves nothing (dead feed, or a refused connection): the
@@ -41,7 +41,7 @@
 // run takes a predictable bite and the monotonic cache keeps the progress.
 //
 // Usage: bun scripts/probe-quality.ts [concurrency] [refresh] [mins=N]  (creds from env/.env.local)
-import { configFromEnv, fetchCuratedChannels, saneFps } from '../api/_lib.js'
+import { configFromEnv, fetchCuratedChannels, saneFps, withCompetitionGroups } from '../api/_lib.js'
 import { rename } from 'node:fs/promises'
 
 const cfg = configFromEnv()
@@ -92,12 +92,16 @@ try { cache = { ...(await import('../api/quality-cache.ts')).QUALITY } } catch {
 const channels = await fetchCuratedChannels(cfg, false) // live feeds only; VOD is never probed
 // A feed "matches its marker" when its real height reaches the tier's nominal resolution.
 const nominalH = (q: number) => (q >= 5 ? 2160 : q >= 4 ? 1080 : q >= 3 ? 720 : 0)
-const queueKey = (m: Meta) => m.tried ?? m.at ?? ''
+// Probe in playlist order (🏆 groups first), so the channels at the top get checked first.
+const rank = new Map<number, number>()
+for (const c of withCompetitionGroups(channels)) if (!rank.has(c.streamId)) rank.set(c.streamId, rank.size)
 const live = channels.filter((c) => !c.isEventSlot && !c.vodExt)
-// Re-verify (refresh only): every feed with a stale reading, whatever its marker, oldest first.
+  .sort((a, b) => (rank.get(a.streamId) ?? 1e9) - (rank.get(b.streamId) ?? 1e9))
+// Re-verify (refresh only): every feed with a stale reading, whatever its marker; ones that
+// last had no signal go to the back.
 const stale = REFRESH
   ? live.filter((c) => isStale(cache[c.streamId]))
-      .sort((a, b) => queueKey(cache[a.streamId]!).localeCompare(queueKey(cache[b.streamId]!)))
+      .sort((a, b) => Number(!!cache[a.streamId]!.tried) - Number(!!cache[b.streamId]!.tried))
   : []
 const gaps = live.filter((c) => {
   if ((c.q ?? 0) < 4 || isStale(cache[c.streamId])) return false

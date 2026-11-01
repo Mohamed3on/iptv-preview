@@ -294,10 +294,11 @@ export function qualityScore(channelName: string, groupName: string): number {
 export const saneFps = (fps: number): number =>
   !Number.isFinite(fps) || fps <= 0 || fps > 100 ? 0 : fps === 100 ? 50 : fps
 
-// Resolution/fps used to order feeds WITHIN a marker tier (the marker sets the tier).
+// Resolution/fps that order feeds (ahead of the marker tier, which only breaks ties).
 // Probed value when we have it — so the genuinely-highest-res stream floats up — else
-// the marker's NOMINAL resolution, so a "4K" feed unprobed or no-signal at probe time
-// is trusted at 4K, not buried under a verified lower-res feed.
+// the marker's NOMINAL resolution, capped at 1080p: only ~1 in 6 "4K"-named 24/7 feeds
+// probes at 2160p (2026-11-01), so an unverified "4K" ranks as an unverified 1080p and
+// any verified 1080p feed (real fps > 0) beats it. Event feeds keep the full nominal.
 //
 // trustMarker (PPV slots + "(EVENT ONLY)" feeds): these idle or show low-res filler
 // between matches, so a probe BELOW the marker is that filler, not live quality —
@@ -311,7 +312,8 @@ const MOBILE = /\(MOBILE?\)|720P/i
 function realRes(streamId: number, markerQ: number, trustMarker: boolean, name: string): { h: number; fps: number } {
   const nominal = markerQ >= 5 ? 2160 : markerQ === 4 ? 1080 : markerQ === 3 ? 720 : markerQ === 2 ? 540 : 360
   const m = QUALITY[String(streamId)]
-  if (!m || (trustMarker && m.h < nominal)) return { h: nominal, fps: 0 }
+  if (!m) return { h: trustMarker ? nominal : Math.min(nominal, 1080), fps: 0 }
+  if (trustMarker && m.h < nominal) return { h: nominal, fps: 0 }
   const r = { h: m.h, fps: saneFps(m.fps) }
   return MOBILE.test(name) ? { h: Math.min(r.h, 720), fps: Math.min(r.fps, 25) } : r
 }
@@ -390,7 +392,7 @@ const BEIN = /bein/i
 // Feeds that only carry signal during an event (beIN's 4K slots, mostly). They
 // idle or show low-res filler in between, so a probe below their marker is that
 // filler, not the feed — trust the marker instead (see realRes).
-const EVENT_ONLY = /\(\s*EVENT\s*ONLY\s*\)/i
+export const EVENT_ONLY = /\(\s*EVENT\s*ONLY\s*\)/i
 // Mixed categories we take only some channels from. Cat 662 (4K| UHD 3840P) mixes 4K
 // sport feeds (Sky/TNT/Eleven/ESPN/V Sport) with lifestyle/shopping/news 4K (Cocina,
 // QVC, Museum, Bloomberg…) — keep only sport. The SG/NZ/HK ones are there for Premier

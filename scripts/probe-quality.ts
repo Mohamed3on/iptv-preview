@@ -15,7 +15,7 @@
 // REFRESH MODE (`refresh` arg): re-probe ONLY feeds not yet confirmed at their marker
 // tier — those missing a reading, or cached BELOW their stated quality (e.g. a "4K" feed
 // reading 1080p, probably idle and may return higher). Feeds already at/above their
-// marker are left alone — nothing to gain. Retry flaky feeds; OVERWRITE a cached reading
+// marker are left alone — nothing to gain. Retry event-only feeds (live only during a match); OVERWRITE a cached reading
 // only when strictly better (height, then fps) — monotonic, so an idle/lower probe never
 // downgrades a known peak. Repeated runs thus chase the gaps and converge on each peak.
 //
@@ -41,7 +41,7 @@
 // run takes a predictable bite and the monotonic cache keeps the progress.
 //
 // Usage: bun scripts/probe-quality.ts [concurrency] [refresh] [mins=N]  (creds from env/.env.local)
-import { configFromEnv, fetchCuratedChannels, saneFps, withCompetitionGroups } from '../api/_lib.js'
+import { configFromEnv, EVENT_ONLY, fetchCuratedChannels, saneFps, withCompetitionGroups } from '../api/_lib.js'
 import { rename } from 'node:fs/promises'
 
 const cfg = configFromEnv()
@@ -187,7 +187,8 @@ const worker = async () => {
     const old = cache[id]
     const reverify = REFRESH && isStale(old)
     const started = Date.now()
-    const m = await probeBest(id, REFRESH && !reverify ? 3 : 1)
+    // Only event-only feeds earn retries: a 24/7 "4K" feed reading 1080p is usually just 1080p.
+    const m = await probeBest(id, REFRESH && !reverify && EVENT_ONLY.test(byId.get(id)!) ? 3 : 1)
     if (Date.now() - started > 3000) lastCounted = Date.now()
     if (!m) {
       // Let this run's own connection drop off before deciding someone else is watching.

@@ -67,6 +67,7 @@ import com.mohamed3on.iptv.diag.DiagnosticsScreen
 import com.mohamed3on.iptv.graph
 import com.mohamed3on.iptv.player.AudioState
 import com.mohamed3on.iptv.player.AudioTracks
+import com.mohamed3on.iptv.player.ExoStreamPlayer
 import com.mohamed3on.iptv.player.Phase
 import com.mohamed3on.iptv.player.SessionState
 import com.mohamed3on.iptv.player.StreamSession
@@ -97,20 +98,28 @@ private val CARD_WIDTH = 560.dp
  * The full-screen player (R10, R14): the video, with chrome only when asked for. The channel
  * banner rises on launch and on every zap, and sinks back 4s later; OK opens the channel list; a stream
  * that can't recover gets a card saying why. The remote follows [keyAction]; [session] is null
- * until the activity has started its player (the video surface is shown regardless).
+ * until the activity has started its player (the video surface is shown regardless). While
+ * [tiles] has any, they replace the full-screen video (U11).
  */
 @Composable
-fun PlayerScreen(feed: Feed, session: StreamSession?, audio: AudioTracks?, surface: SurfaceView) {
+fun PlayerScreen(feed: Feed, session: StreamSession?, audio: AudioTracks?, surface: SurfaceView, tiles: MultiView<ExoStreamPlayer>) {
+    val grid by tiles.state.collectAsState()
     Box(Modifier.fillMaxSize().background(Color.Black)) {
-        AndroidView(factory = { surface }, modifier = Modifier.fillMaxSize())
-        if (session != null) PlayerChrome(feed, session, audio)
+        // Gone, not just stopped, in multi-view: its last frame would fight the tiles' surfaces.
+        if (grid.tiles.isEmpty()) AndroidView(factory = { surface }, modifier = Modifier.fillMaxSize())
+        if (session != null) PlayerChrome(feed, session, audio, tiles, grid)
     }
 }
 
+/** What the channel list was opened to pick, when not a channel to watch. */
+private enum class Pick { MultiView, AddTile, ReplaceTile }
+
 @Composable
-private fun PlayerChrome(feed: Feed, session: StreamSession, audio: AudioTracks?) {
+private fun PlayerChrome(feed: Feed, session: StreamSession, audio: AudioTracks?, tiles: MultiView<ExoStreamPlayer>, grid: MultiViewState<ExoStreamPlayer>) {
     val graph = LocalContext.current.graph
     val reduced = LocalReducedMotion.current
+    val multiView = grid.tiles.isNotEmpty()
+    var pick by remember { mutableStateOf<Pick?>(null) }
     val state by session.state.collectAsState()
     val guide by graph.sync.guide.collectAsState()
     val clock = rememberMinuteClock()
@@ -150,9 +159,23 @@ private fun PlayerChrome(feed: Feed, session: StreamSession, audio: AudioTracks?
             }
             is KeyAction.OpenOverlay -> layer = Layer.ChannelList
             KeyAction.OpenPanel -> layer = Layer.QuickPanel
-            KeyAction.Close -> layer = Layer.None
+            KeyAction.Close -> {
+                layer = Layer.None
+                pick = null
+            }
+            is KeyAction.MoveTile -> tiles.select(neighbourTile(grid.selected, grid.tiles.size, action.key))
+            KeyAction.Promote -> {
+                down = null
+                zapContext = null
+                tiles.promote(session, feed)
+            }
             KeyAction.Ignore, KeyAction.Pass -> {}
         }
+    }
+
+    fun pickTile(purpose: Pick) {
+        pick = purpose
+        layer = Layer.ChannelList
     }
 
     Box(
@@ -161,7 +184,7 @@ private fun PlayerChrome(feed: Feed, session: StreamSession, audio: AudioTracks?
             // Bubbles up from whatever is focused: an open layer's own keys never get here as player keys.
             .onKeyEvent { event ->
                 val key = remoteKey(event.nativeKeyEvent.keyCode) ?: return@onKeyEvent false
-                val action = keyAction(key, PlayerKeys(state.requested, graph.history.last, graph.history.previous, layer, zapContext), feed)
+                val action = keyAction(key, PlayerKeys(state.requested, graph.history.last, graph.history.previous, layer, zapContext, multiView), feed)
                 if (action == KeyAction.Pass) return@onKeyEvent false
                 if (event.type == KeyEventType.KeyDown) perform(action)
                 true // the key-up too, so Back never reaches the activity and leaves the app
@@ -169,8 +192,10 @@ private fun PlayerChrome(feed: Feed, session: StreamSession, audio: AudioTracks?
             .focusRequester(focus)
             .focusable(),
     ) {
+        if (multiView) MultiViewTiles(grid, guide, clock)
+
         AnimatedVisibility(
-            visible = banner && layer == Layer.None && state.requested != null,
+            visible = banner && layer == Layer.None && state.requested != null && !multiView,
             enter = fadeIn(Motion.panel()),
             exit = fadeOut(Motion.panel()),
             modifier = Modifier.align(Alignment.BottomCenter),
@@ -215,20 +240,32 @@ private fun PlayerChrome(feed: Feed, session: StreamSession, audio: AudioTracks?
             modifier = Modifier.fillMaxSize(),
         ) {
             Box(Modifier.fillMaxSize().leftScrim()) {
+                val selectedTile = grid.tiles.getOrNull(grid.selected)?.channel
                 ChannelOverlay(
                     feed = feed,
                     guide = guide,
                     clock = clock,
-                    current = state.requested,
-                    context = zapContext,
+                    current = selectedTile ?: state.requested,
+                    context = zapContext.takeIf { !multiView },
                     open = layer == Layer.ChannelList,
                     onPick = { channel, context ->
-                        zapContext = context
                         layer = Layer.None
-                        // Picking what is already on just closes the list; it never retunes.
-                        if (channel.identity != state.requested?.identity) {
-                            down = null
-                            session.zap(channel, feed)
+                        val purpose = pick
+                        pick = null
+                        val onScreen = if (multiView) grid.tiles.map { it.channel.family } else listOfNotNull(state.requested?.family)
+                        if (purpose == null) {
+                            zapContext = context
+                            // Picking what is already on just closes the list; it never retunes.
+                            if (channel.identity != state.requested?.identity) {
+                                down = null
+                                session.zap(channel, feed)
+                            }
+                        } else if (channel.family !in onScreen) { // a channel already on screen never gets a second tile
+                            when (purpose) {
+                                Pick.MultiView -> tiles.enter(session, channel, feed)
+                                Pick.AddTile -> tiles.add(channel, feed)
+                                Pick.ReplaceTile -> tiles.replace(channel, feed)
+                            }
                         }
                     },
                     modifier = Modifier.animateEnterExit(enter = Motion.fromLeft(reduced), exit = Motion.toLeft(reduced)),
@@ -246,13 +283,38 @@ private fun PlayerChrome(feed: Feed, session: StreamSession, audio: AudioTracks?
             val choice by graph.route.choice.collectAsState()
             val effective by graph.route.effective.collectAsState()
             QuickPanel(
-                audio = audioState,
+                // The audio tracks are the full-screen player's, which multi-view stops.
+                audio = if (multiView) AudioState() else audioState,
                 onAudio = { audio?.select(it) },
                 choice = choice,
                 effective = effective,
                 // Route.effective catches up a moment later, so tune on the route the choice resolves to now.
-                onRoute = { session.useRoute(graph.route.choose(it)) },
+                onRoute = { picked ->
+                    val kind = graph.route.choose(picked)
+                    session.useRoute(kind)
+                    grid.tiles.forEach { it.session.useRoute(kind) }
+                },
                 onDiagnostics = { layer = Layer.Diagnostics },
+                views = {
+                    if (!multiView) {
+                        if (state.requested != null) PanelRow("Multi-view") { pickTile(Pick.MultiView) }
+                    } else {
+                        var full by remember { mutableStateOf(false) }
+                        PanelRow("Add tile", "${grid.tiles.size} of $TILE_CAP") {
+                            if (grid.tiles.size >= TILE_CAP) full = true else pickTile(Pick.AddTile)
+                        }
+                        PanelRow("Replace tile") { pickTile(Pick.ReplaceTile) }
+                        PanelRow("Remove tile") {
+                            layer = Layer.None
+                            tiles.remove(session, feed)
+                        }
+                        if (full) Text(
+                            "$TILE_CAP tiles is the most. Remove tile to make room for another.",
+                            style = Type.caption,
+                            modifier = Modifier.padding(start = Space.l, top = Space.xs),
+                        )
+                    }
+                },
             )
         }
 

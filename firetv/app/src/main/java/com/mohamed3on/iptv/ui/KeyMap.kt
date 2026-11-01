@@ -7,11 +7,13 @@ import com.mohamed3on.iptv.data.Watched
 import com.mohamed3on.iptv.data.resolve
 
 /** The remote keys the full-screen player answers to (R10). */
-enum class RemoteKey { Up, Down, Ok, Menu, Back }
+enum class RemoteKey { Up, Down, Left, Right, Ok, Menu, Back }
 
 fun remoteKey(keyCode: Int): RemoteKey? = when (keyCode) {
     KeyEvent.KEYCODE_DPAD_UP -> RemoteKey.Up
     KeyEvent.KEYCODE_DPAD_DOWN -> RemoteKey.Down
+    KeyEvent.KEYCODE_DPAD_LEFT -> RemoteKey.Left
+    KeyEvent.KEYCODE_DPAD_RIGHT -> RemoteKey.Right
     KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER -> RemoteKey.Ok
     KeyEvent.KEYCODE_MENU -> RemoteKey.Menu
     KeyEvent.KEYCODE_BACK -> RemoteKey.Back
@@ -23,7 +25,8 @@ enum class Layer { None, ChannelList, QuickPanel, Diagnostics }
 
 /**
  * What a key press needs to know: the requested channel, the watch history, what is open, and the
- * zap context when the channel was tuned from a list other than its group (Live now); null = its group.
+ * zap context when the channel was tuned from a list other than its group (Live now); null = its group;
+ * and whether multi-view's tiles are on screen.
  */
 data class PlayerKeys(
     val current: Channel?,
@@ -31,6 +34,7 @@ data class PlayerKeys(
     val previous: Watched?,
     val layer: Layer = Layer.None,
     val context: List<Channel>? = null,
+    val multiView: Boolean = false,
 )
 
 sealed interface KeyAction {
@@ -40,6 +44,10 @@ sealed interface KeyAction {
     /** The channel list (U9), focused on [at]. */
     data class OpenOverlay(val at: Channel) : KeyAction
     data object OpenPanel : KeyAction
+    /** Multi-view: moves the selection, and the sound, toward [key]. */
+    data class MoveTile(val key: RemoteKey) : KeyAction
+    /** Multi-view: the selected tile goes full screen; the others stop (R18, AE7). */
+    data object Promote : KeyAction
     /** Closes the open layer. */
     data object Close : KeyAction
     /** Swallowed with no effect: Back must never leave the app from the player (Home does). */
@@ -56,8 +64,10 @@ fun keyAction(key: RemoteKey, screen: PlayerKeys, feed: Feed): KeyAction {
         else -> KeyAction.Pass
     }
     if (key == RemoteKey.Menu) return KeyAction.OpenPanel
+    if (screen.multiView) return if (key == RemoteKey.Ok || key == RemoteKey.Back) KeyAction.Promote else KeyAction.MoveTile(key)
     val current = screen.current ?: return KeyAction.Ignore
     return when (key) {
+        RemoteKey.Left, RemoteKey.Right -> KeyAction.Ignore
         RemoteKey.Up, RemoteKey.Down -> {
             val down = key == RemoteKey.Down
             val next = screen.context?.let { neighbour(it, current, down) } ?: feed.zapNeighbour(current, down)

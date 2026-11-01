@@ -47,7 +47,7 @@ import com.mohamed3on.iptv.data.FeedState
 import com.mohamed3on.iptv.data.StartAction
 import com.mohamed3on.iptv.data.SyncError
 import com.mohamed3on.iptv.data.startAction
-import com.mohamed3on.iptv.diag.Spike
+import com.mohamed3on.iptv.player.ExoStreamPlayer
 import com.mohamed3on.iptv.player.AudioTracks
 import com.mohamed3on.iptv.player.FrameRate
 import com.mohamed3on.iptv.player.Idle
@@ -55,6 +55,7 @@ import com.mohamed3on.iptv.player.IdleWatch
 import com.mohamed3on.iptv.player.Phase
 import com.mohamed3on.iptv.player.PlayerPool
 import com.mohamed3on.iptv.player.StreamSession
+import com.mohamed3on.iptv.ui.MultiView
 import com.mohamed3on.iptv.ui.PlayerScreen
 import com.mohamed3on.iptv.ui.theme.IptvTheme
 import com.mohamed3on.iptv.ui.theme.Motion
@@ -80,20 +81,17 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        // Temporary U1 device spike, started over adb with --esa spike_urls (see Spike.kt).
-        val spikeUrls = intent.getStringArrayExtra("spike_urls")
-        if (spikeUrls != null) {
-            Spike.start(this, spikeUrls.toList())
-            return
-        }
         val sync = graph.sync
+        // The pool lives from onStart to onStop (KTD7); multi-view takes its tiles' players from it.
+        val pool = PlayerPool(this, graph.http)
+        val tiles = MultiView({ pool.acquire(tile = true) }, pool::release, graph.route, lifecycleScope, SystemClock::elapsedRealtime)
         setContent {
             val state by sync.state.collectAsState()
             val playing by session.collectAsState()
             val tracks by audio.collectAsState()
             val idleState = idle.collectAsState().value?.state?.collectAsState()?.value
             IptvTheme(reducedMotion = Motion.reducedMotion(this)) {
-                Root(state, playing, tracks, surface, idleState, onRetry = { graph.scope.launch { sync.retry() } })
+                Root(state, playing, tracks, surface, tiles, idleState, onRetry = { graph.scope.launch { sync.retry() } })
             }
         }
         // While visible: on resume refresh anything older than 1h, then channels every 30 min, guide every 3h.
@@ -106,9 +104,7 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
-        // The pool lives from onStart to onStop (KTD7). The last channel starts tuning here, before
-        // the first frame is drawn, from the cached feed (R9, R25).
-        val pool = PlayerPool(this, graph.http)
+        // The last channel starts tuning here, before the first frame is drawn, from the cached feed (R9, R25).
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 val player = pool.acquire()
@@ -116,7 +112,10 @@ class MainActivity : ComponentActivity() {
                 val s = StreamSession(player, graph.route, this, SystemClock::elapsedRealtime)
                 val frameRate = FrameRate(window, player.exo, s.state, this)
                 val tracks = AudioTracks(player.exo)
-                idle.value = IdleWatch(this) { s.stop() }
+                idle.value = IdleWatch(this) {
+                    tiles.close()
+                    s.stop()
+                }
                 launch {
                     s.state.collect {
                         Log.i(TAG, "${it.phase} ${it.feed?.name ?: "-"}")
@@ -132,6 +131,7 @@ class MainActivity : ComponentActivity() {
                 try {
                     awaitCancellation()
                 } finally {
+                    tiles.close()
                     session.value = null
                     audio.value = null
                     tracks.release()
@@ -183,12 +183,20 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-private fun Root(state: FeedState, session: StreamSession?, audio: AudioTracks?, surface: SurfaceView, idle: Idle?, onRetry: () -> Unit) {
+private fun Root(
+    state: FeedState,
+    session: StreamSession?,
+    audio: AudioTracks?,
+    surface: SurfaceView,
+    tiles: MultiView<ExoStreamPlayer>,
+    idle: Idle?,
+    onRetry: () -> Unit,
+) {
     when (state) {
         FeedState.Loading -> Loading()
         is FeedState.Failed -> SyncFailed(state.error, onRetry)
         is FeedState.Ready -> Box(Modifier.fillMaxSize()) {
-            PlayerScreen(state.feed, session, audio, surface)
+            PlayerScreen(state.feed, session, audio, surface, tiles)
             when (idle) {
                 Idle.Asking -> StillWatching()
                 Idle.TimedOut -> IdleStopped()

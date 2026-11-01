@@ -54,7 +54,7 @@ private enum class Page { Main, Audio, Connection }
 /**
  * The Menu sheet beside the still-playing video: audio track (R13), connection route with the
  * effective route shown (R4), diagnostics. [views] is the slot for entries that open another view
- * (U11 adds Multi-view there with [PanelRow]); it renders nothing until something fills it.
+ * (multi-view, U11, fills it with [PanelRow]s).
  * Back closes a nested list here; closing the panel itself is the player's Back (KeyMap).
  */
 @Composable
@@ -122,7 +122,7 @@ fun QuickPanel(
                             PanelRow("Audio", audio.selected?.let(::languageName), focus = audioRow) { page = Page.Audio }
                         }
                         PanelRow("Connection", routeValue(choice, effective), focus = connectionRow) { page = Page.Connection }
-                        // U11: Multi-view goes in this slot, set apart from the settings above.
+                        // Multi-view (U11), set apart from the settings above.
                         Column(Modifier.padding(top = Space.l), verticalArrangement = Arrangement.spacedBy(Space.xs), content = views)
                         Spacer(Modifier.height(Space.l))
                         PanelRow("Diagnostics", focus = diagnosticsRow, onClick = onDiagnostics)

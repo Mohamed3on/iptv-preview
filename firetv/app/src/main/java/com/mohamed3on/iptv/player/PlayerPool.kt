@@ -34,11 +34,17 @@ class PlayerPool(private val context: Context, http: OkHttpClient) {
         .setLoadErrorHandlingPolicy(NoRetry)
     private val players = mutableListOf<ExoStreamPlayer>()
 
-    fun acquire(): ExoStreamPlayer {
+    /** A multi-view [tile] buffers less: up to three streams share the line and the stick's memory. */
+    fun acquire(tile: Boolean = false): ExoStreamPlayer {
         val exo = ExoPlayer.Builder(context)
             .setLoadControl(
                 DefaultLoadControl.Builder()
-                    .setBufferDurationsMs(MIN_BUFFER_MS, MAX_BUFFER_MS, START_BUFFER_MS, REBUFFER_MS)
+                    .setBufferDurationsMs(
+                        if (tile) TILE_MIN_BUFFER_MS else MIN_BUFFER_MS,
+                        if (tile) TILE_MAX_BUFFER_MS else MAX_BUFFER_MS,
+                        START_BUFFER_MS,
+                        REBUFFER_MS,
+                    )
                     .build()
             )
             .build()
@@ -61,6 +67,8 @@ class PlayerPool(private val context: Context, http: OkHttpClient) {
         const val MAX_BUFFER_MS = 30_000
         const val START_BUFFER_MS = 500
         const val REBUFFER_MS = 1_500
+        const val TILE_MIN_BUFFER_MS = 4_000
+        const val TILE_MAX_BUFFER_MS = 8_000
 
         /** The TS extractor as Media3's default factory builds it, minus the sniffing of every other container. */
         fun liveTs() = TsExtractor(
@@ -70,11 +78,16 @@ class PlayerPool(private val context: Context, http: OkHttpClient) {
     }
 }
 
+/** A player multi-view can mute: only the selected tile is heard (R18). */
+interface TilePlayer : StreamPlayer {
+    fun setVolume(volume: Float)
+}
+
 /**
  * A pooled ExoPlayer as a [StreamPlayer]. [exo] is exposed for the surface, audio tracks (U14)
  * and, later, VOD: live specifics live in the per-item media source, not in the player (R11).
  */
-class ExoStreamPlayer internal constructor(val exo: ExoPlayer, private val liveSources: MediaSource.Factory) : StreamPlayer {
+class ExoStreamPlayer internal constructor(val exo: ExoPlayer, private val liveSources: MediaSource.Factory) : TilePlayer {
     private var listener: StreamPlayer.Listener? = null
 
     init {
@@ -104,6 +117,10 @@ class ExoStreamPlayer internal constructor(val exo: ExoPlayer, private val liveS
     override fun stop() = exo.stop()
 
     override val position get() = exo.currentPosition
+
+    override fun setVolume(volume: Float) {
+        exo.volume = volume
+    }
 
     override fun setListener(listener: StreamPlayer.Listener?) {
         this.listener = listener

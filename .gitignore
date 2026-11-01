@@ -35,3 +35,4 @@ keystore.properties
 .gradle/
 .kotlin/
 firetv/**/build/
+.claude/worktrees/

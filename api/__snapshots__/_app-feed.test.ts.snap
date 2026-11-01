@@ -1,0 +1,64 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`guide /api/epg XML for a fixed provider is unchanged 1`] = `
+"<?xml version="1.0" encoding="UTF-8"?>
+<tv generator-info-name="iptv-preview">
+<channel id="ppv.3"><display-name>UK PPV 1: Arsenal v Chelsea</display-name></channel>
+<channel id="b.uk"><display-name>UK: SKY SPORTS ACTION FHD</display-name></channel>
+<channel id="a.uk"><display-name>UK: SKY SPORTS MAIN EVENT FHD</display-name></channel>
+<programme start="20261101110000 +0000" stop="20261101120000 +0000" channel="ppv.3"><title>UK PPV 1: Arsenal v Chelsea</title><desc>⚽ Football — Match PPV</desc></programme>
+<programme start="20261101120000 +0000" stop="20261101130000 +0000" channel="ppv.3"><title>UK PPV 1: Arsenal v Chelsea</title><desc>⚽ Football — Match PPV</desc></programme>
+<programme start="20261101130000 +0000" stop="20261101140000 +0000" channel="ppv.3"><title>UK PPV 1: Arsenal v Chelsea</title><desc>⚽ Football — Match PPV</desc></programme>
+<programme start="20261101140000 +0000" stop="20261101150000 +0000" channel="ppv.3"><title>UK PPV 1: Arsenal v Chelsea</title><desc>⚽ Football — Match PPV</desc></programme>
+<programme start="20261101150000 +0000" stop="20261101160000 +0000" channel="ppv.3"><title>UK PPV 1: Arsenal v Chelsea</title><desc>⚽ Football — Match PPV</desc></programme>
+<programme start="20261101160000 +0000" stop="20261101170000 +0000" channel="ppv.3"><title>UK PPV 1: Arsenal v Chelsea</title><desc>⚽ Football — Match PPV</desc></programme>
+<programme start="20261101170000 +0000" stop="20261101180000 +0000" channel="ppv.3"><title>UK PPV 1: Arsenal v Chelsea</title><desc>⚽ Football — Match PPV</desc></programme>
+<programme start="20261101180000 +0000" stop="20261101190000 +0000" channel="ppv.3"><title>UK PPV 1: Arsenal v Chelsea</title><desc>⚽ Football — Match PPV</desc></programme>
+<programme start="20261101190000 +0000" stop="20261101200000 +0000" channel="ppv.3"><title>UK PPV 1: Arsenal v Chelsea</title><desc>⚽ Football — Match PPV</desc></programme>
+<programme start="20261101200000 +0000" stop="20261101210000 +0000" channel="ppv.3"><title>UK PPV 1: Arsenal v Chelsea</title><desc>⚽ Football — Match PPV</desc></programme>
+<programme start="20261101210000 +0000" stop="20261101220000 +0000" channel="ppv.3"><title>UK PPV 1: Arsenal v Chelsea</title><desc>⚽ Football — Match PPV</desc></programme>
+<programme start="20261101220000 +0000" stop="20261101230000 +0000" channel="ppv.3"><title>UK PPV 1: Arsenal v Chelsea</title><desc>⚽ Football — Match PPV</desc></programme>
+<programme start="20261101230000 +0000" stop="20261102000000 +0000" channel="ppv.3"><title>UK PPV 1: Arsenal v Chelsea</title><desc>⚽ Football — Match PPV</desc></programme>
+<programme start="20261102000000 +0000" stop="20261102010000 +0000" channel="ppv.3"><title>UK PPV 1: Arsenal v Chelsea</title><desc>⚽ Football — Match PPV</desc></programme>
+<programme start="20261102010000 +0000" stop="20261102020000 +0000" channel="ppv.3"><title>UK PPV 1: Arsenal v Chelsea</title><desc>⚽ Football — Match PPV</desc></programme>
+<programme start="20261102020000 +0000" stop="20261102030000 +0000" channel="ppv.3"><title>UK PPV 1: Arsenal v Chelsea</title><desc>⚽ Football — Match PPV</desc></programme>
+<programme start="20261102030000 +0000" stop="20261102040000 +0000" channel="ppv.3"><title>UK PPV 1: Arsenal v Chelsea</title><desc>⚽ Football — Match PPV</desc></programme>
+<programme start="20261102040000 +0000" stop="20261102050000 +0000" channel="ppv.3"><title>UK PPV 1: Arsenal v Chelsea</title><desc>⚽ Football — Match PPV</desc></programme>
+<programme start="20261102050000 +0000" stop="20261102060000 +0000" channel="ppv.3"><title>UK PPV 1: Arsenal v Chelsea</title><desc>⚽ Football — Match PPV</desc></programme>
+<programme start="20261102060000 +0000" stop="20261102070000 +0000" channel="ppv.3"><title>UK PPV 1: Arsenal v Chelsea</title><desc>⚽ Football — Match PPV</desc></programme>
+<programme start="20261102070000 +0000" stop="20261102080000 +0000" channel="ppv.3"><title>UK PPV 1: Arsenal v Chelsea</title><desc>⚽ Football — Match PPV</desc></programme>
+<programme start="20261102080000 +0000" stop="20261102090000 +0000" channel="ppv.3"><title>UK PPV 1: Arsenal v Chelsea</title><desc>⚽ Football — Match PPV</desc></programme>
+<programme start="20261102090000 +0000" stop="20261102100000 +0000" channel="ppv.3"><title>UK PPV 1: Arsenal v Chelsea</title><desc>⚽ Football — Match PPV</desc></programme>
+<programme start="20261102100000 +0000" stop="20261102110000 +0000" channel="ppv.3"><title>UK PPV 1: Arsenal v Chelsea</title><desc>⚽ Football — Match PPV</desc></programme>
+<programme start="20261102110000 +0000" stop="20261102120000 +0000" channel="ppv.3"><title>UK PPV 1: Arsenal v Chelsea</title><desc>⚽ Football — Match PPV</desc></programme>
+<programme start="20261101083000 +0000" stop="20261101093000 +0000" channel="a.uk"><title>Old News</title><desc>d</desc></programme>
+<programme start="20261101103000 +0000" stop="20261101113000 +0000" channel="a.uk"><title>Recent News</title><desc>d</desc></programme>
+<programme start="20261101120000 +0000" stop="20261101140000 +0000" channel="a.uk"><title>Bayern München v Arsenal</title><desc>d</desc></programme>
+<programme start="20261101140000 +0000" stop="20261101150000 +0000" channel="a.uk"><title>Sky Sports News</title><desc>d</desc></programme>
+<programme start="20261101110000 +0000" stop="20261101120000 +0000" channel="b.uk"><title>UK: SKY SPORTS ACTION FHD</title><desc>🏴 Sky Sports &amp; UK Sports</desc></programme>
+<programme start="20261101120000 +0000" stop="20261101130000 +0000" channel="b.uk"><title>UK: SKY SPORTS ACTION FHD</title><desc>🏴 Sky Sports &amp; UK Sports</desc></programme>
+<programme start="20261101130000 +0000" stop="20261101140000 +0000" channel="b.uk"><title>UK: SKY SPORTS ACTION FHD</title><desc>🏴 Sky Sports &amp; UK Sports</desc></programme>
+<programme start="20261101140000 +0000" stop="20261101150000 +0000" channel="b.uk"><title>UK: SKY SPORTS ACTION FHD</title><desc>🏴 Sky Sports &amp; UK Sports</desc></programme>
+<programme start="20261101150000 +0000" stop="20261101160000 +0000" channel="b.uk"><title>UK: SKY SPORTS ACTION FHD</title><desc>🏴 Sky Sports &amp; UK Sports</desc></programme>
+<programme start="20261101160000 +0000" stop="20261101170000 +0000" channel="b.uk"><title>UK: SKY SPORTS ACTION FHD</title><desc>🏴 Sky Sports &amp; UK Sports</desc></programme>
+<programme start="20261101170000 +0000" stop="20261101180000 +0000" channel="b.uk"><title>UK: SKY SPORTS ACTION FHD</title><desc>🏴 Sky Sports &amp; UK Sports</desc></programme>
+<programme start="20261101180000 +0000" stop="20261101190000 +0000" channel="b.uk"><title>UK: SKY SPORTS ACTION FHD</title><desc>🏴 Sky Sports &amp; UK Sports</desc></programme>
+<programme start="20261101190000 +0000" stop="20261101200000 +0000" channel="b.uk"><title>UK: SKY SPORTS ACTION FHD</title><desc>🏴 Sky Sports &amp; UK Sports</desc></programme>
+<programme start="20261101200000 +0000" stop="20261101210000 +0000" channel="b.uk"><title>UK: SKY SPORTS ACTION FHD</title><desc>🏴 Sky Sports &amp; UK Sports</desc></programme>
+<programme start="20261101210000 +0000" stop="20261101220000 +0000" channel="b.uk"><title>UK: SKY SPORTS ACTION FHD</title><desc>🏴 Sky Sports &amp; UK Sports</desc></programme>
+<programme start="20261101220000 +0000" stop="20261101230000 +0000" channel="b.uk"><title>UK: SKY SPORTS ACTION FHD</title><desc>🏴 Sky Sports &amp; UK Sports</desc></programme>
+<programme start="20261101230000 +0000" stop="20261102000000 +0000" channel="b.uk"><title>UK: SKY SPORTS ACTION FHD</title><desc>🏴 Sky Sports &amp; UK Sports</desc></programme>
+<programme start="20261102000000 +0000" stop="20261102010000 +0000" channel="b.uk"><title>UK: SKY SPORTS ACTION FHD</title><desc>🏴 Sky Sports &amp; UK Sports</desc></programme>
+<programme start="20261102010000 +0000" stop="20261102020000 +0000" channel="b.uk"><title>UK: SKY SPORTS ACTION FHD</title><desc>🏴 Sky Sports &amp; UK Sports</desc></programme>
+<programme start="20261102020000 +0000" stop="20261102030000 +0000" channel="b.uk"><title>UK: SKY SPORTS ACTION FHD</title><desc>🏴 Sky Sports &amp; UK Sports</desc></programme>
+<programme start="20261102030000 +0000" stop="20261102040000 +0000" channel="b.uk"><title>UK: SKY SPORTS ACTION FHD</title><desc>🏴 Sky Sports &amp; UK Sports</desc></programme>
+<programme start="20261102040000 +0000" stop="20261102050000 +0000" channel="b.uk"><title>UK: SKY SPORTS ACTION FHD</title><desc>🏴 Sky Sports &amp; UK Sports</desc></programme>
+<programme start="20261102050000 +0000" stop="20261102060000 +0000" channel="b.uk"><title>UK: SKY SPORTS ACTION FHD</title><desc>🏴 Sky Sports &amp; UK Sports</desc></programme>
+<programme start="20261102060000 +0000" stop="20261102070000 +0000" channel="b.uk"><title>UK: SKY SPORTS ACTION FHD</title><desc>🏴 Sky Sports &amp; UK Sports</desc></programme>
+<programme start="20261102070000 +0000" stop="20261102080000 +0000" channel="b.uk"><title>UK: SKY SPORTS ACTION FHD</title><desc>🏴 Sky Sports &amp; UK Sports</desc></programme>
+<programme start="20261102080000 +0000" stop="20261102090000 +0000" channel="b.uk"><title>UK: SKY SPORTS ACTION FHD</title><desc>🏴 Sky Sports &amp; UK Sports</desc></programme>
+<programme start="20261102090000 +0000" stop="20261102100000 +0000" channel="b.uk"><title>UK: SKY SPORTS ACTION FHD</title><desc>🏴 Sky Sports &amp; UK Sports</desc></programme>
+<programme start="20261102100000 +0000" stop="20261102110000 +0000" channel="b.uk"><title>UK: SKY SPORTS ACTION FHD</title><desc>🏴 Sky Sports &amp; UK Sports</desc></programme>
+<programme start="20261102110000 +0000" stop="20261102120000 +0000" channel="b.uk"><title>UK: SKY SPORTS ACTION FHD</title><desc>🏴 Sky Sports &amp; UK Sports</desc></programme>
+</tv>"
+`;

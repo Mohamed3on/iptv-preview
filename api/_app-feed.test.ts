@@ -1,8 +1,10 @@
-import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, setSystemTime, spyOn, test } from 'bun:test'
 import { buildAppFeed } from './_app-feed.js'
 import { buildM3U, VPN_HOST, withCompetitionGroups, type Channel } from './_lib.js'
 import { QUALITY } from './quality-cache.js'
-import { channels as channelsRoute } from './app.js'
+import { Database } from 'bun:sqlite'
+import { channels as channelsRoute, guide as guideRoute } from './app.js'
+import epg from './epg.js'
 import { handle } from '../server.js'
 
 const cfg = { host: 'http://plain.example', user: 'u', pass: 'p' }
@@ -127,5 +129,87 @@ describe('/api/app/channels token gate', () => {
     expect((await handle(new Request('http://localhost/api/app/channels?t=new'))).status).toBe(200)
     expect((await handle(new Request('http://localhost/api/app/channels'))).status).toBe(403)
     expect((await handle(new Request('http://localhost/api/app/channels?t='))).status).toBe(403)
+  })
+})
+
+// A fixed provider: a PPV slot, a channel with real programmes, and an uncovered one.
+const NOW = new Date('2026-11-01T12:30:00Z')
+const stamp = (h: number) => {
+  const d = new Date(NOW.getTime() + h * 3600_000)
+  return d.toISOString().replace(/[-:T]/g, '').replace(/\.\d+Z$/, '') + ' +0000'
+}
+const prog = (id: string, from: number, to: number, title: string) =>
+  `<programme start="${stamp(from)}" stop="${stamp(to)}" channel="${id}"><title>${title}</title><desc>d</desc></programme>`
+const PROVIDER_XML = `<tv>${[
+  prog('a.uk', -4, -3, 'Old News'),
+  prog('a.uk', -2, -1, 'Recent News'),
+  prog('a.uk', -0.5, 1.5, 'Bayern München v Arsenal'),
+  prog('a.uk', 1.5, 2.5, 'Sky Sports News'),
+].join('')}</tv>`
+function stubProvider() {
+  Object.assign(process.env, { XTREAM_HOST: 'http://plain.example', XTREAM_USER: 'u', XTREAM_PASS: 'p', PLAYLIST_TOKEN: 'tv', EPG_URLS: '' })
+  spyOn(globalThis, 'fetch').mockImplementation((async (url: string) => {
+    if (url.includes('xmltv.php')) return new Response(PROVIDER_XML)
+    const action = new URL(url).searchParams.get('action')
+    if (action === 'get_live_categories')
+      return Response.json([{ category_id: '9001', category_name: 'UK| PREMIER LEAGUE' }, { category_id: '9002', category_name: 'UK| PREMIER LEAGUE PPV' }])
+    if (action === 'get_live_streams')
+      return Response.json([
+        { stream_id: 1, name: 'UK: SKY SPORTS MAIN EVENT FHD', epg_channel_id: 'a.uk', category_id: '9001' },
+        { stream_id: 2, name: 'UK: SKY SPORTS ACTION FHD', epg_channel_id: 'b.uk', category_id: '9001' },
+        { stream_id: 3, name: 'UK PPV 1: Arsenal v Chelsea', epg_channel_id: null, category_id: '9002' },
+      ])
+    return Response.json([])
+  }) as typeof fetch)
+}
+
+describe('guide', () => {
+  const env = { ...process.env }
+  beforeEach(() => {
+    setSystemTime(NOW)
+    stubProvider()
+  })
+  afterEach(() => {
+    setSystemTime()
+    process.env = { ...env }
+  })
+
+  test('/api/epg XML for a fixed provider is unchanged', async () => {
+    const res = await epg(new Request('http://localhost/api/epg?t=tv'))
+    expect(res.status).toBe(200)
+    expect(await res.text()).toMatchSnapshot()
+  })
+
+  test("/api/app/guide needs an app token and is private", async () => {
+    process.env.APP_TOKENS = "app"
+    expect((await guideRoute(new Request("http://localhost/api/app/guide?t=tv"))).status).toBe(403)
+    const res = await guideRoute(new Request("http://localhost/api/app/guide?t=app"))
+    expect(res.status).toBe(200)
+    expect(res.headers.get("cache-control")).toBe("private, s-maxage=900")
+    expect(res.headers.get("access-control-allow-origin")).toBeNull()
+  })
+
+  test("/api/app/guide is a gzip SQLite file of the same guide, flagged for the app", async () => {
+    process.env.APP_TOKENS = "app"
+    const res = await guideRoute(new Request("http://localhost/api/app/guide?t=app"))
+    const db = Database.deserialize(Bun.gunzipSync(new Uint8Array(await res.arrayBuffer())))
+    type Row = { tvg_id: string; start: number; stop: number; title: string; norm: string; descr: string; synthetic: number; match: number }
+    const rows = db.query("SELECT * FROM programmes ORDER BY tvg_id, start").all() as Row[]
+    const of = (id: string) => rows.filter((r) => r.tvg_id === id)
+    const titled = (t: string) => rows.find((r) => r.title === t)
+    // PPV slot: 25 hourly name-as-title rows
+    expect(of("ppv.3").length).toBe(25)
+    expect(of("ppv.3").every((r) => r.synthetic === 1 && r.match === 1)).toBe(true)
+    // uncovered regular channel gets name-as-title rows, flagged synthetic
+    expect(of("b.uk").length).toBeGreaterThan(0)
+    expect(of("b.uk").every((r) => r.synthetic === 1)).toBe(true)
+    // real programmes
+    expect(of("a.uk").every((r) => r.synthetic === 0)).toBe(true)
+    expect(titled("Bayern München v Arsenal")).toMatchObject({ norm: "bayern munchen v arsenal", match: 1, synthetic: 0 })
+    expect(titled("Sky Sports News")?.match).toBe(0)
+    expect(titled("Bayern München v Arsenal")!.start).toBe(NOW.getTime() / 1000 - 1800)
+    // ended 1h ago stays, ended 3h ago is dropped
+    expect(titled("Recent News")).toBeDefined()
+    expect(titled("Old News")).toBeUndefined()
   })
 })

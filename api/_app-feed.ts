@@ -1,5 +1,6 @@
 // Builders for the Fire TV app's own feeds (/api/app/*). They read the same curated
 // channels and guide as the TiviMate feeds, so both apps always show the same thing.
+import { Database } from 'bun:sqlite'
 import { chanKey, couldBeLiveMatch, saneFps, VPN_HOST, type Channel, type XtreamConfig } from './_lib.js'
 import { QUALITY } from './quality-cache.js'
 
@@ -80,4 +81,49 @@ export function buildAppFeed(cfg: XtreamConfig, channels: Channel[]): AppFeed {
       }
     }),
   }
+}
+
+const unxml = (s: string) =>
+  s.replace(/&(?:#(\d+)|#x([0-9a-f]+)|(amp|lt|gt|quot|apos));/gi, (_, dec, hex, name) =>
+    dec ? String.fromCodePoint(Number(dec)) : hex ? String.fromCodePoint(parseInt(hex, 16))
+      : ({ amp: '&', lt: '<', gt: '>', quot: '"', apos: "'" } as Record<string, string>)[name.toLowerCase()])
+/** XMLTV "20261101120000 +0200" → epoch seconds. */
+const xmltvSeconds = (v: string) => {
+  const m = v.match(/^(\d{4})(\d\d)(\d\d)(\d\d)(\d\d)(\d\d)\s*([+-]\d\d)(\d\d)/)
+  return m ? Date.parse(`${m[1]}-${m[2]}-${m[3]}T${m[4]}:${m[5]}:${m[6]}${m[7]}:${m[8]}`) / 1000 : NaN
+}
+const ATTR = { start: /\bstart="([^"]*)"/, stop: /\bstop="([^"]*)"/, channel: /\bchannel="([^"]*)"/ }
+
+/** Search form of a title: lowercased, accents stripped ("Bayern München" → "bayern munchen"). */
+export const searchNorm = (s: string) => s.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase()
+
+/**
+ * The app's guide as a gzip SQLite file, parsed from the same XMLTV TiviMate gets so it
+ * carries the same corrections. Rows flag name-as-title filler (synthetic) and titles
+ * that could be a live match; programmes that ended over 2h ago are dropped.
+ */
+export function buildAppGuide(channels: Channel[], xmltv: string, now = Date.now()): Uint8Array {
+  const filler = new Set(channels.map((c) => `${c.tvgId}\n${c.name}\n${c.group}`))
+  const db = new Database(':memory:')
+  db.run(`CREATE TABLE programmes (tvg_id TEXT NOT NULL, start INTEGER NOT NULL, stop INTEGER NOT NULL,
+    title TEXT NOT NULL, norm TEXT NOT NULL, descr TEXT NOT NULL, synthetic INTEGER NOT NULL, match INTEGER NOT NULL)`)
+  const insert = db.prepare('INSERT INTO programmes VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+  const cutoff = now / 1000 - 2 * 3600
+  db.transaction(() => {
+    for (const m of xmltv.matchAll(/<programme\b([^>]*)>([\s\S]*?)<\/programme>/g)) {
+      const attr = (k: keyof typeof ATTR) => unxml(m[1].match(ATTR[k])?.[1] ?? '')
+      const stop = xmltvSeconds(attr('stop'))
+      if (!(stop > cutoff)) continue
+      const id = attr('channel')
+      const title = unxml(m[2].match(/<title\b[^>]*>([\s\S]*?)<\/title>/)?.[1] ?? '').trim()
+      const descr = unxml(m[2].match(/<desc\b[^>]*>([\s\S]*?)<\/desc>/)?.[1] ?? '').trim()
+      insert.run(id, xmltvSeconds(attr('start')), stop, title, searchNorm(title), descr,
+        filler.has(`${id}\n${title}\n${descr}`) ? 1 : 0, couldBeLiveMatch(title) ? 1 : 0)
+    }
+  })()
+  db.run('CREATE INDEX programmes_channel ON programmes (tvg_id, start)')
+  db.run('CREATE INDEX programmes_start ON programmes (start)')
+  const file = db.serialize()
+  db.close()
+  return Bun.gzipSync(file)
 }

@@ -8,6 +8,7 @@ import {
   fetchMyepgGuide,
   fetchProviderEpg,
   tokenOk,
+  type Channel,
   type MyepgGuide,
 } from './_lib.js'
 
@@ -18,24 +19,29 @@ import {
 const GUIDE_TTL = 6 * 3600_000
 let guides: { at: number; job: Promise<[string, MyepgGuide]> } | undefined
 
+/** The curated channels and the XMLTV guide built for them (also parsed into the app's guide). */
+export async function curatedGuide(): Promise<{ channels: Channel[]; xml: string }> {
+  const cfg = configFromEnv()
+  const epgUrls = (process.env.EPG_URLS ?? '').split(',').map((s) => s.trim()).filter(Boolean)
+  const channelsPromise = fetchCuratedChannels(cfg, false) // VOD entries carry no guide
+  if (!guides || Date.now() - guides.at > GUIDE_TTL) {
+    // provider EPG doesn't need the channel list, so its download overlaps curation;
+    // myepg needs the channels, so it waits for them
+    const providerEpgPromise = fetchProviderEpg(cfg)
+    const job = channelsPromise.then((channels) =>
+      Promise.all([providerEpgPromise, fetchMyepgGuide(epgUrls, channels)]))
+    guides = { at: Date.now(), job }
+    job.catch(() => { if (guides?.job === job) guides = undefined })
+  }
+  const [channels, [providerXml, myepg]] = await Promise.all([channelsPromise, guides.job])
+  return { channels, xml: buildEventEpg(channels, providerXml, myepg) }
+}
+
 export default async function handler(req: Request): Promise<Response> {
   if (!tokenOk(req.url)) return new Response('Forbidden', { status: 403 })
   try {
-    const cfg = configFromEnv()
-    const epgUrls = (process.env.EPG_URLS ?? '').split(',').map((s) => s.trim()).filter(Boolean)
-    const channelsPromise = fetchCuratedChannels(cfg, false) // VOD entries carry no guide
-    if (!guides || Date.now() - guides.at > GUIDE_TTL) {
-      // provider EPG doesn't need the channel list, so its download overlaps curation;
-      // myepg needs the channels, so it waits for them
-      const providerEpgPromise = fetchProviderEpg(cfg)
-      const job = channelsPromise.then((channels) =>
-        Promise.all([providerEpgPromise, fetchMyepgGuide(epgUrls, channels)]))
-      guides = { at: Date.now(), job }
-      job.catch(() => { if (guides?.job === job) guides = undefined })
-    }
-    const [channels, [providerXml, myepg]] = await Promise.all([channelsPromise, guides.job])
     // Rebuilt every 15 min with no stale serving: a stale copy is exactly the old-names guide.
-    return new Response(buildEventEpg(channels, providerXml, myepg), {
+    return new Response((await curatedGuide()).xml, {
       headers: {
         'Content-Type': 'application/xml; charset=utf-8',
         'Cache-Control': 'public, s-maxage=900',

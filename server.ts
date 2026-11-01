@@ -11,7 +11,7 @@ import proxy from './api/proxy'
 type Handler = (req: Request) => Promise<Response>
 type Entry = { body: Blob; init: ResponseInit; fresh: number; stale: number }
 
-const routes: Record<string, Handler> = { '/api/epg': epg, '/api/playlist': playlist, '/api/app/channels': app.channels }
+const routes: Record<string, Handler> = { '/api/epg': epg, '/api/playlist': playlist, '/api/app/channels': app.channels, '/api/app/guide': app.guide }
 const cache = new Map<string, Entry>()
 const building = new Map<string, Promise<Entry>>()
 

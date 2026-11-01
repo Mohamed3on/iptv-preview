@@ -54,6 +54,7 @@ export async function handle(req: Request): Promise<Response> {
   // A new build must show at once, and the APK is too big to hold in memory.
   if (pathname === '/api/app/version') return app.version(req)
   if (pathname === '/api/app/apk') return app.apk(req)
+  if (pathname === '/api/app/quality' && req.method === 'POST') return app.quality(req)
   const handler = routes[pathname]
   if (handler) return cached(req, handler)
   const file = Bun.file(dist + (pathname === '/' ? '/index.html' : pathname))

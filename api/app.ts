@@ -2,6 +2,7 @@
 // no CORS header, and only the server's own cache may keep a response.
 // GET /api/app/channels?t=TOKEN — groups, channels, feed families, badges and both provider fronts.
 // GET /api/app/guide?t=TOKEN — the guide as a gzip SQLite file the stick opens without parsing.
+// GET /api/app/version, /api/app/apk ?t=TOKEN — the latest build, copied to the box by firetv.yml.
 import { buildAppFeed, buildAppGuide } from './_app-feed.js'
 import { appTokenOk, configFromEnv, fetchCuratedChannels, withCompetitionGroups } from './_lib.js'
 import { curatedGuide } from './epg.js'
@@ -32,3 +33,17 @@ export async function guide(req: Request): Promise<Response> {
     return new Response(e instanceof Error ? e.message : 'upstream error', { status: 502 })
   }
 }
+
+// Builds live outside dist/ (deploys prune that), at fixed paths never taken from the request.
+// No file extension in the route, so Cloudflare never caches the APK.
+const appFile = (name: string) => Bun.file(`${process.env.APP_DIR ?? `${import.meta.dir}/../app`}/${name}`)
+
+async function serveFile(req: Request, name: string, type: string): Promise<Response> {
+  if (!appTokenOk(req.url)) return forbidden()
+  const file = appFile(name)
+  if (!(await file.exists())) return new Response('Not found', { status: 404 })
+  return new Response(file, { headers: { 'Content-Type': type, 'Cache-Control': 'no-store' } })
+}
+
+export const version = (req: Request) => serveFile(req, 'version.json', 'application/json')
+export const apk = (req: Request) => serveFile(req, 'app.apk', 'application/vnd.android.package-archive')

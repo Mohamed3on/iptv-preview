@@ -51,6 +51,9 @@ export async function handle(req: Request): Promise<Response> {
   // The proxy relays files of any size, so it bypasses the cache: holding its responses
   // in memory would let anyone fill this process with GitHub files.
   if (pathname === '/api/proxy') return proxy(req)
+  // A new build must show at once, and the APK is too big to hold in memory.
+  if (pathname === '/api/app/version') return app.version(req)
+  if (pathname === '/api/app/apk') return app.apk(req)
   const handler = routes[pathname]
   if (handler) return cached(req, handler)
   const file = Bun.file(dist + (pathname === '/' ? '/index.html' : pathname))

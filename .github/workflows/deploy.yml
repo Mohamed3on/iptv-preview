@@ -1,11 +1,11 @@
 name: Deploy
 
 # Ship master to the Hetzner box (deploy/sync.sh) on every push.
-# Markdown-only pushes skip it: a deploy restarts the server, which empties its cache.
+# Markdown-only and Fire TV app pushes skip it: a deploy restarts the server, which empties its cache.
 on:
   push:
     branches: [master]
-    paths-ignore: ['**.md']
+    paths-ignore: ['**.md', 'firetv/**']
   workflow_dispatch:
 
 permissions:

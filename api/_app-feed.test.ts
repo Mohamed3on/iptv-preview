@@ -3,6 +3,7 @@ import { buildAppFeed } from './_app-feed.js'
 import { buildM3U, VPN_HOST, withCompetitionGroups, type Channel } from './_lib.js'
 import { QUALITY } from './quality-cache.js'
 import { Database } from 'bun:sqlite'
+import { rm } from 'node:fs/promises'
 import { channels as channelsRoute, guide as guideRoute } from './app.js'
 import epg from './epg.js'
 import { handle } from '../server.js'
@@ -211,5 +212,42 @@ describe('guide', () => {
     // ended 1h ago stays, ended 3h ago is dropped
     expect(titled("Recent News")).toBeDefined()
     expect(titled("Old News")).toBeUndefined()
+  })
+})
+
+describe('app distribution routes', () => {
+  const env = { ...process.env }
+  const dir = `${import.meta.dir}/../.cache/test-app-dir`
+  beforeEach(async () => {
+    process.env.APP_TOKENS = 'app'
+    process.env.APP_DIR = dir
+    await rm(dir, { recursive: true, force: true })
+  })
+  afterEach(async () => {
+    process.env = { ...env }
+    await rm(dir, { recursive: true, force: true })
+  })
+  const get = (path: string) => handle(new Request(`http://localhost${path}`))
+
+  test('without the token both routes refuse, even when no files exist', async () => {
+    for (const p of ['/api/app/version', '/api/app/apk', '/api/app/version?t=tv']) expect((await get(p)).status).toBe(403)
+  })
+
+  test('with the token and no files, both are 404', async () => {
+    for (const p of ['/api/app/version?t=app', '/api/app/apk?t=app']) expect((await get(p)).status).toBe(404)
+  })
+
+  test('version.json and the APK are served verbatim, never cached', async () => {
+    const manifest = '{"versionCode":42,"versionName":"1.42","sha256":"ab"}'
+    await Bun.write(`${dir}/version.json`, manifest)
+    await Bun.write(`${dir}/app.apk`, 'PK-apk-bytes')
+    const v = await get('/api/app/version?t=app')
+    expect([v.status, await v.text(), v.headers.get('cache-control')]).toEqual([200, manifest, 'no-store'])
+    const apk = await get('/api/app/apk?t=app')
+    expect([apk.status, await apk.text(), apk.headers.get('cache-control')]).toEqual([200, 'PK-apk-bytes', 'no-store'])
+    expect(apk.headers.get('access-control-allow-origin')).toBeNull()
+    // bypasses server.ts's cache: a new build is served at once
+    await Bun.write(`${dir}/version.json`, '{"versionCode":43}')
+    expect(await (await get('/api/app/version?t=app')).text()).toBe('{"versionCode":43}')
   })
 })

@@ -59,3 +59,40 @@ fun parseFeed(text: String): Feed {
     require(feed.channels.isNotEmpty()) { "feed has no channels" }
     return feed
 }
+
+private val FEED_PREFIX = Regex("""^[^\s:|]{1,6}[:|]\s*""")
+private const val SUP_FROM = "ᴬᴮᶜᴰᴱᶠᴳᴴᴵᴶᴷᴸᴹᴺᴼᴾᴿˢᵀᵁⱽᵂᵃᵇᵈᵉᵍʰⁱʲᵏˡᵐⁿᵒᵖʳᵗᵘᵛʷˣʸᶻ⁰¹²³⁴⁵⁶⁷⁸⁹"
+private const val SUP_TO = "ABCDEFGHIJKLMNOPRSTUVWabdeghijklmnoprtuvwxyz0123456789"
+/** Words that only tell feeds of one channel apart (quality, codec, fps, uplink); the badges say it better. */
+private val FEED_WORDS = setOf(
+    "8k", "4k", "hd", "sd", "fhd", "uhd", "hdr", "raw", "vip", "hevc", "fps", "50", "60",
+    "3840p", "2160p", "1080p", "720p", "(sat)", "(mobil)", "(mobile)", "(bk)", "sat",
+)
+/** All-caps words of 4+ letters are re-cased ("SPORTS" → "Sports"), except these acronyms. */
+private val ACRONYMS = setOf("DAZN", "ESPN", "UEFA", "FIFA", "MUTV", "LFCTV", "NBCSN")
+/** Short all-caps words that are words, not acronyms. */
+private val SHORT_WORDS = setOf("SKY", "ONE", "TWO", "TEN", "MAX", "MIX", "THE", "AND")
+
+/**
+ * A channel name as people say it: the provider's feed prefix and quality markers dropped
+ * ("SS: beIN SP⚽RTS 6 4K" → "beIN Sports 6"), shouting words re-cased, acronyms kept.
+ * Event slots, whose name is the event, keep their wording.
+ */
+fun displayName(raw: String): String {
+    val unsuper = { w: String -> w.map { c -> SUP_FROM.indexOf(c).let { if (it >= 0) SUP_TO[it] else c } }.joinToString("") }
+    val words = raw.replace(FEED_PREFIX, "").split(Regex("\\s+")).mapNotNull { token ->
+        // a word spelled in superscript ("ᴬʳᵉⁿᵃ") arrives as "Arena"; markers ("ᴿᴬᵂ", "³⁸⁴⁰ᴾ") are dropped below
+        val spelled = token.isNotEmpty() && token.all { it in SUP_FROM }
+        val w = unsuper(token).replace(Regex("(?<=[A-Z])⚽|⚽(?=[A-Z])"), "O").replace("⚽", "o")
+        val letters = w.filter { it.isLetter() }
+        when {
+            w.isEmpty() || w.lowercase() in FEED_WORDS || Regex("(?i)\\d+fps").matches(w) -> null
+            letters.isNotEmpty() && letters.all { it in 'A'..'Z' } && w !in ACRONYMS && (letters.length >= 4 || w in SHORT_WORDS) ->
+                w.lowercase().replaceFirstChar(Char::uppercase)
+            spelled -> w.replaceFirstChar(Char::uppercase)
+            else -> w
+        }
+    }
+    val shown = words.joinToString(" ").trim()
+    return if (shown.isEmpty()) raw.trim() else shown
+}

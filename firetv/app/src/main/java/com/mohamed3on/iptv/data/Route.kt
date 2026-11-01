@@ -20,7 +20,7 @@ enum class RouteChoice { Auto, Plain, Vpn }
  * Which provider front streams use: a session override (the KTD8 one-press switch, never
  * persisted), else the persisted choice, else the VPN state.
  */
-class Route(private val store: KeyValueStore, vpnActive: StateFlow<Boolean>, scope: CoroutineScope) {
+class Route(private val store: KeyValueStore, private val vpnActive: StateFlow<Boolean>, scope: CoroutineScope) {
     private val _choice = MutableStateFlow(
         store.get(KEY)?.let { runCatching { RouteChoice.valueOf(it) }.getOrNull() } ?: RouteChoice.Auto
     )
@@ -32,11 +32,15 @@ class Route(private val store: KeyValueStore, vpnActive: StateFlow<Boolean>, sco
     val effective: StateFlow<RouteKind> = combine(session, _choice, vpnActive, ::pick)
         .stateIn(scope, SharingStarted.Eagerly, pick(session.value, _choice.value, vpnActive.value))
 
-    /** Persists an explicit choice; it replaces any session override. */
-    fun choose(choice: RouteChoice) {
+    /**
+     * Persists an explicit choice; it replaces any session override. Returns the route it resolves
+     * to now, since [effective] catches up a moment later.
+     */
+    fun choose(choice: RouteChoice): RouteKind {
         session.value = null
         _choice.value = choice
         store.put(KEY, choice.name)
+        return pick(null, choice, vpnActive.value)
     }
 
     /** Forces a route until the app process ends, or clears the override with null. */

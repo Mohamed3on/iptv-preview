@@ -54,6 +54,15 @@ object Motion {
         if (reduced) fadeOut(fade())
         else slideOutHorizontally(panel<IntOffset>()) { -it / 3 } + fadeOut(panel())
 
+    /** The quick panel: in from the right edge and back out to it. */
+    fun fromRight(reduced: Boolean): EnterTransition =
+        if (reduced) fadeIn(fade())
+        else slideInHorizontally(panel<IntOffset>()) { it / 3 } + fadeIn(panel())
+
+    fun toRight(reduced: Boolean): ExitTransition =
+        if (reduced) fadeOut(fade())
+        else slideOutHorizontally(panel<IntOffset>()) { it / 3 } + fadeOut(panel())
+
     fun fromBottom(reduced: Boolean): EnterTransition =
         if (reduced) fadeIn(fade())
         else slideInVertically(panel<IntOffset>()) { it / 2 } + fadeIn(panel())

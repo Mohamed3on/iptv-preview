@@ -27,9 +27,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
@@ -43,14 +41,17 @@ import com.mohamed3on.iptv.data.FeedState
 import com.mohamed3on.iptv.data.StartAction
 import com.mohamed3on.iptv.data.SyncError
 import com.mohamed3on.iptv.data.startAction
-import com.mohamed3on.iptv.diag.DiagnosticsScreen
 import com.mohamed3on.iptv.diag.Spike
+import com.mohamed3on.iptv.player.AudioTracks
 import com.mohamed3on.iptv.player.FrameRate
 import com.mohamed3on.iptv.player.Idle
 import com.mohamed3on.iptv.player.IdleWatch
 import com.mohamed3on.iptv.player.Phase
 import com.mohamed3on.iptv.player.PlayerPool
 import com.mohamed3on.iptv.player.StreamSession
+import com.mohamed3on.iptv.ui.PlayerScreen
+import com.mohamed3on.iptv.ui.theme.IptvTheme
+import com.mohamed3on.iptv.ui.theme.Motion
 import com.mohamed3on.iptv.ui.theme.Palette
 import com.mohamed3on.iptv.ui.theme.Scrim
 import com.mohamed3on.iptv.ui.theme.Space
@@ -67,11 +68,9 @@ import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.minutes
 
 class MainActivity : ComponentActivity() {
-    // Placeholder player wiring until U8: plays the start channel full-screen, Up/Down zap within
-    // its group, OK retries or takes the wrong-route switch, Menu toggles diagnostics.
     private val surface by lazy { SurfaceView(this).apply { keepScreenOn = true } }
     private val session = MutableStateFlow<StreamSession?>(null)
-    private val diagnostics = MutableStateFlow(false)
+    private val audio = MutableStateFlow<AudioTracks?>(null)
     private val idle = MutableStateFlow<IdleWatch?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -86,9 +85,11 @@ class MainActivity : ComponentActivity() {
         setContent {
             val state by sync.state.collectAsState()
             val playing by session.collectAsState()
-            val diag by diagnostics.collectAsState()
+            val tracks by audio.collectAsState()
             val idleState = idle.collectAsState().value?.state?.collectAsState()?.value
-            Root(state, playing, surface, diag, idleState, onRetry = { graph.scope.launch { sync.retry() } })
+            IptvTheme(reducedMotion = Motion.reducedMotion(this)) {
+                Root(state, playing, tracks, surface, idleState, onRetry = { graph.scope.launch { sync.retry() } })
+            }
         }
         // While visible: on resume refresh anything older than 1h, then channels every 30 min, guide every 3h.
         lifecycleScope.launch {
@@ -100,7 +101,8 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
-        // The pool lives from onStart to onStop (KTD7).
+        // The pool lives from onStart to onStop (KTD7). The last channel starts tuning here, before
+        // the first frame is drawn, from the cached feed (R9, R25).
         val pool = PlayerPool(this, graph.http)
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
@@ -108,6 +110,7 @@ class MainActivity : ComponentActivity() {
                 player.exo.setVideoSurfaceView(surface)
                 val s = StreamSession(player, graph.route, this, SystemClock::elapsedRealtime)
                 val frameRate = FrameRate(window, player.exo, s.state, this)
+                val tracks = AudioTracks(player.exo)
                 idle.value = IdleWatch(this) { s.stop() }
                 launch {
                     s.state.collect {
@@ -120,10 +123,13 @@ class MainActivity : ComponentActivity() {
                     startChannel(feed)?.let { s.zap(it, feed) }
                 }
                 session.value = s
+                audio.value = tracks
                 try {
                     awaitCancellation()
                 } finally {
                     session.value = null
+                    audio.value = null
+                    tracks.release()
                     idle.value = null
                     frameRate.detach()
                     s.stop()
@@ -140,7 +146,8 @@ class MainActivity : ComponentActivity() {
     }
 
     // Every key resets the idle stop (R24). While it asks, any key answers and goes no further;
-    // once it has stopped playback, only OK (resume) and Back do anything.
+    // once it has stopped playback, only OK (resume) and Back (leave the app) do anything.
+    // Everything else goes to the player screen's key map.
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         val watch = idle.value ?: return super.dispatchKeyEvent(event)
         val down = event.action == KeyEvent.ACTION_DOWN
@@ -151,7 +158,10 @@ class MainActivity : ComponentActivity() {
                 return true
             }
             Idle.TimedOut -> {
-                if (event.keyCode == KeyEvent.KEYCODE_BACK) return super.dispatchKeyEvent(event)
+                if (event.keyCode == KeyEvent.KEYCODE_BACK) {
+                    if (event.action == KeyEvent.ACTION_UP) onBackPressedDispatcher.onBackPressed()
+                    return true
+                }
                 if (down && (event.keyCode == KeyEvent.KEYCODE_DPAD_CENTER || event.keyCode == KeyEvent.KEYCODE_ENTER)) {
                     watch.resume()
                     session.value?.retry()
@@ -162,40 +172,13 @@ class MainActivity : ComponentActivity() {
         return super.dispatchKeyEvent(event)
     }
 
-    override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
-        if (keyCode == KeyEvent.KEYCODE_MENU || (keyCode == KeyEvent.KEYCODE_BACK && diagnostics.value)) {
-            diagnostics.value = !diagnostics.value
-            return true
-        }
-        val s = session.value
-        val feed = (graph.sync.state.value as? FeedState.Ready)?.feed
-        if (diagnostics.value || s == null || feed == null) return super.onKeyDown(keyCode, event)
-        when (keyCode) {
-            KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_DOWN -> {
-                val now = s.state.value.requested ?: return true
-                val group = feed.channelsIn(now.group)
-                val i = group.indexOfFirst { it.identity == now.identity }
-                if (i < 0) return true
-                val step = if (keyCode == KeyEvent.KEYCODE_DPAD_DOWN) 1 else -1
-                s.zap(group[(i + step).mod(group.size)], feed)
-            }
-            KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER -> when (s.state.value.phase) {
-                is Phase.WrongRoute -> s.switchRoute()
-                Phase.Offline, Phase.GaveUp -> s.retry()
-                else -> {}
-            }
-            else -> return super.onKeyDown(keyCode, event)
-        }
-        return true
-    }
-
     private companion object {
         const val TAG = "IptvPlayer"
     }
 }
 
 @Composable
-private fun Root(state: FeedState, session: StreamSession?, surface: SurfaceView, diagnostics: Boolean, idle: Idle?, onRetry: () -> Unit) {
+private fun Root(state: FeedState, session: StreamSession?, audio: AudioTracks?, surface: SurfaceView, idle: Idle?, onRetry: () -> Unit) {
     when (state) {
         FeedState.Loading -> FullScreen { Text("Loading channels", style = MaterialTheme.typography.headlineSmall) }
         is FeedState.Failed -> FullScreen {
@@ -204,13 +187,8 @@ private fun Root(state: FeedState, session: StreamSession?, surface: SurfaceView
             Text(state.error.message(), style = MaterialTheme.typography.headlineSmall)
             Button(onClick = onRetry, modifier = Modifier.focusRequester(focus)) { Text("Retry") }
         }
-        is FeedState.Ready -> Box(Modifier.fillMaxSize().background(Color.Black)) {
-            AndroidView(factory = { surface }, modifier = Modifier.fillMaxSize())
-            val phase = session?.state?.collectAsState()?.value?.phase
-            if (phase != null && phase != Phase.Playing) {
-                Text(phase.toString(), color = Color.White, modifier = Modifier.align(Alignment.Center))
-            }
-            if (diagnostics) DiagnosticsScreen()
+        is FeedState.Ready -> Box(Modifier.fillMaxSize()) {
+            PlayerScreen(state.feed, session, audio, surface)
             when (idle) {
                 Idle.Asking -> StillWatching()
                 Idle.TimedOut -> IdleStopped()

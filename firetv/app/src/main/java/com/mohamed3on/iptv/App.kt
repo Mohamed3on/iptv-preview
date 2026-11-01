@@ -2,6 +2,11 @@ package com.mohamed3on.iptv
 
 import android.app.Application
 import android.content.Context
+import coil3.ImageLoader
+import coil3.PlatformContext
+import coil3.SingletonImageLoader
+import coil3.network.okhttp.OkHttpNetworkFetcherFactory
+import coil3.request.crossfade
 import com.mohamed3on.iptv.data.FeedSync
 import com.mohamed3on.iptv.data.PrefsStore
 import com.mohamed3on.iptv.data.Route
@@ -14,7 +19,7 @@ import kotlinx.coroutines.launch
 import okhttp3.OkHttpClient
 import kotlin.time.Duration
 
-class App : Application() {
+class App : Application(), SingletonImageLoader.Factory {
     lateinit var graph: AppGraph
         private set
 
@@ -26,6 +31,12 @@ class App : Application() {
             graph.sync.refresh(Duration.ZERO, Duration.ZERO) // launch refresh; playback never waits on it (R25)
         }
     }
+
+    /** Channel logos load through the shared HTTP client; the banner swaps them on every zap, so no crossfade. */
+    override fun newImageLoader(context: PlatformContext) = ImageLoader.Builder(context)
+        .components { add(OkHttpNetworkFetcherFactory(callFactory = { graph.http })) }
+        .crossfade(false)
+        .build()
 }
 
 val Context.graph get() = (applicationContext as App).graph

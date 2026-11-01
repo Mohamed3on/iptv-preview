@@ -126,6 +126,13 @@ class StreamSession(
         switchTo(phase.switchTo)
     }
 
+    /** Retunes the requested channel on [kind] after a route choice (R4); nothing if unchanged or stopped. */
+    fun useRoute(kind: RouteKind) {
+        if (kind == routeKind || _state.value.phase == Phase.Stopped) return
+        routeChanged(kind)
+        retry()
+    }
+
     /** Stops playback and every pending retry; the provider connection is closed. */
     fun stop() {
         cancelWork()

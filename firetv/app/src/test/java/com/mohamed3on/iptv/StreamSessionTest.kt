@@ -319,4 +319,33 @@ class StreamSessionTest {
         assertEquals(listOf(plain(1), plain(1)), r.urls)
         assertEquals(Phase.Connecting, r.phase)
     }
+
+    // R4: the quick panel's route choice retunes at once on the route it resolves to.
+    @Test fun choosingARouteRetunesOnItAndAnUnchangedRouteDoesNot() = runTest {
+        val r = rig(vpnOn = true)
+        val a = ch(1)
+        r.session.zap(a, feedOf(a))
+        r.player.play()
+        at(10_000)
+        r.session.useRoute(r.route.choose(RouteChoice.Plain))
+        assertEquals(listOf(vpn(1), plain(1)), r.urls)
+        r.player.play()
+        r.session.useRoute(r.route.choose(RouteChoice.Plain))
+        assertEquals(2, r.player.opens.size)
+        at(20_000)
+        assertEquals(RouteKind.Plain, r.route.effective.value)
+        assertEquals(Phase.Playing, r.phase)
+    }
+
+    @Test fun aRouteChoiceAfterTheIdleStopDoesNotRestartPlayback() = runTest {
+        val r = rig(vpnOn = true)
+        val a = ch(1)
+        r.session.zap(a, feedOf(a))
+        r.player.play()
+        r.session.stop()
+        r.session.useRoute(r.route.choose(RouteChoice.Plain))
+        runCurrent()
+        assertEquals(listOf(vpn(1)), r.urls)
+        assertEquals(Phase.Stopped, r.phase)
+    }
 }

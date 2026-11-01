@@ -13,8 +13,8 @@
 // killing it mid-run never costs more than a couple seconds of work.
 //
 // REFRESH MODE (`refresh` arg): re-probe ONLY feeds not yet confirmed at their marker
-// tier — those missing a reading, or cached BELOW their stated quality (e.g. a "4K" feed
-// reading 1080p, probably idle and may return higher). Feeds already at/above their
+// tier — those missing a reading (dead ones weekly), or cached BELOW their stated quality
+// (e.g. a "3840p" feed reading 1080p, probably idle and may return higher). Feeds already at/above their
 // marker are left alone — nothing to gain. Retry event-only feeds (live only during a match); OVERWRITE a cached reading
 // only when strictly better (height, then fps) — monotonic, so an idle/lower probe never
 // downgrades a known peak. Repeated runs thus chase the gaps and converge on each peak.
@@ -100,17 +100,24 @@ const live = channels.filter((c) => !c.isEventSlot && !c.vodExt)
   .sort((a, b) => (rank.get(a.streamId) ?? 1e9) - (rank.get(b.streamId) ?? 1e9))
 // Re-verify (refresh only): every feed with a stale reading, whatever its marker; ones that
 // last had no signal go to the back.
+// Dead feeds (null, or a stale reading whose re-probe got no picture) get one retry a week,
+// a seventh of them each night: a revived feed gets found without dead ones eating the budget.
+const day = Math.floor(Date.now() / 864e5)
+const deadDue = (id: number) => (id + day) % 7 === 0
 const stale = REFRESH
-  ? live.filter((c) => isStale(cache[c.streamId]))
+  ? live.filter((c) => isStale(cache[c.streamId]) && (!cache[c.streamId]!.tried || deadDue(c.streamId)))
       .sort((a, b) => Number(!!cache[a.streamId]!.tried) - Number(!!cache[b.streamId]!.tried))
   : []
 const gaps = live.filter((c) => {
-  if ((c.q ?? 0) < 4 || isStale(cache[c.streamId])) return false
-  if (!REFRESH) return !(c.streamId in cache)
-  // Refresh: skip feeds already confirmed at/above their stated tier; chase only the
-  // missing or under-performing ones (a "4K" feed stuck at 1080p is likely just idle).
   const m = cache[c.streamId]
-  return !m || m.h < nominalH(c.q ?? 0)
+  if (isStale(m)) return false
+  if (!REFRESH) return (c.q ?? 0) >= 4 && !(c.streamId in cache)
+  // Refresh: every never-probed feed, labelled or not; dead ones on their weekly turn.
+  if (!(c.streamId in cache)) return true
+  if (!m) return deadDue(c.streamId)
+  // Chase feeds below their stated tier (likely idle), except a plain "4K"/"UHD" name, which
+  // is just a 1080p feed (0 of 339 were 4K on 2026-11-01); only a 3840p/2160p tag pays off.
+  return (c.q ?? 0) >= 4 && m.h < nominalH(c.q ?? 0) && (c.q! < 5 || /³⁸⁴⁰|3840|2160/.test(c.name))
 })
 const targets = [...stale, ...gaps]
 const byId = new Map(targets.map((c) => [c.streamId, c.name]))
@@ -212,8 +219,8 @@ const worker = async () => {
     if (m) ok++
     // Initial: record result (null = probed). Re-verify: the current reading replaces the
     // stale one; no signal keeps it due, just tried (see RE-VERIFICATION).
-    // Gaps: only upgrade, never downgrade a fresh peak.
-    if (!REFRESH) cache[id] = m && { ...m, at: today }
+    // Gaps: only upgrade, never downgrade a fresh peak; a missing/dead one records null again.
+    if (!REFRESH || !old) cache[id] = m && { ...m, at: today }
     else if (reverify) cache[id] = m ? { ...m, at: today } : { ...old!, tried: today }
     else if (better(m, old)) cache[id] = { ...m!, at: today }
     else continue

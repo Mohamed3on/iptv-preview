@@ -25,11 +25,11 @@ deepened: 2026-11-01
 
 ## Product Contract
 
-Product Contract preservation: changed: R4, R11, R14, R15, AE3, Key Decisions (multi-view moved into v1), Scope Boundaries; added R17–R26 — the user expanded v1 during planning (multi-view, backup feed, quality badges, Live now row) and confirmed research-driven clarifications (route auto-detect, three error classes, update row, still-watching, search rules, 50Hz).
+Product Contract preservation: changed: R4, R11, R14, R15, R18, R19, R22, R26, AE3, Key Decisions (multi-view moved into v1), Scope Boundaries; added R17–R26 — the user expanded v1 during planning (multi-view, backup feed, quality badges, Live now row) and confirmed research-driven clarifications (route auto-detect, three error classes, update row, still-watching, search rules, 50Hz).
 
 ### Summary
 
-A small native Fire TV app, sideloaded onto the Fire TV Stick 4K, that plays the curated live channels from this repo's server. It opens straight into the last-watched channel and offers a grouped channel list with now/next and quality badges, a "Live now" row of current matches, a per-channel schedule, event search, and 2–4-tile multi-view. Channels fail over to a backup feed of the same channel, and the app updates itself from the server, so a push to `master` reaches the TV without adb.
+A small native Fire TV app, sideloaded onto the Fire TV Stick 4K, that plays the curated live channels from this repo's server. It opens straight into the last-watched channel and offers a grouped channel list with now/next and quality badges, a "Live now" list of current matches, a per-channel schedule, event search, and 2–4-tile multi-view. Channels fail over to a backup feed of the same channel, and the app updates itself from the server, so a push to `master` reaches the TV without adb.
 
 ### Problem Frame
 
@@ -43,6 +43,7 @@ The user watches live TV through TiviMate on a Fire TV Stick 4K, fed by this rep
 - **Both provider routes, picked automatically from the stick's VPN state.** The user switches between plain and VPN playlists today and runs the VPN as an app on the stick. Governs R4. (session-settled: user-directed — chosen over plain-only or VPN-only, and over a manual-only toggle: the VPN runs on the stick, so the app can detect it)
 - **Self-update is in v1.** Sideloaded apps don't update themselves; this matches the push-to-deploy habit. Governs R15, R16. (session-settled: user-directed — chosen over leaving updates out of v1: user asked to keep it)
 - **Multi-view, backup feed, quality badges and the Live now row are in v1; 4K movies stay in v2.** The user asked for a more ambitious v1. Governs R11, R17–R22. (session-settled: user-directed — chosen over multi-view in v2 and over reminders/auto-tune: user picked these extras and declined reminders)
+- **Live now includes PPV slots, marked unconfirmed.** Much of the football the user watches runs on PPV slots whose guide can't confirm kickoff. Governs R22. (session-settled: user-directed — chosen over excluding PPV slots from Live now: they would otherwise only be findable through search or the PPV groups)
 - **No favourites.** The server's groups already play that role.
 
 ### Requirements
@@ -62,8 +63,8 @@ The user watches live TV through TiviMate on a Fire TV Stick 4K, fed by this rep
 - R7. Event search matches programme titles across all channels anywhere in a word (e.g. "arse" finds Arsenal, "ball" finds football), ignoring case and accents, and lists results live-now first, then upcoming up to about 24 hours ahead.
 - R8. Picking a live search result tunes to that channel; an upcoming result shows its channel and start time.
 - R21. Each channel row shows a quality badge (4K, FHD, 50fps, Atmos) taken from measured feed quality; a feed never measured shows no badge.
-- R22. A "Live now" row at the top of the channel list shows each match currently airing on a 🏆 competition channel once, tuning its best feed.
-- R26. Event search shows one row per channel per programme, excludes guide entries that only repeat the channel's own name, and lists event/PPV slot channels matched by name in a separate section after programme results.
+- R22. "Live now" is the first entry of the groups column and lists each match currently airing on a 🏆 competition channel once, tuning its best feed; Up/Down then zaps through those matches. Event/PPV slots in 🏆 groups whose current name reads as a fixture follow the confirmed matches, marked unconfirmed and with no start time.
+- R26. Event search shows one row per channel per programme (a channel's HD, FHD and 4K feeds count as one channel), excludes guide entries that only repeat the channel's own name, and lists event/PPV slot channels matched by name in a separate section after programme results.
 
 **Playback**
 
@@ -80,8 +81,8 @@ The user watches live TV through TiviMate on a Fire TV Stick 4K, fed by this rep
 **Multi-view**
 
 - R17. From the quick panel the user can open multi-view with the current channel, add channels from the channel list, and show 2 to 4 live tiles at once, up to what the stick can decode.
-- R18. Sound follows the selected tile; the D-pad moves the selection, OK makes the selected tile full-screen, and Back leaves multi-view keeping the selected tile.
-- R19. Tiles play an HD feed of each channel rather than its 4K feed, so several tiles fit within the stick's decoders.
+- R18. Sound follows the selected tile, which can be removed or replaced from the quick panel; the D-pad moves the selection, OK makes the selected tile full-screen, and Back leaves multi-view keeping the selected tile.
+- R19. Tiles play an HD feed of each channel rather than its 4K feed, so several tiles fit within the stick's decoders; a channel with no HD feed plays its 4K feed.
 
 **Updates**
 
@@ -228,7 +229,7 @@ stateDiagram-v2
   Playing --> Stopped: still-watching timeout / app stopped
 ```
 
-Remote key map (full-screen player): Up/Down zap within group; OK channel list overlay; Menu quick panel (audio track, route override, multi-view, diagnostics); Back previous channel or close overlay. In the overlay: Left to groups column, Right on a row to details/schedule, search as the first row of the groups column, "Update ready" row at the top when present.
+Remote key map (full-screen player): Up/Down zap within group; OK channel list overlay; Menu quick panel (audio track, route override, multi-view, diagnostics); Back previous channel or close overlay. In the overlay: Left to groups column, Right on a row to details/schedule. The groups column starts with the "Update ready" row (when present), then search, then "Live now", then the server's groups.
 
 ### Output Structure
 
@@ -308,7 +309,7 @@ api/
 **Files:** `api/app.ts`, `api/_app-feed.ts`, `api/_app-feed.test.ts`, `server.ts`.
 **Approach:**
 1. Build from `withCompetitionGroups(await fetchCuratedChannels(cfg, false))` (live only), as `api/playlist.ts` does, so curation, 🏆 groups and ordering match the M3U exactly.
-2. Emit: groups in order; per channel `streamId`, name, logo, group, tvg-id, `isEventSlot`, home group (only when that group is in the feed; PL-abroad channels appear only in 🏆 groups and get none), family key, rank, probed height and `q` (KTD6), and a badge from `QUALITY` (4K/FHD/50fps/Atmos; none when unmeasured, per R21).
+2. Emit: groups in order; per channel `streamId`, name, logo, group, tvg-id, `isEventSlot`, home group (only when that group is in the feed; PL-abroad channels appear only in 🏆 groups and get none), family key, rank, probed height and `q` (KTD6), a `fixture` flag on event slots whose current name passes `couldBeLiveMatch` (R22), and a badge from `QUALITY` (4K/FHD/50fps/Atmos; none when unmeasured, per R21).
 3. Emit provider route info once: plain host, VPN host (the `VPN_HOST` constant in `api/playlist.ts`, moved to `_lib.ts` so both share it), user, pass. Stream URL shape stays `host/live/user/pass/<id>.ts` as in `buildM3U`.
 4. Token gate against `APP_TOKENS` (KTD10); register in `server.ts` `routes` so `cached()` applies, with `Cache-Control: private, s-maxage=1800, stale-while-revalidate=3600` and no CORS header. The token stays in the query string, because `cached()` returns hits before the handler runs and the full URL is the cache key.
 **Patterns to follow:** `api/playlist.ts` handler shape and error handling (502 with message); `api/_lib.test.ts` style with `bun:test`.
@@ -317,6 +318,7 @@ api/
 - "VIP: TNT SPORTS 1 RAW" (`TNTSport1.uk`) and "NOW: TNT SPORT 1 HD" (`tntsports1.uk`) in one group share a family, ranked in server order.
 - A Sky Sports Main Event feed carrying `SkySportsNews.uk` is not in Sky Sports News's family.
 - A PL-abroad channel appears only in its 🏆 group and carries no home group.
+- An event slot named "Arsenal v Chelsea" gets the `fixture` flag; one named "DAZN PPV 3" does not.
 - A channel with a `QUALITY` entry of 3840×2160 gets the 4K badge; 1920×1080 at 50fps gets FHD and 50fps; an `atmos` entry adds Atmos; a channel absent from `QUALITY` gets no badge.
 - A request without a token, or with `PLAYLIST_TOKEN` instead of an app token, returns 403.
 - Through `server.ts`: after a request with a valid token warms the cache, the same path without the token still returns 403.
@@ -475,13 +477,15 @@ api/
 **Approach:**
 1. Overlay over the still-playing video: groups column, channel column, optional details pane (Right on a row).
 2. Rows: logo (Coil, sized to the row, crossfade off), name, badge, now title with progress drawn without recomposition, next title. One shared minute ticker drives progress. A row whose current guide entry is synthetic shows the channel feed's current name with no progress or next line, because slot names change faster than the guide refreshes.
-3. Live now: from the guide DB, programmes airing now flagged `match` on channels in 🏆 groups, one row per (normalized title, start), tuned via the top-ranked feed in its family.
+3. Live now: the first group entry after search; selecting it fills the channel column with programmes airing now flagged `match` on channels in 🏆 groups, one row per (normalized title, start), each tuned via the top-ranked feed in its family with Live now as the zap context. After them come event slots in 🏆 groups carrying the `fixture` flag, one row per slot name, labelled unconfirmed with no start time (R22).
 4. Details: schedule from now to end of guide; past the end of data shows "No guide".
 5. Focus restores to the current channel each time the overlay opens.
 **Test scenarios:**
 - The same match airing on three 🏆 channels and two families yields one Live now row tuning the top-ranked feed.
 - A match programme on a channel in no 🏆 group is not in Live now.
-- A synthetic programme never appears in Live now.
+- Picking the second Live now match and pressing Down tunes the third match, not the next channel of that match's own group.
+- A synthetic programme never appears in Live now as a confirmed match.
+- A 🏆 event slot with the `fixture` flag appears after every confirmed match, labelled unconfirmed; one without the flag does not appear.
 - Now/next at 20:59:59 shows the 20:00 programme; at 21:00:00 shows the 21:00 one.
 - A channel whose guide ends before now shows "No guide", not a stale programme.
 - A PPV slot renamed in the channel feed after the guide was built shows its new name and no stale now title.
@@ -494,7 +498,7 @@ api/
 **Dependencies:** U6, U9.
 **Files:** `firetv/app/src/main/java/com/mohamed3on/iptv/ui/Search.kt`, `data/GuideDb.kt`; tests `src/test/.../SearchRankingTest.kt`.
 **Approach:**
-1. Search entry is the first row of the groups column; on-screen keyboard; results update after a ~150ms debounce from 2 characters.
+1. Search sits at the top of the groups column (below "Update ready" when present); on-screen keyboard; results update after a ~150ms debounce from 2 characters.
 2. Query is normalized the same way the server normalizes titles; `LIKE '%q%'` on non-synthetic rows within now → +24h.
 3. Rank: live now first, then by start time; one row per (channel family, programme).
 4. A second section matches event/PPV slot channel names.
@@ -521,8 +525,10 @@ api/
 3. Each tile is a `StreamSession` from the pool with smaller buffers; only the selected tile has volume.
 4. Each tile shows its own busy/offline state without affecting others.
 5. OK promotes the selected tile to full-screen on its best feed and releases the other tiles; Back does the same for the selected tile (R18).
+6. The quick panel in multi-view adds "Remove tile" and "Replace tile" for the selected tile; Replace opens the channel overlay in pick mode for that slot; removing down to one tile returns to full-screen on it; the over-cap message points to Remove.
 **Test scenarios:**
-- Adding a tile beyond the cap is refused with a message.
+- Adding a tile beyond the cap is refused with a message pointing to Remove tile.
+- Replace on tile 2 of 3 swaps only tile 2's channel; Remove on one of two tiles goes full-screen on the other.
 - Tile feed choice: family with UHD, FHD and HD members picks the highest probed at or below 1080p; family with only UHD picks UHD.
 - An unprobed "4K"-named member ranked first is skipped in favour of a probed 1080p member.
 - Moving selection right mutes the left tile and unmutes the right.

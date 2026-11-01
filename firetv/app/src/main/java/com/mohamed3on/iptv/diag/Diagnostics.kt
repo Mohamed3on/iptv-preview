@@ -2,6 +2,14 @@
 
 package com.mohamed3on.iptv.diag
 
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import com.mohamed3on.iptv.ui.theme.Palette
+import com.mohamed3on.iptv.ui.theme.Radius
+import com.mohamed3on.iptv.ui.theme.Space
+import com.mohamed3on.iptv.ui.theme.Type
+import com.mohamed3on.iptv.ui.theme.edgeFade
 import android.content.Context
 import android.hardware.display.DisplayManager
 import android.media.AudioManager
@@ -28,10 +36,7 @@ import androidx.compose.ui.unit.dp
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.exoplayer.audio.AudioCapabilities
-import androidx.tv.material3.MaterialTheme
-import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
-import androidx.tv.material3.darkColorScheme
 import kotlin.math.abs
 
 private const val TAG = "IptvDiag"
@@ -108,12 +113,12 @@ fun DiagnosticsScreen() {
     val lines = remember { diagnosticsReport(context) }
     LaunchedEffect(lines) { lines.forEach { Log.i(TAG, it) } }
 
-    MaterialTheme(colorScheme = darkColorScheme()) {
-        Surface(modifier = Modifier.fillMaxSize()) {
-            LazyColumn(modifier = Modifier.padding(horizontal = 48.dp, vertical = 27.dp)) {
-                items(lines) { line -> ReportLine(line) }
-            }
-        }
+    LazyColumn(
+        modifier = Modifier.fillMaxSize().background(Palette.ink).edgeFade(),
+        contentPadding = Space.safe,
+    ) {
+        item { Text("Diagnostics", style = Type.title, modifier = Modifier.padding(bottom = Space.l)) }
+        items(lines) { line -> ReportLine(line) }
     }
 }
 
@@ -124,13 +129,14 @@ private fun ReportLine(line: String) {
     val focused by interaction.collectIsFocusedAsState()
     val header = line.startsWith("==")
     Text(
-        text = line,
-        style = if (header) MaterialTheme.typography.titleMedium else MaterialTheme.typography.bodyMedium,
-        color = if (header) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+        text = if (header) line.trim('=', ' ') else line,
+        style = if (header) Type.headline else Type.body.copy(color = if (focused) Palette.textPrimary else Palette.textSecondary),
         modifier = Modifier
             .fillMaxWidth()
-            .background(if (focused) MaterialTheme.colorScheme.surfaceVariant else MaterialTheme.colorScheme.surface)
+            .padding(top = if (header) Space.xl else 0.dp)
+            .clip(RoundedCornerShape(Radius.chip))
+            .background(if (focused) Palette.raised else Color.Transparent)
             .focusable(interactionSource = interaction)
-            .padding(vertical = if (header) 8.dp else 2.dp, horizontal = 8.dp),
+            .padding(vertical = if (header) Space.xs else 2.dp, horizontal = Space.s),
     )
 }

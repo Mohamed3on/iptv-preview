@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The app's mark: the launcher banner's screen glyph with the accent play triangle,
+     nudged 2 units toward its point so it reads as centred. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="88dp"
+    android:height="76dp"
+    android:viewportWidth="76"
+    android:viewportHeight="66">
+    <path
+        android:fillColor="#FFF4F6F8"
+        android:fillType="evenOdd"
+        android:pathData="M10,0h56a10,10 0 0 1 10,10v32a10,10 0 0 1 -10,10h-56a10,10 0 0 1 -10,-10v-32a10,10 0 0 1 10,-10z M11,6h54a5,5 0 0 1 5,5v30a5,5 0 0 1 -5,5h-54a5,5 0 0 1 -5,-5v-30a5,5 0 0 1 5,-5z M26,57h24a2.5,2.5 0 0 1 0,5h-24a2.5,2.5 0 0 1 0,-5z" />
+    <path
+        android:fillColor="#FF3D9BFF"
+        android:pathData="M32,15.5Q32,13 34.2,14.2L48.8,23.8Q51,26 48.8,28.2L34.2,37.8Q32,39 32,36.5z" />
+</vector>

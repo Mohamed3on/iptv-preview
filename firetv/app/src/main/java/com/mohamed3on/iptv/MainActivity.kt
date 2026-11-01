@@ -1,6 +1,18 @@
 package com.mohamed3on.iptv
 
 import android.os.Bundle
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.text.style.TextAlign
+import com.mohamed3on.iptv.ui.theme.ActionButton
+import com.mohamed3on.iptv.ui.theme.ActivityLine
+import com.mohamed3on.iptv.ui.theme.Mark
+import com.mohamed3on.iptv.ui.theme.Radius
 import android.os.SystemClock
 import android.util.Log
 import android.view.KeyEvent
@@ -8,7 +20,6 @@ import android.view.SurfaceView
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
-import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -26,16 +37,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
-import androidx.tv.material3.Button
-import androidx.tv.material3.MaterialTheme
-import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
-import androidx.tv.material3.darkColorScheme
 import com.mohamed3on.iptv.data.Feed
 import com.mohamed3on.iptv.data.FeedState
 import com.mohamed3on.iptv.data.StartAction
@@ -56,7 +62,6 @@ import com.mohamed3on.iptv.ui.theme.Palette
 import com.mohamed3on.iptv.ui.theme.Scrim
 import com.mohamed3on.iptv.ui.theme.Space
 import com.mohamed3on.iptv.ui.theme.Type
-import com.mohamed3on.iptv.ui.theme.focusLift
 import com.mohamed3on.iptv.ui.theme.material
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.delay
@@ -180,13 +185,8 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun Root(state: FeedState, session: StreamSession?, audio: AudioTracks?, surface: SurfaceView, idle: Idle?, onRetry: () -> Unit) {
     when (state) {
-        FeedState.Loading -> FullScreen { Text("Loading channels", style = MaterialTheme.typography.headlineSmall) }
-        is FeedState.Failed -> FullScreen {
-            val focus = remember { FocusRequester() }
-            LaunchedEffect(Unit) { focus.requestFocus() }
-            Text(state.error.message(), style = MaterialTheme.typography.headlineSmall)
-            Button(onClick = onRetry, modifier = Modifier.focusRequester(focus)) { Text("Retry") }
-        }
+        FeedState.Loading -> Loading()
+        is FeedState.Failed -> SyncFailed(state.error, onRetry)
         is FeedState.Ready -> Box(Modifier.fillMaxSize()) {
             PlayerScreen(state.feed, session, audio, surface)
             when (idle) {
@@ -195,6 +195,41 @@ private fun Root(state: FeedState, session: StreamSession?, audio: AudioTracks?,
                 else -> {}
             }
         }
+    }
+}
+
+/**
+ * First run only: with a cached feed, Ready arrives within a frame or two. The screen waits
+ * 400ms before fading in, so a quick load never flashes it.
+ */
+@Composable
+private fun Loading() {
+    var shown by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { delay(400); shown = true }
+    val alpha by animateFloatAsState(if (shown) 1f else 0f, Motion.panel(), label = "loading")
+    Centered(Modifier.graphicsLayer { this.alpha = alpha }) {
+        Mark()
+        Text("Loading channels…", style = Type.body, modifier = Modifier.padding(top = Space.xl))
+        ActivityLine(Modifier.padding(top = Space.l))
+    }
+}
+
+/** First run with no cached feed: says what went wrong in plain words, with one way forward. */
+@Composable
+private fun SyncFailed(error: SyncError, onRetry: () -> Unit) {
+    val (title, body) = when (error) {
+        SyncError.Offline -> "Can’t reach your server" to "Check that the Fire TV is online, then try again."
+        is SyncError.Rejected -> "The server didn’t accept this app" to "Its app token may have changed. Install the latest build."
+        SyncError.Malformed -> "The channel list didn’t load" to "The server sent something unexpected. Try again in a minute."
+    }
+    val focus = remember { FocusRequester() }
+    LaunchedEffect(Unit) { focus.requestFocus() }
+    Centered {
+        Mark(size = 64.dp)
+        Text(title, style = Type.title, modifier = Modifier.padding(top = Space.xl))
+        Text(body, style = Type.body, textAlign = TextAlign.Center, modifier = Modifier.padding(top = Space.s).widthIn(max = 520.dp))
+        if (error is SyncError.Rejected) Text("HTTP ${error.status}", style = Type.caption, modifier = Modifier.padding(top = Space.xs))
+        ActionButton("Try again", onRetry, Modifier.padding(top = Space.xl).focusRequester(focus))
     }
 }
 
@@ -209,50 +244,44 @@ private fun StillWatching() {
             Text("Still watching?", style = Type.title)
             Text("Playback stops in a minute unless you press a button.", style = Type.body)
             val focus = remember { FocusRequester() }
-            var focused by remember { mutableStateOf(false) }
             LaunchedEffect(Unit) { focus.requestFocus() }
-            Text(
-                "Keep watching",
-                style = Type.headline,
-                modifier = Modifier
-                    .padding(top = Space.m)
-                    .focusRequester(focus)
-                    .onFocusChanged { focused = it.isFocused }
-                    .focusable()
-                    .focusLift(focused)
-                    .padding(horizontal = Space.xl, vertical = Space.m),
-            )
+            ActionButton("Keep watching", onClick = {}, Modifier.padding(top = Space.m).focusRequester(focus))
         }
     }
 }
 
 @Composable
 private fun IdleStopped() {
-    Column(
-        Modifier.fillMaxSize().background(Palette.ink),
-        verticalArrangement = Arrangement.spacedBy(Space.m, Alignment.CenterVertically),
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
+    Centered {
         Text("Stopped after 4 hours with no activity", style = Type.title)
-        Text("Press OK to resume", style = Type.body)
+        Row(Modifier.padding(top = Space.m), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Space.s)) {
+            Text("Press", style = Type.body)
+            KeyCap("OK")
+            Text("to resume", style = Type.body)
+        }
     }
 }
 
-private fun SyncError.message() = when (this) {
-    SyncError.Offline -> "Can't reach the server. Check the network connection."
-    is SyncError.Rejected -> "The server rejected the app (HTTP $status)."
-    SyncError.Malformed -> "The server sent something that isn't a channel list."
+/** A remote key drawn as a small cap, so instructions point at the button itself. */
+@Composable
+private fun KeyCap(label: String) {
+    Text(
+        label,
+        style = Type.caption.copy(color = Palette.textPrimary),
+        modifier = Modifier
+            .clip(RoundedCornerShape(Radius.chip))
+            .background(Palette.raised)
+            .border(1.dp, Palette.edge, RoundedCornerShape(Radius.chip))
+            .padding(horizontal = Space.s, vertical = 2.dp),
+    )
 }
 
 @Composable
-private fun FullScreen(content: @Composable () -> Unit) {
-    MaterialTheme(colorScheme = darkColorScheme()) {
-        Surface(modifier = Modifier.fillMaxSize()) {
-            Column(
-                modifier = Modifier.fillMaxSize(),
-                verticalArrangement = Arrangement.spacedBy(24.dp, Alignment.CenterVertically),
-                horizontalAlignment = Alignment.CenterHorizontally,
-            ) { content() }
-        }
-    }
+private fun Centered(modifier: Modifier = Modifier, content: @Composable ColumnScope.() -> Unit) {
+    Column(
+        modifier.fillMaxSize().background(Palette.ink).padding(Space.safe),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally,
+        content = content,
+    )
 }

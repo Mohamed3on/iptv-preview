@@ -72,6 +72,7 @@ import com.mohamed3on.iptv.ui.theme.Space
 import com.mohamed3on.iptv.ui.theme.Type
 import com.mohamed3on.iptv.ui.theme.edgeFade
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -192,9 +193,12 @@ private val MARKER = DpSize(3.dp, 24.dp)
 private val DOT = 6.dp
 private val INLINE_PROGRESS = 72.dp
 
-/** What the channel column shows. U10 adds Search as another source. */
+/** What the channel column shows. */
 private sealed interface Source {
     val key: String
+}
+private data object SearchSource : Source {
+    override val key = "search"
 }
 private data object LiveSource : Source {
     override val key = "live"
@@ -219,16 +223,48 @@ private data object SlotsHeading : Item {
 private data object NoMatches : Item {
     override val key = "no-matches"
 }
+/** The query and on-screen keyboard, first in Search. */
+private data object SearchBoxItem : Item {
+    override val key = "search-box"
+}
+private class HitItem(val hit: SearchHit) : Item {
+    override val key = "h|${hit.tune.family}|${hit.programme.start}|${hit.programme.title}"
+}
+private data object EventsHeading : Item {
+    override val key = "events"
+}
+private data class Note(val title: String, val hint: String? = null) : Item {
+    override val key get() = "note"
+}
 
-private val Item.focusable get() = this is ChannelItem || this is LiveItem
+private val Item.focusable get() = this is ChannelItem || this is LiveItem || this is HitItem
 private val Item.target get() = when (this) {
     is ChannelItem -> channel
     is LiveItem -> entry.tune
+    is HitItem -> hit.tune
     else -> null
 }
 
-/** Null while Live now is still loading. */
-private fun itemsOf(source: Source, feed: Feed, live: LiveNow?): List<Item>? = when (source) {
+/**
+ * Null while Live now is still loading. Search shows a hint until 2 characters are [typed], then
+ * what was [found] (nothing more while the first search runs).
+ */
+private fun itemsOf(source: Source, feed: Feed, live: LiveNow?, typed: Boolean, found: SearchResults?): List<Item>? = when (source) {
+    SearchSource -> buildList {
+        add(SearchBoxItem)
+        when {
+            !typed -> add(Note("Type a team, player or event"))
+            found == null -> {}
+            found.hits.isEmpty() && found.slots.isEmpty() -> add(Note("No matches for “${found.query.trim()}”", "Try part of a team or player name."))
+            else -> {
+                found.hits.mapTo(this, ::HitItem)
+                if (found.slots.isNotEmpty()) {
+                    add(EventsHeading)
+                    found.slots.mapTo(this, ::ChannelItem)
+                }
+            }
+        }
+    }
     is GroupSource -> feed.channelsIn(source.name).map(::ChannelItem)
     LiveSource -> live?.let {
         buildList {
@@ -249,8 +285,11 @@ private fun itemsOf(source: Source, feed: Feed, live: LiveNow?): List<Item>? = w
  *
  * [onPick] gets the chosen channel and the zap context it carries (Live now's tune list, else null:
  * its group). The player tunes it; U11's pick mode passes its own. [open] is false while the overlay
- * leaves, so focus may go back to the player. [updateRow] (U12) and [searchRow] (U10) are slots at the
- * top of the groups column, in that order; they render nothing until filled (use [GroupRow]).
+ * leaves, so focus may go back to the player. [updateRow] (U12) is a slot at the top of the groups
+ * column, above Search; it renders nothing until filled (use [GroupRow]).
+ *
+ * Search (R7, R8, R26, F3) shows a keyboard and its results in the channel column; a live result
+ * tunes with no context, so Up/Down then follow that channel's group.
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -264,7 +303,6 @@ fun ChannelOverlay(
     onPick: (channel: Channel, context: List<Channel>?) -> Unit,
     modifier: Modifier = Modifier,
     updateRow: LazyListScope.() -> Unit = {},
-    searchRow: LazyListScope.() -> Unit = {},
 ) {
     val reduced = LocalReducedMotion.current
     val stay by rememberUpdatedState(open)
@@ -288,7 +326,18 @@ fun ChannelOverlay(
     }
     // A refresh can drop the 🏆 group on screen; fall back to the first group.
     val source = shown.takeUnless { it is GroupSource && it.name !in feed.groups } ?: GroupSource(feed.groups.first())
-    val items = remember(source, feed, live) { itemsOf(source, feed, live) }
+    var query by remember { mutableStateOf("") }
+    val typed = searchNorm(query).trim().length >= 2
+    // Each keystroke restarts the wait, so a search runs once typing pauses; the last results stay meanwhile.
+    val found by produceState<SearchResults?>(null, query, feed, guide) {
+        if (!typed) {
+            value = null
+            return@produceState
+        }
+        delay(150)
+        value = withContext(Dispatchers.IO) { runCatching { feed.search(guide, query, clock.value) }.getOrNull() } ?: return@produceState
+    }
+    val items = remember(source, feed, live, typed, found) { itemsOf(source, feed, live, typed, found) }
 
     // Now/next for the whole shown group in one query, off the main thread, again each minute.
     val tvgIds = remember(items) { items?.mapNotNull { (it as? ChannelItem)?.channel?.tvgId?.takeIf(String::isNotEmpty) }?.distinct().orEmpty() }
@@ -312,6 +361,7 @@ fun ChannelOverlay(
     var detailsShown by remember { mutableStateOf<Channel?>(null) }
     val rowFocus = remember { FocusRequester() }
     val groupFocus = remember { FocusRequester() }
+    val keyFocus = remember { FocusRequester() }
 
     fun entryIndex(list: List<Item>): Int {
         lastFocused[source.key]?.let { k -> list.indexOfFirst { it.key == k }.takeIf { it >= 0 }?.let { return it } }
@@ -325,8 +375,17 @@ fun ChannelOverlay(
     }
     val listState = remember(source.key) { LazyListState(items?.let { (entryIndex(it) - 1).coerceAtLeast(0) } ?: 0) }
 
+    /** Entering the channel column lands on [index], else the row last or now playing; in Search, on the keyboard. */
     fun focusChannels(index: Int? = null) {
         val list = items ?: return
+        if (index == null && source == SearchSource) {
+            scope.launch {
+                listState.scrollToItem(0)
+                settle()
+                runCatching { keyFocus.requestFocus() }
+            }
+            return
+        }
         val i = index ?: entryIndex(list)
         if (i !in list.indices || !list[i].focusable) return
         entryKey = list[i].key
@@ -341,9 +400,13 @@ fun ChannelOverlay(
         scope.launch {
             val info = groupsState.layoutInfo
             if (info.visibleItemsInfo.none { it.key == source.key }) {
-                // The hook rows (U10, U12) come first, then Live now, then the groups.
+                // The update row (U12) and Search come first, then Live now, then the groups.
                 val first = info.totalItemsCount - feed.groups.size - 1
-                val at = if (source == LiveSource) first else first + 1 + feed.groups.indexOf((source as GroupSource).name)
+                val at = when (source) {
+                    SearchSource -> first - 1
+                    LiveSource -> first
+                    is GroupSource -> first + 1 + feed.groups.indexOf(source.name)
+                }
                 groupsState.scrollToItem((at - 2).coerceAtLeast(0))
             }
             settle()
@@ -422,7 +485,15 @@ fun ChannelOverlay(
                     verticalArrangement = Arrangement.spacedBy(Space.xs),
                 ) {
                     updateRow()
-                    searchRow()
+                    item(key = SearchSource.key) {
+                        GroupRow(
+                            "Search",
+                            marked = source == SearchSource && inChannels,
+                            focus = if (source == SearchSource) groupFocus else null,
+                            onFocused = { shown = SearchSource; wantChannels = false },
+                            onClick = { focusChannels() },
+                        )
+                    }
                     item(key = LiveSource.key) {
                         GroupRow(
                             "Live now",
@@ -500,6 +571,21 @@ fun ChannelOverlay(
                                     style = Type.caption,
                                     modifier = Modifier.padding(start = Space.m, top = Space.l, bottom = Space.xs),
                                 )
+                                // Typing is not a row: a refresh while on the keyboard leaves focus there.
+                                SearchBoxItem -> SearchBox(
+                                    query, onQuery = { query = it }, entry = keyFocus, onFocused = { wantChannels = false },
+                                    onDown = { focusChannels(list.indexOfFirst { it.focusable }) },
+                                )
+                                is HitItem -> HitRow(
+                                    item.hit, clock, playing = item.hit.tune.id == current?.id, focus = focus, onFocused = onFocused,
+                                    onPick = { onPick(item.hit.tune, null) },
+                                )
+                                is Note -> Empty(item.title, item.hint)
+                                EventsHeading -> Text(
+                                    "Event channels",
+                                    style = Type.caption,
+                                    modifier = Modifier.padding(start = Space.m, top = Space.l, bottom = Space.xs),
+                                )
                             }
                         }
                     }
@@ -541,7 +627,7 @@ fun GroupRow(label: String, marked: Boolean, focus: FocusRequester?, onFocused: 
 }
 
 @Composable
-private fun RowFrame(
+internal fun RowFrame(
     tile: Channel,
     focus: FocusRequester?,
     onFocused: () -> Unit,
@@ -625,7 +711,7 @@ private fun LiveRow(entry: LiveEntry, clock: State<Long>, playing: Boolean, focu
 
 /** Repaints from the shared minute clock in the draw phase; the row never recomposes for it. */
 @Composable
-private fun Progress(programme: Programme, clock: State<Long>) {
+internal fun Progress(programme: Programme, clock: State<Long>) {
     ProgressLine(
         fraction = { (clock.value - programme.start).toFloat() / (programme.stop - programme.start).coerceAtLeast(1) },
         modifier = Modifier.width(INLINE_PROGRESS),
@@ -634,7 +720,7 @@ private fun Progress(programme: Programme, clock: State<Long>) {
 
 /** The channel playing now. */
 @Composable
-private fun PlayingDot() {
+internal fun PlayingDot() {
     Box(Modifier.size(DOT).clip(CircleShape).background(Palette.accent))
 }
 

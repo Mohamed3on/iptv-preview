@@ -11,8 +11,8 @@ data class Programme(val start: Long, val stop: Long, val title: String, val des
 data class NowNext(val now: Programme?, val next: Programme?)
 
 /**
- * A match airing now on [tvgId]; [norm] is the server's search form of its title and [comp] the
- * 🏆 group of the competition its title names (the server decides, with the 🏆 groups' own rules).
+ * A guide entry on [tvgId] (a live match, or a search hit); [norm] is the server's search form of its
+ * title and [comp] the 🏆 group of the live match it names (the server decides, with the 🏆 groups' own rules).
  */
 data class Airing(val tvgId: String, val norm: String, val programme: Programme, val comp: String? = null)
 
@@ -46,14 +46,23 @@ class GuideDb private constructor(private val db: SQLiteDatabase) : Closeable {
     }
 
     /** Live matches of a 🏆 competition airing at [nowSec], never synthetic filler (KTD4). */
-    fun airingMatches(nowSec: Long): List<Airing> {
-        val t = nowSec.toString()
-        return db.rawQuery(
+    fun airingMatches(nowSec: Long): List<Airing> =
+        airings("comp IS NOT NULL AND start <= ? AND stop > ?", nowSec.toString(), nowSec.toString())
+
+    /**
+     * Programmes whose search form contains [norm] (normalized like the server's `norm`), running at
+     * [nowSec] or starting within a day of it, in start order — so the running ones come first.
+     * Never synthetic filler (KTD4, R26).
+     */
+    fun search(norm: String, nowSec: Long): List<Airing> =
+        airings("stop > ? AND start < ? AND norm LIKE ?", nowSec.toString(), (nowSec + 86_400).toString(), "%$norm%")
+
+    private fun airings(where: String, vararg args: String): List<Airing> =
+        db.rawQuery(
             "SELECT tvg_id, norm, start, stop, title, descr, synthetic, \"match\", comp FROM programmes " +
-                "WHERE comp IS NOT NULL AND synthetic = 0 AND start <= ? AND stop > ? ORDER BY start",
-            arrayOf(t, t),
+                "WHERE synthetic = 0 AND $where ORDER BY start",
+            args,
         ).use { c -> buildList { while (c.moveToNext()) add(Airing(c.getString(0), c.getString(1), c.programme(2), c.getString(8))) } }
-    }
 
     /** Programmes on [tvgId] still running or starting after [fromSec], in start order. */
     fun schedule(tvgId: String, fromSec: Long): List<Programme> = programmes(tvgId, fromSec, limit = -1)

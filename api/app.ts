@@ -2,13 +2,14 @@
 // no CORS header, and only the server's own cache may keep a response.
 // GET /api/app/channels?t=TOKEN — groups, channels, feed families, badges and both provider fronts.
 // GET /api/app/guide?t=TOKEN — the guide as a gzip SQLite file the stick opens without parsing.
+// GET /api/app/movies?t=TOKEN — the on-demand library: 4K movies and UFC replays.
 // GET /api/app/version, /api/app/apk ?t=TOKEN — the latest build, copied to the box by firetv.yml.
 // POST /api/app/quality?t=TOKEN — a quality reading the app measured while playing.
 // POST /api/app/events?t=TOKEN — what happened while watching, for later analysis.
 import { appendFile, mkdir, rename, stat } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import { buildAppFeed, buildAppGuide } from './_app-feed.js'
-import { appTokenOk, configFromEnv, fetchCuratedChannels, saneFps, withCompetitionGroups } from './_lib.js'
+import { appTokenOk, configFromEnv, fetchCuratedChannels, saneFps, savedVodChannels, withCompetitionGroups } from './_lib.js'
 import { mergeAppReading, saveQuality, type Meta } from './_quality.js'
 import { QUALITY } from './quality-cache.js'
 import { curatedGuide } from './epg.js'
@@ -96,4 +97,22 @@ export async function events(req: Request): Promise<Response> {
   if (((await stat(file).catch(() => null))?.size ?? 0) > EVENTS_MAX_BYTES) await rename(file, `${file}.1`)
   await appendFile(file, batch.map((e: object) => JSON.stringify({ at, ...e })).join('\n') + '\n')
   return new Response(null, { status: 204 })
+}
+
+// GET /api/app/movies?t=TOKEN — the on-demand library (4K movies, UFC replays) in playlist order,
+// from the copy the playlist build saves, so the app never adds a pull of the 74MB catalogue.
+export async function movies(req: Request): Promise<Response> {
+  if (!appTokenOk(req.url)) return forbidden()
+  try {
+    const vod = await savedVodChannels(configFromEnv())
+    return Response.json(
+      {
+        groups: [...new Set(vod.map((m) => m.group))],
+        movies: vod.map((m) => ({ id: m.streamId, name: m.name, poster: m.logo, group: m.group, ext: m.vodExt })),
+      },
+      { headers: { 'Cache-Control': 'private, s-maxage=1800, stale-while-revalidate=3600' } },
+    )
+  } catch (e) {
+    return new Response(e instanceof Error ? e.message : 'upstream error', { status: 502 })
+  }
 }

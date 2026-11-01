@@ -662,6 +662,13 @@ async function vodChannels(cfg: XtreamConfig): Promise<Channel[]> {
   return JSON.parse(await readFile(LAST_GOOD_VOD, 'utf8').catch(() => '[]'))
 }
 
+/** The on-demand entries (4K movies, UFC replays) as the playlist last saw them, without pulling
+ *  the 74MB catalogue again; pulls it only when no copy exists yet. */
+export async function savedVodChannels(cfg: XtreamConfig): Promise<Channel[]> {
+  const saved: Channel[] = JSON.parse(await readFile(LAST_GOOD_VOD, 'utf8').catch(() => '[]'))
+  return saved.length ? saved : vodChannels(cfg)
+}
+
 /** Fetch + filter provider channels into ordered, quality-sorted buckets. `vod: false`
  *  leaves out the on-demand entries (and the 74MB catalogue download), for the EPG. */
 export async function fetchCuratedChannels(cfg: XtreamConfig, vod = true): Promise<Channel[]> {

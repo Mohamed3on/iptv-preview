@@ -29,7 +29,8 @@
 // reading stays due, and `tried` only moves it to the back of the queue so dead feeds
 // don't eat every night's budget.
 //
-// BUSY SLOT: a probe that finds no signal checks the account; if the one connection slot
+// BUSY SLOT: a probe that finds no signal waits for the run's own connection to drop off,
+// then checks the account (and retries the feed once if the slot is free); if the one slot
 // is taken, someone started watching, so the run stops at once instead of
 // recording their channel-switches as dead feeds.
 //
@@ -177,30 +178,38 @@ const deadline = t0 + BUDGET_MIN * 60_000
 let cursor = 0
 let busy = false
 let ok = 0 // probes that actually returned video this run
-// The panel counts a connection from ~6s after it opens until ~5s after it closes, so a
-// probe open longer than a few seconds (a hung feed, a slow read) still shows as this run's own
-// connection for a while (margins doubled over the one measurement).
-let lastCounted = 0
+// The panel counts this run's own connections in flickers, even back-to-back ~1s probes,
+// and keeps counting one for a while after it closes (seconds in tests, longer in runs).
+// While it does, the next stream is refused, so a quick "no picture" can be self-inflicted
+// and the slot reads busy. So wait for two free readings in a row; a slot still taken after
+// 30s is a viewer.
+async function slotFreed(): Promise<boolean> {
+  const t = Date.now()
+  let free = 0
+  while (Date.now() - t < 30_000) {
+    await Bun.sleep(2000)
+    const { max, active } = await connectionSlots()
+    free = active < max ? free + 1 : 0
+    if (free === 2) {
+      if (Date.now() - t > 5000) console.log(`Slot took ${((Date.now() - t) / 1000).toFixed(0)}s to free up`)
+      return true
+    }
+  }
+  return false
+}
 const worker = async () => {
   while (cursor < ids.length && Date.now() < deadline && !busy) {
     const id = ids[cursor++]
     const old = cache[id]
     const reverify = REFRESH && isStale(old)
-    const started = Date.now()
     // Only event-only feeds earn retries: a 24/7 "4K" feed reading 1080p is usually just 1080p.
-    const m = await probeBest(id, REFRESH && !reverify && EVENT_ONLY.test(byId.get(id)!) ? 3 : 1)
-    if (Date.now() - started > 3000) lastCounted = Date.now()
+    const tries = REFRESH && !reverify && EVENT_ONLY.test(byId.get(id)!) ? 3 : 1
+    let m = await probeBest(id, tries)
     if (!m) {
-      // Let this run's own connection drop off before deciding someone else is watching.
-      const wait = lastCounted + 20_000 - Date.now()
-      if (wait > 0) await Bun.sleep(wait)
-      const { max, active } = await connectionSlots()
-      if (active >= max) { // someone's watching; this feed stays due for the next run
-        busy = true
-        console.log(`Slot in use after feed ${id} (${((Date.now() - started) / 1000).toFixed(1)}s ago it started, last counted probe ${lastCounted ? ((Date.now() - lastCounted) / 1000).toFixed(1) + 's ago' : 'never'})`)
-        break
-      }
-    } else ok++
+      if (!(await slotFreed())) { busy = true; break } // someone's watching; this feed stays due
+      m = await probeBest(id, tries) // the first try may have been refused for our own connection
+    }
+    if (m) ok++
     // Initial: record result (null = probed). Re-verify: the current reading replaces the
     // stale one; no signal keeps it due, just tried (see RE-VERIFICATION).
     // Gaps: only upgrade, never downgrade a fresh peak.

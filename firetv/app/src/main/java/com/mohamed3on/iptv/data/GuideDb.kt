@@ -10,8 +10,11 @@ data class Programme(val start: Long, val stop: Long, val title: String, val des
 
 data class NowNext(val now: Programme?, val next: Programme?)
 
-/** A match airing now on [tvgId]; [norm] is the server's search form of its title. */
-data class Airing(val tvgId: String, val norm: String, val programme: Programme)
+/**
+ * A match airing now on [tvgId]; [norm] is the server's search form of its title and [comp] the
+ * 🏆 group of the competition its title names (the server decides, with the 🏆 groups' own rules).
+ */
+data class Airing(val tvgId: String, val norm: String, val programme: Programme, val comp: String? = null)
 
 /** The cached guide (the server's SQLite file), opened read-only. */
 class GuideDb private constructor(private val db: SQLiteDatabase) : Closeable {
@@ -42,14 +45,14 @@ class GuideDb private constructor(private val db: SQLiteDatabase) : Closeable {
         return ids.associateWith { nowNextOf(rows[it].orEmpty(), nowSec) }
     }
 
-    /** Programmes flagged `match` airing at [nowSec], never synthetic filler (KTD4). */
+    /** Live matches of a 🏆 competition airing at [nowSec], never synthetic filler (KTD4). */
     fun airingMatches(nowSec: Long): List<Airing> {
         val t = nowSec.toString()
         return db.rawQuery(
-            "SELECT tvg_id, norm, start, stop, title, descr, synthetic, \"match\" FROM programmes " +
-                "WHERE \"match\" = 1 AND synthetic = 0 AND start <= ? AND stop > ? ORDER BY start",
+            "SELECT tvg_id, norm, start, stop, title, descr, synthetic, \"match\", comp FROM programmes " +
+                "WHERE comp IS NOT NULL AND synthetic = 0 AND start <= ? AND stop > ? ORDER BY start",
             arrayOf(t, t),
-        ).use { c -> buildList { while (c.moveToNext()) add(Airing(c.getString(0), c.getString(1), c.programme(2))) } }
+        ).use { c -> buildList { while (c.moveToNext()) add(Airing(c.getString(0), c.getString(1), c.programme(2), c.getString(8))) } }
     }
 
     /** Programmes on [tvgId] still running or starting after [fromSec], in start order. */

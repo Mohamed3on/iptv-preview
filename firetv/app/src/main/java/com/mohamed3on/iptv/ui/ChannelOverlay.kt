@@ -78,7 +78,7 @@ import kotlinx.coroutines.withContext
 import android.view.KeyEvent as AndroidKeyEvent
 
 /** A Live now row: a confirmed match ([programme] set) or an unconfirmed event slot. [via] is the 🏆 row it was found on. */
-data class LiveEntry(val title: String, val programme: Programme?, val via: Channel, val tune: Channel) {
+data class LiveEntry(val title: String, val programme: Programme?, val via: Channel, val tune: Channel, val comp: String? = null) {
     val confirmed get() = programme != null
 }
 
@@ -102,7 +102,7 @@ fun Feed.liveNow(airing: List<Airing>): LiveNow {
         for (c in trophy) {
             if (c.tvgId.isEmpty()) continue
             for (a in byTvgId[c.tvgId].orEmpty()) {
-                if (seen.add(a.norm to a.programme.start)) add(LiveEntry(a.programme.title, a.programme, c, bestOf(c)))
+                if (seen.add(a.norm to a.programme.start)) add(LiveEntry(a.programme.title, a.programme, c, bestOf(c), a.comp))
             }
         }
     }
@@ -565,7 +565,7 @@ private fun LiveRow(entry: LiveEntry, clock: State<Long>, playing: Boolean, focu
             Text(if (programme != null) channel else "Not confirmed", style = Type.body, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
             if (programme != null) Progress(programme, clock)
         }
-        Text(entry.via.group, style = Type.caption, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(entry.comp ?: entry.via.group, style = Type.caption, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 

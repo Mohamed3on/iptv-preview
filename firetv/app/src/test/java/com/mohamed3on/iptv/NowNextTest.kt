@@ -18,17 +18,19 @@ import java.io.File
 data class Row(
     val tvgId: String, val start: Long, val stop: Long, val title: String,
     val norm: String = title.lowercase(), val synthetic: Boolean = false, val match: Boolean = false,
+    /** The 🏆 group of the competition a live match names; test matches default to one. */
+    val comp: String? = if (match && !synthetic) "🏆 Premier League" else null,
 )
 
 /** Writes [rows] to a guide file the way the server builds it, and opens it. */
 fun guideOf(dir: File, vararg rows: Row): GuideDb {
     val file = File(dir, "guide-${System.nanoTime()}.db")
     SQLiteDatabase.openOrCreateDatabase(file, null).use { db ->
-        db.execSQL("CREATE TABLE programmes(tvg_id TEXT, start INTEGER, stop INTEGER, title TEXT, norm TEXT, descr TEXT, synthetic INTEGER, match INTEGER)")
+        db.execSQL("CREATE TABLE programmes(tvg_id TEXT, start INTEGER, stop INTEGER, title TEXT, norm TEXT, descr TEXT, synthetic INTEGER, match INTEGER, comp TEXT)")
         for (r in rows) {
             db.execSQL(
-                "INSERT INTO programmes VALUES (?, ?, ?, ?, ?, '', ?, ?)",
-                arrayOf<Any>(r.tvgId, r.start, r.stop, r.title, r.norm, if (r.synthetic) 1 else 0, if (r.match) 1 else 0),
+                "INSERT INTO programmes VALUES (?, ?, ?, ?, ?, '', ?, ?, ?)",
+                arrayOf<Any?>(r.tvgId, r.start, r.stop, r.title, r.norm, if (r.synthetic) 1 else 0, if (r.match) 1 else 0, r.comp),
             )
         }
         db.execSQL("CREATE INDEX programmes_channel ON programmes (tvg_id, start)")

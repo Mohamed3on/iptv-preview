@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, setSystemTime, spyOn, test } from 'bun:test'
-import { buildAppFeed } from './_app-feed.js'
+import { buildAppFeed, buildAppGuide } from './_app-feed.js'
 import { buildM3U, VPN_HOST, withCompetitionGroups, type Channel } from './_lib.js'
 import { QUALITY } from './quality-cache.js'
 import { Database } from 'bun:sqlite'
@@ -209,6 +209,9 @@ describe('guide', () => {
     expect(titled("Bayern München v Arsenal")).toMatchObject({ norm: "bayern munchen v arsenal", match: 1, synthetic: 0 })
     expect(titled("Sky Sports News")?.match).toBe(0)
     expect(titled("Bayern München v Arsenal")!.start).toBe(NOW.getTime() / 1000 - 1800)
+    // a live match names its competition's 🏆 group; other titles name none
+    const appGuide = Database.deserialize(Bun.gunzipSync(buildAppGuide([], `<programme start="${stamp(0)}" stop="${stamp(2)}" channel="x"><title>Live Serie A: Juventus v Napoli</title></programme>` + PROVIDER_XML)))
+    expect(appGuide.query("SELECT title, comp FROM programmes WHERE comp IS NOT NULL").all()).toEqual([{ title: "Live Serie A: Juventus v Napoli", comp: "🏆 Serie A" }])
     // ended 1h ago stays, ended 3h ago is dropped
     expect(titled("Recent News")).toBeDefined()
     expect(titled("Old News")).toBeUndefined()

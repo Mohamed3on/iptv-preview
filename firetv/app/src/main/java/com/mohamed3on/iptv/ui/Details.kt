@@ -103,7 +103,7 @@ internal fun Details(channel: Channel, guide: GuideDb?, clock: State<Long>, stay
         verticalArrangement = Arrangement.spacedBy(Space.s),
     ) {
         Column(Modifier.padding(horizontal = Space.xl), verticalArrangement = Arrangement.spacedBy(Space.s)) {
-            Text(remember(channel.name) { displayName(channel.name) }, style = Type.title, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(remember(channel.name) { displayName(channel.name) }, style = Type.title, maxLines = 2, overflow = TextOverflow.Ellipsis)
             if (channel.badges.isNotEmpty()) {
                 Row(horizontalArrangement = Arrangement.spacedBy(Space.s)) { channel.badges.forEach { Badge(it) } }
             }

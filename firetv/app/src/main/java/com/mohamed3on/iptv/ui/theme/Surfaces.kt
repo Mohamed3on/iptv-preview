@@ -36,9 +36,12 @@ fun Modifier.material(radius: Dp = Radius.panel): Modifier {
     return clip(shape).background(Palette.material).border(1.dp, Palette.edge, shape)
 }
 
-/** Darkens the video behind the channel list, strongest at the left edge where the list is. */
+/**
+ * Darkens the video behind the channel list: near-opaque under the columns, so the picture's own
+ * text never shows through a row, easing off only past them at the right edge.
+ */
 fun Modifier.leftScrim(): Modifier = background(
-    Brush.horizontalGradient(0f to Color(0xD9000000), 0.55f to Color(0x8C000000), 1f to Color.Transparent),
+    Brush.horizontalGradient(0f to Color(0xF5000000), 0.72f to Color(0xEB000000), 0.92f to Color(0xA6000000), 1f to Color(0x59000000)),
 )
 
 /** Darkens the video behind the banner, from the bottom edge up. */

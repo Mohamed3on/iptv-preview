@@ -16,6 +16,8 @@ class DisplayNameTest {
         check("UK: SKY SPORTS F1  50FPS ᴿᴬᵂ", "Sky Sports F1")
         check("DE: SKY SPORT BUNDESLIGA 1 HD (SAT)", "Sky Sport Bundesliga 1")
         check("UK: SKY SPORTS MAIN EVENT HEVC 4K", "Sky Sports Main Event")
+        check("VIP: SKY SPORTS 1 ⁴ᵏ & ³⁸⁴⁰ᴾ", "Sky Sports 1")
+        check("24/7: DRAKE & JOSH", "Drake & Josh")
     }
 
     @Test fun keepsWordsSpelledInSuperscript() = check("UK: SKY SPORTS ᴬʳᵉⁿᵃ HD", "Sky Sports Arena")

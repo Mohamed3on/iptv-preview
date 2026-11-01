@@ -1,7 +1,7 @@
 // Builders for the Fire TV app's own feeds (/api/app/*). They read the same curated
 // channels and guide as the TiviMate feeds, so both apps always show the same thing.
 import { Database } from 'bun:sqlite'
-import { chanKey, couldBeLiveMatch, saneFps, VPN_HOST, type Channel, type XtreamConfig } from './_lib.js'
+import { chanKey, COMPS, couldBeLiveMatch, learnedCompetitions, saneFps, VPN_HOST, type Channel, type XtreamConfig } from './_lib.js'
 import { QUALITY } from './quality-cache.js'
 
 export interface AppChannel {
@@ -100,14 +100,18 @@ export const searchNorm = (s: string) => s.normalize('NFD').replace(/\p{M}/gu, '
 /**
  * The app's guide as a gzip SQLite file, parsed from the same XMLTV TiviMate gets so it
  * carries the same corrections. Rows flag name-as-title filler (synthetic) and titles
- * that could be a live match; programmes that ended over 2h ago are dropped.
+ * that could be a live match, and name the 🏆 group of the competition a live match
+ * belongs to (comp, by the same rules as the 🏆 groups); programmes that ended over 2h
+ * ago are dropped.
  */
+const compGroup = new Map(COMPS.map((c) => [c.key, c.group]))
+
 export function buildAppGuide(channels: Channel[], xmltv: string, now = Date.now()): Uint8Array {
   const filler = new Set(channels.map((c) => `${c.tvgId}\n${c.name}\n${c.group}`))
   const db = new Database(':memory:')
   db.run(`CREATE TABLE programmes (tvg_id TEXT NOT NULL, start INTEGER NOT NULL, stop INTEGER NOT NULL,
-    title TEXT NOT NULL, norm TEXT NOT NULL, descr TEXT NOT NULL, synthetic INTEGER NOT NULL, match INTEGER NOT NULL)`)
-  const insert = db.prepare('INSERT INTO programmes VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+    title TEXT NOT NULL, norm TEXT NOT NULL, descr TEXT NOT NULL, synthetic INTEGER NOT NULL, match INTEGER NOT NULL, comp TEXT)`)
+  const insert = db.prepare('INSERT INTO programmes VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
   const cutoff = now / 1000 - 2 * 3600
   db.transaction(() => {
     for (const m of xmltv.matchAll(/<programme\b([^>]*)>([\s\S]*?)<\/programme>/g)) {
@@ -117,8 +121,10 @@ export function buildAppGuide(channels: Channel[], xmltv: string, now = Date.now
       const id = attr('channel')
       const title = unxml(m[2].match(/<title\b[^>]*>([\s\S]*?)<\/title>/)?.[1] ?? '').trim()
       const descr = unxml(m[2].match(/<desc\b[^>]*>([\s\S]*?)<\/desc>/)?.[1] ?? '').trim()
+      const synthetic = filler.has(`${id}\n${title}\n${descr}`)
+      const comp = synthetic ? undefined : learnedCompetitions(title)[0]
       insert.run(id, xmltvSeconds(attr('start')), stop, title, searchNorm(title), descr,
-        filler.has(`${id}\n${title}\n${descr}`) ? 1 : 0, couldBeLiveMatch(title) ? 1 : 0)
+        synthetic ? 1 : 0, couldBeLiveMatch(title) ? 1 : 0, comp ? compGroup.get(comp)! : null)
     }
   })()
   db.run('CREATE INDEX programmes_channel ON programmes (tvg_id, start)')

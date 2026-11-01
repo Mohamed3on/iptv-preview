@@ -93,6 +93,8 @@ fun displayName(raw: String): String {
             else -> w
         }
     }
-    val shown = words.joinToString(" ").trim()
+    // A connector left dangling once markers are gone ("SKY SPORTS 1 ⁴ᵏ & ³⁸⁴⁰ᴾ") goes too; "Drake & Josh" keeps its.
+    val connector = Regex("^[&+/|·:-]+$")
+    val shown = words.dropWhile { connector.matches(it) }.dropLastWhile { connector.matches(it) }.joinToString(" ").trim()
     return if (shown.isEmpty()) raw.trim() else shown
 }

@@ -67,6 +67,8 @@ class FrameRate(
     /** Presentation times of the current feed's frames; written on the playback thread. */
     private val samples = ArrayList<Long>()
     private val fps = MutableStateFlow<Float?>(null)
+    /** The current feed's frame rate as measured from its frames; null until measured. */
+    val measured: StateFlow<Float?> get() = fps
 
     private val frames = VideoFrameMetadataListener { presentationTimeUs, _, format, _ ->
         if (fps.value != null) return@VideoFrameMetadataListener

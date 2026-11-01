@@ -50,6 +50,10 @@ import com.mohamed3on.iptv.data.startAction
 import com.mohamed3on.iptv.player.ExoStreamPlayer
 import com.mohamed3on.iptv.player.AudioTracks
 import com.mohamed3on.iptv.player.FrameRate
+import com.mohamed3on.iptv.player.LiveQuality
+import com.mohamed3on.iptv.player.Telemetry
+import com.mohamed3on.iptv.player.liveQuality
+import kotlinx.coroutines.flow.combine
 import com.mohamed3on.iptv.player.Idle
 import com.mohamed3on.iptv.player.IdleWatch
 import com.mohamed3on.iptv.player.Phase
@@ -78,6 +82,9 @@ class MainActivity : ComponentActivity() {
     private val session = MutableStateFlow<StreamSession?>(null)
     private val audio = MutableStateFlow<AudioTracks?>(null)
     private val idle = MutableStateFlow<IdleWatch?>(null)
+    /** The playing feed's measured quality (feed id to reading), for the banner's live badges. */
+    private val live = MutableStateFlow<Pair<Int, LiveQuality>?>(null)
+    private val telemetry by lazy { Telemetry(graph.http, BuildConfig.SERVER_URL, BuildConfig.APP_TOKEN, graph.scope) }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -90,13 +97,16 @@ class MainActivity : ComponentActivity() {
             val playing by session.collectAsState()
             val tracks by audio.collectAsState()
             val idleState = idle.collectAsState().value?.state?.collectAsState()?.value
+            val liveQuality by live.collectAsState()
             IptvTheme(reducedMotion = Motion.reducedMotion(this)) {
-                Root(state, playing, tracks, surface, tiles, idleState, onRetry = { graph.scope.launch { sync.retry() } })
+                Root(state, playing, tracks, surface, tiles, liveQuality, idleState, onRetry = { graph.scope.launch { sync.retry() } })
             }
         }
         // While visible: on resume refresh anything older than 1h, then channels every 30 min, guide every 3h.
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
+                // A newer build downloads in the background and waits as "Update ready" in the list (R15, R16).
+                graph.scope.launch { graph.updater.check() }
                 sync.refresh(30.minutes, 1.hours)
                 while (true) {
                     delay(1.minutes)
@@ -112,6 +122,17 @@ class MainActivity : ComponentActivity() {
                 val s = StreamSession(player, graph.route, this, SystemClock::elapsedRealtime)
                 val frameRate = FrameRate(window, player.exo, s.state, this)
                 val tracks = AudioTracks(player.exo)
+                // What the stream really is, once its frame rate is measured: the banner shows it, and
+                // the server keeps it in the quality cache. The session log records tunes, stalls and problems.
+                val reporting = telemetry.observe(s, graph.route)
+                launch {
+                    combine(frameRate.measured, s.state) { fps, st -> fps to st }.collect { (fps, st) ->
+                        val playing = st.feed?.takeIf { st.phase == Phase.Playing }
+                        val q = playing?.let { liveQuality(player.exo, fps) }
+                        live.value = if (playing != null && q != null && fps != null) playing.id to q else null
+                        if (playing != null && q != null) telemetry.reportQuality(playing, q)
+                    }
+                }
                 idle.value = IdleWatch(this) {
                     tiles.close()
                     s.stop()
@@ -137,6 +158,8 @@ class MainActivity : ComponentActivity() {
                     tracks.release()
                     idle.value = null
                     frameRate.detach()
+                    reporting.cancel()
+                    live.value = null
                     s.stop()
                     pool.releaseAll()
                 }
@@ -189,6 +212,7 @@ private fun Root(
     audio: AudioTracks?,
     surface: SurfaceView,
     tiles: MultiView<ExoStreamPlayer>,
+    live: Pair<Int, LiveQuality>?,
     idle: Idle?,
     onRetry: () -> Unit,
 ) {
@@ -196,7 +220,7 @@ private fun Root(
         FeedState.Loading -> Loading()
         is FeedState.Failed -> SyncFailed(state.error, onRetry)
         is FeedState.Ready -> Box(Modifier.fillMaxSize()) {
-            PlayerScreen(state.feed, session, audio, surface, tiles)
+            PlayerScreen(state.feed, session, audio, surface, tiles, live)
             when (idle) {
                 Idle.Asking -> StillWatching()
                 Idle.TimedOut -> IdleStopped()

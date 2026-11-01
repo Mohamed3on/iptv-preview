@@ -60,6 +60,8 @@ import androidx.tv.material3.Text
 import com.mohamed3on.iptv.data.Channel
 import com.mohamed3on.iptv.data.Feed
 import com.mohamed3on.iptv.data.GuideDb
+import com.mohamed3on.iptv.player.LiveQuality
+import com.mohamed3on.iptv.update.updateRow
 import com.mohamed3on.iptv.data.displayName
 import com.mohamed3on.iptv.data.NowNext
 import com.mohamed3on.iptv.data.RouteKind
@@ -102,12 +104,12 @@ private val CARD_WIDTH = 560.dp
  * [tiles] has any, they replace the full-screen video (U11).
  */
 @Composable
-fun PlayerScreen(feed: Feed, session: StreamSession?, audio: AudioTracks?, surface: SurfaceView, tiles: MultiView<ExoStreamPlayer>) {
+fun PlayerScreen(feed: Feed, session: StreamSession?, audio: AudioTracks?, surface: SurfaceView, tiles: MultiView<ExoStreamPlayer>, live: Pair<Int, LiveQuality>?) {
     val grid by tiles.state.collectAsState()
     Box(Modifier.fillMaxSize().background(Color.Black)) {
         // Gone, not just stopped, in multi-view: its last frame would fight the tiles' surfaces.
         if (grid.tiles.isEmpty()) AndroidView(factory = { surface }, modifier = Modifier.fillMaxSize())
-        if (session != null) PlayerChrome(feed, session, audio, tiles, grid)
+        if (session != null) PlayerChrome(feed, session, audio, tiles, grid, live)
     }
 }
 
@@ -115,7 +117,7 @@ fun PlayerScreen(feed: Feed, session: StreamSession?, audio: AudioTracks?, surfa
 private enum class Pick { MultiView, AddTile, ReplaceTile }
 
 @Composable
-private fun PlayerChrome(feed: Feed, session: StreamSession, audio: AudioTracks?, tiles: MultiView<ExoStreamPlayer>, grid: MultiViewState<ExoStreamPlayer>) {
+private fun PlayerChrome(feed: Feed, session: StreamSession, audio: AudioTracks?, tiles: MultiView<ExoStreamPlayer>, grid: MultiViewState<ExoStreamPlayer>, live: Pair<Int, LiveQuality>?) {
     val graph = LocalContext.current.graph
     val reduced = LocalReducedMotion.current
     val multiView = grid.tiles.isNotEmpty()
@@ -216,7 +218,9 @@ private fun PlayerChrome(feed: Feed, session: StreamSession, audio: AudioTracks?
                         .padding(Space.safe),
                     label = "banner",
                 ) { channel ->
-                    if (channel != null) Banner(channel, feed, guide, clock, tuning && channel.identity == state.requested?.identity)
+                    // Live badges once the playing feed is measured; the server's probed ones until then.
+                    val liveBadges = live?.takeIf { channel?.identity == state.requested?.identity && it.first == state.feed?.id }?.second?.badges
+                    if (channel != null) Banner(channel, feed, guide, clock, tuning && channel.identity == state.requested?.identity, liveBadges ?: channel.badges)
                 }
             }
         }
@@ -242,6 +246,7 @@ private fun PlayerChrome(feed: Feed, session: StreamSession, audio: AudioTracks?
             Box(Modifier.fillMaxSize().leftScrim()) {
                 val selectedTile = grid.tiles.getOrNull(grid.selected)?.channel
                 ChannelOverlay(
+                    updateRow = updateRow(graph.updater),
                     feed = feed,
                     guide = guide,
                     clock = clock,
@@ -331,7 +336,7 @@ private fun PlayerChrome(feed: Feed, session: StreamSession, audio: AudioTracks?
 
 /** Logo, name and badges, now and next, and where the channel sits in its group. */
 @Composable
-private fun Banner(channel: Channel, feed: Feed, guide: GuideDb?, clock: State<Long>, tuning: Boolean) {
+private fun Banner(channel: Channel, feed: Feed, guide: GuideDb?, clock: State<Long>, tuning: Boolean, badges: List<String>) {
     val group = feed.channelsIn(channel.group)
     val position = group.indexOfFirst { it.identity == channel.identity }
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(Space.xl), verticalAlignment = Alignment.CenterVertically) {
@@ -339,7 +344,7 @@ private fun Banner(channel: Channel, feed: Feed, guide: GuideDb?, clock: State<L
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(Space.xs)) {
             Row(horizontalArrangement = Arrangement.spacedBy(Space.m), verticalAlignment = Alignment.CenterVertically) {
                 Text(remember(channel.name) { displayName(channel.name) }, style = Type.title, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
-                channel.badges.forEach { Badge(it) }
+                badges.forEach { Badge(it) }
                 if (tuning) Tuning()
             }
             Guide(channel, guide, clock)

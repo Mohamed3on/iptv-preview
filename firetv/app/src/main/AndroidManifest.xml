@@ -29,5 +29,7 @@
                 <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <receiver android:name=".update.InstallReceiver" android:exported="false" />
     </application>
 </manifest>

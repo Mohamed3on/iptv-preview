@@ -3,6 +3,7 @@
 // their Cache-Control, as Vercel's CDN did — reused for s-maxage, then served stale for
 // stale-while-revalidate while one rebuild runs — so TiviMate rarely waits on a build,
 // and concurrent misses never download the guides twice.
+import * as app from './api/app'
 import epg from './api/epg'
 import playlist from './api/playlist'
 import proxy from './api/proxy'
@@ -10,7 +11,7 @@ import proxy from './api/proxy'
 type Handler = (req: Request) => Promise<Response>
 type Entry = { body: Blob; init: ResponseInit; fresh: number; stale: number }
 
-const routes: Record<string, Handler> = { '/api/epg': epg, '/api/playlist': playlist }
+const routes: Record<string, Handler> = { '/api/epg': epg, '/api/playlist': playlist, '/api/app/channels': app.channels }
 const cache = new Map<string, Entry>()
 const building = new Map<string, Promise<Entry>>()
 
@@ -45,19 +46,23 @@ async function cached(req: Request, handler: Handler): Promise<Response> {
 
 const dist = `${import.meta.dir}/dist`
 
-Bun.serve({
-  hostname: '127.0.0.1',
-  port: Number(process.env.PORT ?? 8790),
-  // A cold EPG build takes ~15s, and Bun drops a connection idle for 10s by default.
-  idleTimeout: 255,
-  async fetch(req) {
-    const { pathname } = new URL(req.url)
-    // The proxy relays files of any size, so it bypasses the cache: holding its responses
-    // in memory would let anyone fill this process with GitHub files.
-    if (pathname === '/api/proxy') return proxy(req)
-    const handler = routes[pathname]
-    if (handler) return cached(req, handler)
-    const file = Bun.file(dist + (pathname === '/' ? '/index.html' : pathname))
-    return (await file.exists()) ? new Response(file) : new Response('Not found', { status: 404 })
-  },
-})
+export async function handle(req: Request): Promise<Response> {
+  const { pathname } = new URL(req.url)
+  // The proxy relays files of any size, so it bypasses the cache: holding its responses
+  // in memory would let anyone fill this process with GitHub files.
+  if (pathname === '/api/proxy') return proxy(req)
+  const handler = routes[pathname]
+  if (handler) return cached(req, handler)
+  const file = Bun.file(dist + (pathname === '/' ? '/index.html' : pathname))
+  return (await file.exists()) ? new Response(file) : new Response('Not found', { status: 404 })
+}
+
+if (import.meta.main) {
+  Bun.serve({
+    hostname: '127.0.0.1',
+    port: Number(process.env.PORT ?? 8790),
+    // A cold EPG build takes ~15s, and Bun drops a connection idle for 10s by default.
+    idleTimeout: 255,
+    fetch: handle,
+  })
+}

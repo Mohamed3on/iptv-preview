@@ -8,10 +8,9 @@ import {
   fetchCuratedChannels,
   providerEpgUrl,
   tokenOk,
+  VPN_HOST,
   withCompetitionGroups,
 } from './_lib.js'
-
-const VPN_HOST = 'http://apps.g1ming-hub.sbs'
 
 export default async function handler(req: Request): Promise<Response> {
   if (!tokenOk(req.url)) return new Response('Forbidden', { status: 403 })

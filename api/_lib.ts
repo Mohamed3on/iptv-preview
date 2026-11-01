@@ -327,6 +327,9 @@ export interface XtreamConfig {
   pass: string
 }
 
+/** The provider's VPN-only front: the normal fronts block VPN IPs, and this one blocks everyone else. */
+export const VPN_HOST = 'http://apps.g1ming-hub.sbs'
+
 export function configFromEnv(): XtreamConfig {
   const { XTREAM_HOST, XTREAM_USER, XTREAM_PASS } = process.env
   if (!XTREAM_HOST || !XTREAM_USER || !XTREAM_PASS) {
@@ -1213,4 +1216,11 @@ export function tokenOk(url: string | undefined): boolean {
   if (!token) return false
   const t = new URL(url ?? '/', 'http://x').searchParams.get('t')
   return t === token
+}
+
+/** App token gate: true if ?t= is one of the comma-separated APP_TOKENS (two at once while rotating). */
+export function appTokenOk(url: string): boolean {
+  const t = new URL(url, 'http://x').searchParams.get('t')
+  const tokens = (process.env.APP_TOKENS ?? '').split(',').map((s) => s.trim()).filter(Boolean)
+  return !!t && tokens.includes(t)
 }

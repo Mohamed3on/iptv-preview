@@ -21,8 +21,17 @@ fun remoteKey(keyCode: Int): RemoteKey? = when (keyCode) {
 /** What sits over the video. Back closes it before anything else. */
 enum class Layer { None, ChannelList, QuickPanel, Diagnostics }
 
-/** What a key press needs to know: the requested channel, the watch history, and what is open. */
-data class PlayerKeys(val current: Channel?, val last: Watched?, val previous: Watched?, val layer: Layer = Layer.None)
+/**
+ * What a key press needs to know: the requested channel, the watch history, what is open, and the
+ * zap context when the channel was tuned from a list other than its group (Live now); null = its group.
+ */
+data class PlayerKeys(
+    val current: Channel?,
+    val last: Watched?,
+    val previous: Watched?,
+    val layer: Layer = Layer.None,
+    val context: List<Channel>? = null,
+)
 
 sealed interface KeyAction {
     data class Zap(val to: Channel, val down: Boolean) : KeyAction
@@ -51,7 +60,8 @@ fun keyAction(key: RemoteKey, screen: PlayerKeys, feed: Feed): KeyAction {
     return when (key) {
         RemoteKey.Up, RemoteKey.Down -> {
             val down = key == RemoteKey.Down
-            feed.zapNeighbour(current, down)?.let { KeyAction.Zap(it, down) } ?: KeyAction.Ignore
+            val next = screen.context?.let { neighbour(it, current, down) } ?: feed.zapNeighbour(current, down)
+            next?.let { KeyAction.Zap(it, down) } ?: KeyAction.Ignore
         }
         RemoteKey.Ok -> KeyAction.OpenOverlay(current)
         RemoteKey.Menu -> KeyAction.OpenPanel // handled above, with or without a channel
@@ -70,7 +80,12 @@ fun keyAction(key: RemoteKey, screen: PlayerKeys, feed: Feed): KeyAction {
  */
 private fun Feed.zapNeighbour(from: Channel, down: Boolean): Channel? {
     val here = find(from.identity) ?: resolve(Watched.of(from)) ?: return null
-    val group = channelsIn(here.group)
-    val i = group.indexOf(here)
-    return group[(i + if (down) 1 else -1).mod(group.size)].takeIf { it != here }
+    return neighbour(channelsIn(here.group), here, down)
+}
+
+/** The channel after or before [from] in [list], wrapping; null when [from] is not in it or alone. */
+private fun neighbour(list: List<Channel>, from: Channel, down: Boolean): Channel? {
+    val i = list.indexOfFirst { it.identity == from.identity }
+    if (i < 0) return null
+    return list[(i + if (down) 1 else -1).mod(list.size)].takeIf { it.identity != from.identity }
 }

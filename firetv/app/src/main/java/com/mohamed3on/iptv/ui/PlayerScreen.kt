@@ -20,21 +20,18 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.State
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
@@ -54,13 +51,12 @@ import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.type
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.tv.material3.Text
-import coil3.compose.AsyncImage
 import com.mohamed3on.iptv.data.Channel
 import com.mohamed3on.iptv.data.Feed
 import com.mohamed3on.iptv.data.GuideDb
@@ -80,11 +76,11 @@ import com.mohamed3on.iptv.ui.theme.LocalReducedMotion
 import com.mohamed3on.iptv.ui.theme.Motion
 import com.mohamed3on.iptv.ui.theme.Palette
 import com.mohamed3on.iptv.ui.theme.ProgressLine
-import com.mohamed3on.iptv.ui.theme.Radius
 import com.mohamed3on.iptv.ui.theme.Scrim
 import com.mohamed3on.iptv.ui.theme.Space
 import com.mohamed3on.iptv.ui.theme.Type
 import com.mohamed3on.iptv.ui.theme.bottomScrim
+import com.mohamed3on.iptv.ui.theme.leftScrim
 import com.mohamed3on.iptv.ui.theme.material
 import kotlinx.coroutines.delay
 import java.time.Instant
@@ -92,14 +88,14 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
 private const val BANNER_MS = 4_000L
-private val LOGO_HEIGHT = 72.dp
+private val LOGO_SIZE = DpSize(128.dp, 72.dp)
 private val TUNING_SIZE = 16.dp
 private val PROGRESS_WIDTH = 200.dp
 private val CARD_WIDTH = 560.dp
 
 /**
  * The full-screen player (R10, R14): the video, with chrome only when asked for. The channel
- * banner rises on launch, on every zap and on OK, and sinks back 4s later; a stream
+ * banner rises on launch and on every zap, and sinks back 4s later; OK opens the channel list; a stream
  * that can't recover gets a card saying why. The remote follows [keyAction]; [session] is null
  * until the activity has started its player (the video surface is shown regardless).
  */
@@ -119,9 +115,10 @@ private fun PlayerChrome(feed: Feed, session: StreamSession, audio: AudioTracks?
     val guide by graph.sync.guide.collectAsState()
     val clock = rememberMinuteClock()
     var layer by remember { mutableStateOf(Layer.None) }
+    // What Up/Down walk: a Live now tune carries its list; a tune from a group carries none (its group).
+    var zapContext by remember { mutableStateOf<List<Channel>?>(null) }
     // The last zap's direction, for the banner's motion; null for a jump (Back to the previous channel).
     var down by remember { mutableStateOf<Boolean?>(true) }
-    var bannerAsks by remember { mutableIntStateOf(0) }
     val focus = remember { FocusRequester() }
 
     // Until the debounced tune starts, the feed playing is still the previous channel's (KTD9).
@@ -129,7 +126,7 @@ private fun PlayerChrome(feed: Feed, session: StreamSession, audio: AudioTracks?
     val problem = problemOf(state).takeIf { state.feed?.family == state.requested?.family }
 
     var banner by remember { mutableStateOf(true) }
-    LaunchedEffect(bannerAsks, state.requested?.identity, tuning) {
+    LaunchedEffect(state.requested?.identity, tuning) {
         banner = true
         if (!tuning) {
             delay(BANNER_MS)
@@ -151,8 +148,7 @@ private fun PlayerChrome(feed: Feed, session: StreamSession, audio: AudioTracks?
                 down = null
                 session.zap(action.to, feed)
             }
-            // U9: open the channel list focused on action.at (layer = Layer.ChannelList); until then OK shows the banner.
-            is KeyAction.OpenOverlay -> bannerAsks++
+            is KeyAction.OpenOverlay -> layer = Layer.ChannelList
             KeyAction.OpenPanel -> layer = Layer.QuickPanel
             KeyAction.Close -> layer = Layer.None
             KeyAction.Ignore, KeyAction.Pass -> {}
@@ -165,7 +161,7 @@ private fun PlayerChrome(feed: Feed, session: StreamSession, audio: AudioTracks?
             // Bubbles up from whatever is focused: an open layer's own keys never get here as player keys.
             .onKeyEvent { event ->
                 val key = remoteKey(event.nativeKeyEvent.keyCode) ?: return@onKeyEvent false
-                val action = keyAction(key, PlayerKeys(state.requested, graph.history.last, graph.history.previous, layer), feed)
+                val action = keyAction(key, PlayerKeys(state.requested, graph.history.last, graph.history.previous, layer, zapContext), feed)
                 if (action == KeyAction.Pass) return@onKeyEvent false
                 if (event.type == KeyEventType.KeyDown) perform(action)
                 true // the key-up too, so Back never reaches the activity and leaves the app
@@ -211,6 +207,35 @@ private fun PlayerChrome(feed: Feed, session: StreamSession, audio: AudioTracks?
             }
         }
 
+        // The scrim fades; the list itself slides in from the left and back out to it.
+        AnimatedVisibility(
+            visible = layer == Layer.ChannelList,
+            enter = fadeIn(Motion.panel()),
+            exit = fadeOut(Motion.panel()),
+            modifier = Modifier.fillMaxSize(),
+        ) {
+            Box(Modifier.fillMaxSize().leftScrim()) {
+                ChannelOverlay(
+                    feed = feed,
+                    guide = guide,
+                    clock = clock,
+                    current = state.requested,
+                    context = zapContext,
+                    open = layer == Layer.ChannelList,
+                    onPick = { channel, context ->
+                        zapContext = context
+                        layer = Layer.None
+                        // Picking what is already on just closes the list; it never retunes.
+                        if (channel.identity != state.requested?.identity) {
+                            down = null
+                            session.zap(channel, feed)
+                        }
+                    },
+                    modifier = Modifier.animateEnterExit(enter = Motion.fromLeft(reduced), exit = Motion.toLeft(reduced)),
+                )
+            }
+        }
+
         AnimatedVisibility(
             visible = layer == Layer.QuickPanel,
             enter = Motion.fromRight(reduced),
@@ -248,18 +273,7 @@ private fun Banner(channel: Channel, feed: Feed, guide: GuideDb?, clock: State<L
     val group = feed.channelsIn(channel.group)
     val position = group.indexOfFirst { it.identity == channel.identity }
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(Space.xl), verticalAlignment = Alignment.CenterVertically) {
-        if (channel.logo.isNotEmpty()) {
-            Box(
-                Modifier
-                    .height(LOGO_HEIGHT)
-                    .aspectRatio(16f / 9f)
-                    .clip(RoundedCornerShape(Radius.row))
-                    .background(Palette.raised)
-                    .padding(Space.s),
-            ) {
-                AsyncImage(model = channel.logo, contentDescription = null, contentScale = ContentScale.Fit, modifier = Modifier.fillMaxSize())
-            }
-        }
+        LogoTile(channel, LOGO_SIZE)
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(Space.xs)) {
             Row(horizontalArrangement = Arrangement.spacedBy(Space.m), verticalAlignment = Alignment.CenterVertically) {
                 Text(remember(channel.name) { displayName(channel.name) }, style = Type.title, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
@@ -368,7 +382,7 @@ private fun ProblemCard(problem: Problem, takeFocus: Boolean, onAction: () -> Un
 
 private val timeFormat = DateTimeFormatter.ofPattern("HH:mm")
 
-private fun clockTime(epochSec: Long) = timeFormat.format(Instant.ofEpochSecond(epochSec).atZone(ZoneId.systemDefault()))
+internal fun clockTime(epochSec: Long) = timeFormat.format(Instant.ofEpochSecond(epochSec).atZone(ZoneId.systemDefault()))
 
 /** Epoch seconds, ticking on each minute: the one clock behind every progress line. */
 @Composable

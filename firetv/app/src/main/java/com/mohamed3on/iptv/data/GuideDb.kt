@@ -1,5 +1,6 @@
 package com.mohamed3on.iptv.data
 
+import android.database.Cursor
 import android.database.sqlite.SQLiteDatabase
 import java.io.Closeable
 import java.io.File
@@ -9,13 +10,46 @@ data class Programme(val start: Long, val stop: Long, val title: String, val des
 
 data class NowNext(val now: Programme?, val next: Programme?)
 
+/** A match airing now on [tvgId]; [norm] is the server's search form of its title. */
+data class Airing(val tvgId: String, val norm: String, val programme: Programme)
+
 /** The cached guide (the server's SQLite file), opened read-only. */
 class GuideDb private constructor(private val db: SQLiteDatabase) : Closeable {
     /** What airs on [tvgId] at [nowSec] (null in a gap) and what follows it. */
-    fun nowNext(tvgId: String, nowSec: Long): NowNext {
-        val rows = programmes(tvgId, nowSec, limit = 2)
+    fun nowNext(tvgId: String, nowSec: Long): NowNext = nowNextOf(programmes(tvgId, nowSec, limit = 2), nowSec)
+
+    private fun nowNextOf(rows: List<Programme>, nowSec: Long): NowNext {
         val now = rows.firstOrNull()?.takeIf { it.start <= nowSec }
         return NowNext(now, if (now != null) rows.getOrNull(1) else rows.firstOrNull())
+    }
+
+    /** [nowNext] for many channels at once (a whole group); every id asked for gets an entry. */
+    fun nowNextFor(tvgIds: Collection<String>, nowSec: Long): Map<String, NowNext> {
+        val ids = tvgIds.distinct()
+        val rows = HashMap<String, MutableList<Programme>>(ids.size * 2)
+        // Chunked under SQLite's 999-variable limit; the first two rows per channel from now on.
+        for (chunk in ids.chunked(500)) {
+            db.rawQuery(
+                """SELECT tvg_id, start, stop, title, descr, synthetic, "match" FROM (
+                     SELECT *, ROW_NUMBER() OVER (PARTITION BY tvg_id ORDER BY start) AS n FROM programmes
+                     WHERE tvg_id IN (${chunk.joinToString(",") { "?" }}) AND stop > ?
+                   ) WHERE n <= 2 ORDER BY tvg_id, start""",
+                (chunk + nowSec.toString()).toTypedArray(),
+            ).use { c ->
+                while (c.moveToNext()) rows.getOrPut(c.getString(0)) { ArrayList(2) } += c.programme(1)
+            }
+        }
+        return ids.associateWith { nowNextOf(rows[it].orEmpty(), nowSec) }
+    }
+
+    /** Programmes flagged `match` airing at [nowSec], never synthetic filler (KTD4). */
+    fun airingMatches(nowSec: Long): List<Airing> {
+        val t = nowSec.toString()
+        return db.rawQuery(
+            "SELECT tvg_id, norm, start, stop, title, descr, synthetic, \"match\" FROM programmes " +
+                "WHERE \"match\" = 1 AND synthetic = 0 AND start <= ? AND stop > ? ORDER BY start",
+            arrayOf(t, t),
+        ).use { c -> buildList { while (c.moveToNext()) add(Airing(c.getString(0), c.getString(1), c.programme(2))) } }
     }
 
     /** Programmes on [tvgId] still running or starting after [fromSec], in start order. */
@@ -25,13 +59,11 @@ class GuideDb private constructor(private val db: SQLiteDatabase) : Closeable {
         db.rawQuery(
             "SELECT start, stop, title, descr, synthetic, \"match\" FROM programmes WHERE tvg_id = ? AND stop > ? ORDER BY start LIMIT $limit",
             arrayOf(tvgId, after.toString()),
-        ).use { c ->
-            buildList {
-                while (c.moveToNext()) {
-                    add(Programme(c.getLong(0), c.getLong(1), c.getString(2), c.getString(3), c.getInt(4) != 0, c.getInt(5) != 0))
-                }
-            }
-        }
+        ).use { c -> buildList { while (c.moveToNext()) add(c.programme(0)) } }
+
+    /** start, stop, title, descr, synthetic, match from column [at] on. */
+    private fun Cursor.programme(at: Int) =
+        Programme(getLong(at), getLong(at + 1), getString(at + 2), getString(at + 3), getInt(at + 4) != 0, getInt(at + 5) != 0)
 
     override fun close() = db.close()
 

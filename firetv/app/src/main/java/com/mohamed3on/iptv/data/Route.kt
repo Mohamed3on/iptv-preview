@@ -26,6 +26,8 @@ class Route(private val store: KeyValueStore, vpnActive: StateFlow<Boolean>, sco
     )
     val choice: StateFlow<RouteChoice> = _choice
     private val session = MutableStateFlow<RouteKind?>(null)
+    /** The session override, null when none is set. */
+    val override: StateFlow<RouteKind?> = session
 
     val effective: StateFlow<RouteKind> = combine(session, _choice, vpnActive, ::pick)
         .stateIn(scope, SharingStarted.Eagerly, pick(session.value, _choice.value, vpnActive.value))

@@ -1,0 +1,48 @@
+package com.mohamed3on.iptv.player
+
+import androidx.media3.common.PlaybackException
+import androidx.media3.datasource.HttpDataSource.InvalidResponseCodeException
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.seconds
+
+/** Why a stream failed, as far as recovery cares. Never carries the URL (the repo is public). */
+sealed interface StreamFailure {
+    data class Http(val status: Int) : StreamFailure
+    /** Connect or read timed out, or the start watchdog fired. */
+    data object Timeout : StreamFailure
+    /** No connection to the host at all: the network is down or DNS fails. */
+    data object Unreachable : StreamFailure
+    /** Anything else: an empty or garbled body, a decoder failure. */
+    data object Unplayable : StreamFailure
+}
+
+/** What a session does about a failure (KTD8). */
+enum class Recovery { Busy, WrongRoute, NextFeed, Backoff }
+
+object StreamErrors {
+    fun recovery(failure: StreamFailure): Recovery = when (failure) {
+        is StreamFailure.Http -> when (failure.status) {
+            458 -> Recovery.Busy // another IP holds the account's one connection
+            511, 403 -> Recovery.WrongRoute // plain front over VPN / VPN front without VPN
+            in 500..599 -> Recovery.Backoff
+            else -> Recovery.NextFeed
+        }
+        StreamFailure.Timeout, StreamFailure.Unplayable -> Recovery.NextFeed
+        // The network, not the channel: another feed would fail the same way. Retrying lets
+        // playback come back by itself when the network does.
+        StreamFailure.Unreachable -> Recovery.Backoff
+    }
+
+    /** Delay before 5xx retry number [attempt] (0-based): 1s, 2s, 4s, then 8s. */
+    fun backoff(attempt: Int): Duration = (1 shl attempt.coerceAtMost(3)).seconds
+
+    fun failureOf(error: PlaybackException): StreamFailure {
+        val http = generateSequence<Throwable>(error) { it.cause }.filterIsInstance<InvalidResponseCodeException>().firstOrNull()
+        return when {
+            http != null -> StreamFailure.Http(http.responseCode)
+            error.errorCode == PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT -> StreamFailure.Timeout
+            error.errorCode == PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED -> StreamFailure.Unreachable
+            else -> StreamFailure.Unplayable
+        }
+    }
+}

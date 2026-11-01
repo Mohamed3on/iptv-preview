@@ -25,6 +25,8 @@ concurrency:
 jobs:
   probe:
     runs-on: ubuntu-latest
+    env:
+      HOST: ${{ secrets.SERVER_HOST }}
     steps:
       - uses: actions/checkout@v4
 
@@ -42,7 +44,7 @@ jobs:
         run: |
           mkdir -p ~/.ssh && chmod 700 ~/.ssh
           printf '%s\n' "$SSH_KEY" > ~/.ssh/id_ed25519 && chmod 600 ~/.ssh/id_ed25519
-          ssh-keyscan -H <server-ip> >> ~/.ssh/known_hosts
+          ssh-keyscan -H "$HOST" >> ~/.ssh/known_hosts
 
       - name: Probe and push to the box
         env:
@@ -55,4 +57,4 @@ jobs:
           case "$MINUTES" in
             ''|*[!0-9]*) echo "minutes must be a whole number, got '$MINUTES'"; exit 1 ;;
           esac
-          SERVER=root@<server-ip> ./deploy/probe-quality.sh "$MINUTES"
+          SERVER=root@$HOST ./deploy/probe-quality.sh "$MINUTES"

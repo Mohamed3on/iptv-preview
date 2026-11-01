@@ -18,6 +18,8 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    env:
+      HOST: ${{ secrets.SERVER_HOST }}
     steps:
       - uses: actions/checkout@v4
 
@@ -33,14 +35,14 @@ jobs:
           mkdir -p ~/.ssh && chmod 700 ~/.ssh
           # printf adds the trailing newline OpenSSH needs to parse the key.
           printf '%s\n' "$SSH_KEY" > ~/.ssh/id_ed25519 && chmod 600 ~/.ssh/id_ed25519
-          ssh-keyscan -H <server-ip> >> ~/.ssh/known_hosts
+          ssh-keyscan -H "$HOST" >> ~/.ssh/known_hosts
 
       - name: Sync to Hetzner
-        run: SERVER=root@<server-ip> ./deploy/sync.sh
+        run: SERVER=root@$HOST ./deploy/sync.sh
 
       - name: Smoke test
         # Against localhost over SSH (Cloudflare challenges runner IPs): a playlist build
         # proves the server, the token and the provider all work.
         run: |
-          ssh root@<server-ip> 'curl -sf --retry 5 --retry-connrefused --retry-delay 2 --max-time 120 \
+          ssh "root@$HOST" 'curl -sf --retry 5 --retry-connrefused --retry-delay 2 --max-time 120 \
             "http://127.0.0.1:8790/api/playlist?t=$(sed -n s/^PLAYLIST_TOKEN=//p /opt/iptv-preview/.env)" | head -c 7' | grep -q '#EXTM3U'

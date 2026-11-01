@@ -10,7 +10,7 @@
 import { chanKey } from '../api/_lib.js'
 import { askJev, jevTokens, type JevQuestion } from '../api/_jev.js'
 
-const api = process.env.API_BASE ?? 'https://<your-domain>/api'
+const api = process.env.API_BASE ?? 'http://127.0.0.1:8790/api'
 const get = async (url: string) => {
   const resp = await fetch(url, { headers: { 'User-Agent': 'VLC/3.0.18' } })
   if (!resp.ok) throw new Error(`${url.replace(/\?.*/, '')} -> HTTP ${resp.status}`)

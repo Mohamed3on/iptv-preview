@@ -8,12 +8,12 @@
 // cached in .cache/jev-titles.json); without TYPESAFE_API_KEY, or if Jev fails, the
 // regexes decide uncached titles instead.
 // Usage: bun scripts/learn-competitions.ts   (PLAYLIST_TOKEN, TYPESAFE_API_KEY from env /
-//        .env.local; EPG_ENDPOINT overrides the deployed endpoint)
+//        .env.local; EPG_ENDPOINT overrides the local server)
 import { COMP_SOURCE, couldBeLiveMatch, jevCompetitions, learnedCompetitions } from '../api/_lib.js'
 import { jevTokens } from '../api/_jev.js'
 import { LEARNED } from '../api/competition-cache.js'
 
-const endpoint = process.env.EPG_ENDPOINT ?? 'https://<your-domain>/api/epg'
+const endpoint = process.env.EPG_ENDPOINT ?? 'http://127.0.0.1:8790/api/epg'
 const token = process.env.PLAYLIST_TOKEN
 const local = endpoint.startsWith('file:')
 if (!token && !local) throw new Error('PLAYLIST_TOKEN missing')

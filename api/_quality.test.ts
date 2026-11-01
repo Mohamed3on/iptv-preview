@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { rm } from 'node:fs/promises'
 import { mergeAppReading } from './_quality.js'
-import { quality as qualityRoute } from './app.js'
+import { events as eventsRoute, quality as qualityRoute } from './app.js'
 import { QUALITY } from './quality-cache.js'
 
 const today = '2026-11-01'
@@ -57,5 +57,25 @@ describe('/api/app/quality', () => {
     expect(file).toStartWith('// Auto-generated')
     expect(file).toContain('"990001":{"w":1920,"h":1080,"fps":50')
     expect(await (await post({ id: 990001, ...reading({ h: 720, w: 1280 }) })).json()).toEqual({ stored: false })
+  })
+})
+
+describe('/api/app/events', () => {
+  const env = { ...process.env }
+  const file = `${import.meta.dir}/../.cache/test-events/app-events.jsonl`
+  const post = (body: unknown, t = 'app') =>
+    eventsRoute(new Request(`http://localhost/api/app/events?t=${t}`, { method: 'POST', body: JSON.stringify(body) }))
+  beforeEach(async () => {
+    Object.assign(process.env, { APP_TOKENS: 'app', APP_EVENTS_FILE: file })
+    await rm(`${import.meta.dir}/../.cache/test-events`, { recursive: true, force: true })
+  })
+  afterEach(() => { process.env = { ...env } })
+
+  test('appends a valid batch with the time received, and refuses the rest', async () => {
+    expect((await post([{ type: 'tune', id: 1, ms: 900 }], 'tv')).status).toBe(403)
+    expect((await post([{ type: 'nope' }])).status).toBe(400)
+    expect((await post([{ type: 'tune', id: 1, ms: 900 }, { type: 'stall', id: 1 }])).status).toBe(204)
+    const lines = (await Bun.file(file).text()).trim().split('\n').map((l) => JSON.parse(l))
+    expect(lines.map((l) => [l.type, typeof l.at])).toEqual([['tune', 'string'], ['stall', 'string']])
   })
 })

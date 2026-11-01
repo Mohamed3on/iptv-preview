@@ -4,6 +4,9 @@
 // GET /api/app/guide?t=TOKEN — the guide as a gzip SQLite file the stick opens without parsing.
 // GET /api/app/version, /api/app/apk ?t=TOKEN — the latest build, copied to the box by firetv.yml.
 // POST /api/app/quality?t=TOKEN — a quality reading the app measured while playing.
+// POST /api/app/events?t=TOKEN — what happened while watching, for later analysis.
+import { appendFile, mkdir, rename, stat } from 'node:fs/promises'
+import { dirname } from 'node:path'
 import { buildAppFeed, buildAppGuide } from './_app-feed.js'
 import { appTokenOk, configFromEnv, fetchCuratedChannels, saneFps, withCompetitionGroups } from './_lib.js'
 import { mergeAppReading, saveQuality, type Meta } from './_quality.js'
@@ -73,4 +76,24 @@ export async function quality(req: Request): Promise<Response> {
     await saveQuality()
   }
   return Response.json({ stored: !!merged }, { headers: { 'Cache-Control': 'no-store' } })
+}
+
+// POST /api/app/events?t=TOKEN — a batch of what happened while watching (tunes and their time to
+// picture, stalls, feed switches, busy/wrong-route/offline). Appended to a capped log on the box
+// for later analysis: which feeds actually hold up, and real zap times.
+const EVENT_TYPES = new Set(['tune', 'stall', 'failover', 'problem'])
+const EVENTS_MAX_BYTES = 20 * 1024 * 1024
+export async function events(req: Request): Promise<Response> {
+  if (!appTokenOk(req.url)) return forbidden()
+  const batch = await req.json().catch(() => null)
+  const ok = Array.isArray(batch) && batch.length <= 200 && batch.every((e) =>
+    e && typeof e === 'object' && EVENT_TYPES.has(e.type) && JSON.stringify(e).length <= 500)
+  if (!ok) return new Response('Bad events', { status: 400 })
+  const file = process.env.APP_EVENTS_FILE ?? `${import.meta.dir}/../.cache/app-events.jsonl`
+  const at = new Date().toISOString()
+  await mkdir(dirname(file), { recursive: true })
+  // Keep one previous file; the log never grows past twice the cap.
+  if (((await stat(file).catch(() => null))?.size ?? 0) > EVENTS_MAX_BYTES) await rename(file, `${file}.1`)
+  await appendFile(file, batch.map((e: object) => JSON.stringify({ at, ...e })).join('\n') + '\n')
+  return new Response(null, { status: 204 })
 }

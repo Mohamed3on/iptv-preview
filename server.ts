@@ -55,6 +55,7 @@ export async function handle(req: Request): Promise<Response> {
   if (pathname === '/api/app/version') return app.version(req)
   if (pathname === '/api/app/apk') return app.apk(req)
   if (pathname === '/api/app/quality' && req.method === 'POST') return app.quality(req)
+  if (pathname === '/api/app/events' && req.method === 'POST') return app.events(req)
   const handler = routes[pathname]
   if (handler) return cached(req, handler)
   const file = Bun.file(dist + (pathname === '/' ? '/index.html' : pathname))

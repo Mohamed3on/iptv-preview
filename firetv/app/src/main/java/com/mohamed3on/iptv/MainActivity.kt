@@ -8,19 +8,25 @@ import android.view.SurfaceView
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -39,9 +45,18 @@ import com.mohamed3on.iptv.data.SyncError
 import com.mohamed3on.iptv.data.startAction
 import com.mohamed3on.iptv.diag.DiagnosticsScreen
 import com.mohamed3on.iptv.diag.Spike
+import com.mohamed3on.iptv.player.FrameRate
+import com.mohamed3on.iptv.player.Idle
+import com.mohamed3on.iptv.player.IdleWatch
 import com.mohamed3on.iptv.player.Phase
 import com.mohamed3on.iptv.player.PlayerPool
 import com.mohamed3on.iptv.player.StreamSession
+import com.mohamed3on.iptv.ui.theme.Palette
+import com.mohamed3on.iptv.ui.theme.Scrim
+import com.mohamed3on.iptv.ui.theme.Space
+import com.mohamed3on.iptv.ui.theme.Type
+import com.mohamed3on.iptv.ui.theme.focusLift
+import com.mohamed3on.iptv.ui.theme.material
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -57,6 +72,7 @@ class MainActivity : ComponentActivity() {
     private val surface by lazy { SurfaceView(this).apply { keepScreenOn = true } }
     private val session = MutableStateFlow<StreamSession?>(null)
     private val diagnostics = MutableStateFlow(false)
+    private val idle = MutableStateFlow<IdleWatch?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -71,7 +87,8 @@ class MainActivity : ComponentActivity() {
             val state by sync.state.collectAsState()
             val playing by session.collectAsState()
             val diag by diagnostics.collectAsState()
-            Root(state, playing, surface, diag, onRetry = { graph.scope.launch { sync.retry() } })
+            val idleState = idle.collectAsState().value?.state?.collectAsState()?.value
+            Root(state, playing, surface, diag, idleState, onRetry = { graph.scope.launch { sync.retry() } })
         }
         // While visible: on resume refresh anything older than 1h, then channels every 30 min, guide every 3h.
         lifecycleScope.launch {
@@ -90,6 +107,8 @@ class MainActivity : ComponentActivity() {
                 val player = pool.acquire()
                 player.exo.setVideoSurfaceView(surface)
                 val s = StreamSession(player, graph.route, this, SystemClock::elapsedRealtime)
+                val frameRate = FrameRate(window, player.exo, s.state, this)
+                idle.value = IdleWatch(this) { s.stop() }
                 launch {
                     s.state.collect {
                         Log.i(TAG, "${it.phase} ${it.feed?.name ?: "-"}")
@@ -105,6 +124,8 @@ class MainActivity : ComponentActivity() {
                     awaitCancellation()
                 } finally {
                     session.value = null
+                    idle.value = null
+                    frameRate.detach()
                     s.stop()
                     pool.releaseAll()
                 }
@@ -116,6 +137,29 @@ class MainActivity : ComponentActivity() {
     private fun startChannel(feed: Feed) = when (val action = feed.startAction(graph.history.last)) {
         is StartAction.Play -> action.channel
         is StartAction.OpenList -> feed.channelsIn(action.group).firstOrNull()
+    }
+
+    // Every key resets the idle stop (R24). While it asks, any key answers and goes no further;
+    // once it has stopped playback, only OK (resume) and Back do anything.
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        val watch = idle.value ?: return super.dispatchKeyEvent(event)
+        val down = event.action == KeyEvent.ACTION_DOWN
+        when (watch.state.value) {
+            Idle.Watching -> watch.keyPressed()
+            Idle.Asking -> {
+                if (down) watch.keyPressed()
+                return true
+            }
+            Idle.TimedOut -> {
+                if (event.keyCode == KeyEvent.KEYCODE_BACK) return super.dispatchKeyEvent(event)
+                if (down && (event.keyCode == KeyEvent.KEYCODE_DPAD_CENTER || event.keyCode == KeyEvent.KEYCODE_ENTER)) {
+                    watch.resume()
+                    session.value?.retry()
+                }
+                return true
+            }
+        }
+        return super.dispatchKeyEvent(event)
     }
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
@@ -151,7 +195,7 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-private fun Root(state: FeedState, session: StreamSession?, surface: SurfaceView, diagnostics: Boolean, onRetry: () -> Unit) {
+private fun Root(state: FeedState, session: StreamSession?, surface: SurfaceView, diagnostics: Boolean, idle: Idle?, onRetry: () -> Unit) {
     when (state) {
         FeedState.Loading -> FullScreen { Text("Loading channels", style = MaterialTheme.typography.headlineSmall) }
         is FeedState.Failed -> FullScreen {
@@ -167,7 +211,52 @@ private fun Root(state: FeedState, session: StreamSession?, surface: SurfaceView
                 Text(phase.toString(), color = Color.White, modifier = Modifier.align(Alignment.Center))
             }
             if (diagnostics) DiagnosticsScreen()
+            when (idle) {
+                Idle.Asking -> StillWatching()
+                Idle.TimedOut -> IdleStopped()
+                else -> {}
+            }
         }
+    }
+}
+
+/** The R24 prompt. Its button is only the visible answer: MainActivity takes any key as one. */
+@Composable
+private fun StillWatching() {
+    Box(Modifier.fillMaxSize().background(Scrim), contentAlignment = Alignment.Center) {
+        Column(
+            Modifier.widthIn(max = 560.dp).material().padding(Space.xxl),
+            verticalArrangement = Arrangement.spacedBy(Space.m),
+        ) {
+            Text("Still watching?", style = Type.title)
+            Text("Playback stops in a minute unless you press a button.", style = Type.body)
+            val focus = remember { FocusRequester() }
+            var focused by remember { mutableStateOf(false) }
+            LaunchedEffect(Unit) { focus.requestFocus() }
+            Text(
+                "Keep watching",
+                style = Type.headline,
+                modifier = Modifier
+                    .padding(top = Space.m)
+                    .focusRequester(focus)
+                    .onFocusChanged { focused = it.isFocused }
+                    .focusable()
+                    .focusLift(focused)
+                    .padding(horizontal = Space.xl, vertical = Space.m),
+            )
+        }
+    }
+}
+
+@Composable
+private fun IdleStopped() {
+    Column(
+        Modifier.fillMaxSize().background(Palette.ink),
+        verticalArrangement = Arrangement.spacedBy(Space.m, Alignment.CenterVertically),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Text("Stopped after 4 hours with no activity", style = Type.title)
+        Text("Press OK to resume", style = Type.body)
     }
 }
 

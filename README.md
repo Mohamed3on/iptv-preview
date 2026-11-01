@@ -38,6 +38,9 @@ The repo's copies of those two files only seed a fresh box; a deploy never overw
 - `/api/app/channels`: groups, channels, feed families, quality badges and both provider fronts, as JSON.
 - `/api/app/guide`: the guide as a gzip SQLite file.
 - `/api/app/version` and `/api/app/apk`: the latest build, served from `/opt/iptv-preview/app/` (outside `dist/`, so deploys never prune it).
+- `/api/app/movies`: the on-demand library (4K movies, UFC replays), read from the copy the playlist build saves in `.cache/vod-last-good.json`, so the app never adds a pull of the 74 MB catalogue.
+- `POST /api/app/quality`: what the app measured on a stream it played (resolution, frame rate, codec, Atmos), merged into the quality cache with the probe's rules (`api/_quality.ts`).
+- `POST /api/app/events`: tunes with their time to picture, stalls, feed switches and busy / wrong-route / offline problems, appended to `.cache/app-events.jsonl` on the box (rolls over at 20 MB). Read it to see which feeds hold up and how fast zaps are.
 
 `.github/workflows/firetv.yml` runs on pushes touching `firetv/**`. It runs the unit tests, builds a release-signed APK and copies it to the box with a key that can only write `/opt/iptv-preview/app/`: user `iptvapp`, whose `authorized_keys` entry is `restrict,command="rrsync -wo -no-del /opt/iptv-preview/app"`. Secrets: `ANDROID_KEYSTORE_B64`, `KEYSTORE_PASSWORD`, `KEY_ALIAS`, `KEY_PASSWORD`, `APP_TOKEN`, `APP_SERVER_URL`, `APP_DEPLOY_SSH_KEY` and `SERVER_HOST`. The APK carries the token, so it is never uploaded as a GitHub artifact. Local builds read the same values from `~/.gradle/gradle.properties` (`IPTV_KEYSTORE_FILE`, `IPTV_KEYSTORE_PASSWORD`, `IPTV_KEY_ALIAS`, `IPTV_KEY_PASSWORD`, `IPTV_APP_TOKEN`, `IPTV_SERVER_URL`). Keep an offline backup of the keystore: without it, the next update needs an uninstall and a fresh adb install.
 

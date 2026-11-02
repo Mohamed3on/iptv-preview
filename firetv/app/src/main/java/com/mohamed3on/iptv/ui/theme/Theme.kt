@@ -51,23 +51,24 @@ object Palette {
 
 /**
  * 10-foot type scale on the system font (it already ships optical sizing and tuned
- * tracking). Tracking tightens as size grows and opens slightly when small; leading is
- * tight on large text and looser on small. Nothing below 15sp: it's read from a sofa.
+ * tracking), sized for the 960×540 dp canvas: refined, not shouty. Tracking tightens as size
+ * grows and opens slightly when small; leading is tight on large text and looser on small.
+ * Nothing below 13sp: it's read from a sofa.
  */
 @Immutable
 object Type {
     private val base = TextStyle(fontFamily = FontFamily.Default, color = Palette.textPrimary)
 
     /** Channel name in the banner. */
-    val display = base.copy(fontSize = 40.sp, lineHeight = 44.sp, fontWeight = FontWeight.SemiBold, letterSpacing = (-0.02).em)
+    val display = base.copy(fontSize = 30.sp, lineHeight = 36.sp, fontWeight = FontWeight.SemiBold, letterSpacing = (-0.015).em)
     /** Screen and section headings (details, search, error). */
-    val title = base.copy(fontSize = 28.sp, lineHeight = 34.sp, fontWeight = FontWeight.SemiBold, letterSpacing = (-0.01).em)
+    val title = base.copy(fontSize = 22.sp, lineHeight = 28.sp, fontWeight = FontWeight.SemiBold, letterSpacing = (-0.01).em)
     /** Channel row name, current programme in the banner. */
-    val headline = base.copy(fontSize = 21.sp, lineHeight = 27.sp, fontWeight = FontWeight.Medium, letterSpacing = 0.em)
+    val headline = base.copy(fontSize = 17.sp, lineHeight = 22.sp, fontWeight = FontWeight.Medium, letterSpacing = 0.em)
     /** Now/next lines, schedule rows. */
-    val body = base.copy(fontSize = 18.sp, lineHeight = 25.sp, color = Palette.textSecondary, letterSpacing = 0.005.em)
+    val body = base.copy(fontSize = 15.sp, lineHeight = 20.sp, color = Palette.textSecondary, letterSpacing = 0.005.em)
     /** Times, badges, hints. */
-    val caption = base.copy(fontSize = 15.sp, lineHeight = 20.sp, fontWeight = FontWeight.Medium, color = Palette.textTertiary, letterSpacing = 0.02.em)
+    val caption = base.copy(fontSize = 13.sp, lineHeight = 17.sp, fontWeight = FontWeight.Medium, color = Palette.textTertiary, letterSpacing = 0.015.em)
 }
 
 /**

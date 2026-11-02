@@ -147,22 +147,23 @@ private fun Chips(labels: List<String>, style: TextStyle, fill: Color?, outline:
     }
 }
 
-private val badgeStyle = Type.caption.copy(color = Palette.textSecondary)
-private val badgeOutline = Palette.textTertiary.copy(alpha = 0.6f)
+private val badgeStyle = Type.caption
+private val badgeFill = Color(0x14FFFFFF)
 
-/** Quality badges (4K, FHD, 50fps, Atmos): outlined capsules, quiet next to the name. */
+/** Quality badges (4K, FHD, 50fps, Atmos): faint filled capsules, quiet next to the name. */
 @Composable
-fun Badges(labels: List<String>, modifier: Modifier = Modifier) = Chips(labels, badgeStyle, fill = null, outline = badgeOutline, modifier)
+fun Badges(labels: List<String>, modifier: Modifier = Modifier) = Chips(labels, badgeStyle, fill = badgeFill, outline = null, modifier)
 
 private val liveLabel = listOf("LIVE")
-private val liveStyle = Type.caption.copy(color = Color.White)
+private val liveStyle = Type.caption.copy(color = Palette.live)
+private val liveFill = Palette.live.copy(alpha = 0.16f)
 
-/** "LIVE" marker for programmes airing now. */
+/** "LIVE" marker for programmes airing now: red text on a red tint, so a list of them doesn't shout. */
 @Composable
-fun LiveMark(modifier: Modifier = Modifier) = Chips(liveLabel, liveStyle, fill = Palette.live, outline = null, modifier)
+fun LiveMark(modifier: Modifier = Modifier) = Chips(liveLabel, liveStyle, fill = liveFill, outline = null, modifier)
 
 /**
- * Programme progress. [fraction] is read inside the draw phase, so the shared minute ticker
+ * Programme progress, neutral so the accent stays for focus. [fraction] is read inside the draw phase, so the shared minute ticker
  * repaints only this bar, never recomposes the row.
  */
 @Composable
@@ -174,7 +175,7 @@ fun ProgressLine(fraction: () -> Float, modifier: Modifier = Modifier) {
             .drawBehind {
                 val r = CornerRadius(size.height / 2)
                 drawRoundRect(Palette.track, cornerRadius = r)
-                drawRoundRect(Palette.accent, size = size.copy(width = size.width * fraction().coerceIn(0f, 1f)), cornerRadius = r)
+                drawRoundRect(Palette.textSecondary, size = size.copy(width = size.width * fraction().coerceIn(0f, 1f)), cornerRadius = r)
             },
     )
 }

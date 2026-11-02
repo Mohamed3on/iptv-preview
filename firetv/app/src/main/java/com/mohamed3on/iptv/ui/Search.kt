@@ -123,7 +123,7 @@ internal fun startLabel(startSec: Long, nowSec: Long): String {
 }
 
 private val KEY_HEIGHT = 44.dp
-private val CARET = DpSize(2.dp, 28.dp)
+private val CARET = DpSize(2.dp, 22.dp)
 /** ActivityLine's own height. */
 private val ACTIVITY_HEIGHT = 3.dp
 private const val SPACE = "Space"

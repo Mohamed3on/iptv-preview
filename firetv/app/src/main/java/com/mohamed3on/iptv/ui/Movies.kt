@@ -663,6 +663,17 @@ private fun SearchGrid(
         found = withContext(Dispatchers.Default) { library.search(query) }
     }
     val first = remember { FocusRequester() }
+    // A spoken query: once its results are in, the first card takes focus. None leaves focus on the keys.
+    var spoken by remember { mutableStateOf(false) }
+    LaunchedEffect(found) {
+        if (!spoken) return@LaunchedEffect
+        spoken = false
+        if (found.isNullOrEmpty()) return@LaunchedEffect
+        repeat(10) {
+            withFrameNanos {}
+            if (runCatching { first.requestFocus() }.isSuccess) return@LaunchedEffect
+        }
+    }
     LazyVerticalGrid(
         columns = GridCells.FixedSize(CARD.width),
         modifier = Modifier.fillMaxSize().focusRequester(focus).focusRestorer(keys).focusGroup(),
@@ -676,6 +687,7 @@ private fun SearchGrid(
                     query, busy = false, onQuery = onQuery, entry = keys,
                     onFocused = { onFocused(null) },
                     onDown = { runCatching { first.requestFocus() } },
+                    onSpoken = { spoken = true },
                 )
             }
         }

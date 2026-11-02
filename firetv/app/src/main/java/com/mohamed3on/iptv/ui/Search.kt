@@ -159,7 +159,7 @@ private val KEYS: List<List<String>> =
  * focus back to the keys.
  */
 @Composable
-internal fun SearchBox(query: String, busy: Boolean, onQuery: (String) -> Unit, entry: FocusRequester, onFocused: () -> Unit, onDown: () -> Unit) {
+internal fun SearchBox(query: String, busy: Boolean, onQuery: (String) -> Unit, entry: FocusRequester, onFocused: () -> Unit, onDown: () -> Unit, onSpoken: (String) -> Unit) {
     var at by remember { mutableStateOf(0 to 0) }
     val focusManager = LocalFocusManager.current
     var listening by remember { mutableStateOf(false) }
@@ -199,8 +199,14 @@ internal fun SearchBox(query: String, busy: Boolean, onQuery: (String) -> Unit, 
                     BasicTextField(
                         field,
                         onValueChange = {
+                            // Dictation lands as words at once, typing as one letter: done speaking, so on to the results.
+                            val spoken = it.composition == null && it.text.length - field.text.length > 1
                             field = it
                             onQuery(it.text)
+                            if (spoken) {
+                                stopListening()
+                                onSpoken(it.text)
+                            }
                         },
                         textStyle = Type.title,
                         singleLine = true,

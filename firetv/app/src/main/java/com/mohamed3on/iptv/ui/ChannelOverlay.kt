@@ -603,6 +603,15 @@ fun ChannelOverlay(
         }
     }
 
+    // A spoken query: once its results are in, the first takes focus, so OK plays it. No results leave focus on the keys.
+    var spoken by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(spoken, memory.searched, items) {
+        val asked = spoken ?: return@LaunchedEffect
+        if (memory.searched?.matches(asked, feed, guide) != true) return@LaunchedEffect
+        spoken = null
+        items?.indexOfFirst { it.focusable }?.takeIf { it >= 0 }?.let { focusChannels(it) }
+    }
+
     /** Right/OK from the groups column: a group still waiting to show is shown now, then entered; Movies and Shows open. */
     fun enterChannels() {
         if (source == MoviesSource) return onLibrary?.invoke(LibraryKind.Movies) ?: Unit
@@ -895,6 +904,7 @@ fun ChannelOverlay(
                                         memory.searchFocus = null
                                     },
                                     onDown = { focusChannels(list.indexOfFirst { it.focusable }) },
+                                    onSpoken = { spoken = it },
                                 )
                                 is HitItem -> {
                                     val on = item.hit.tune.family == current?.family

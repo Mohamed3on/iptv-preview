@@ -400,6 +400,18 @@ fun ChannelOverlay(
             arrival.animateTo(1f, if (reduced) tween(Motion.FADE_MS) else Motion.spring(0.28f))
         }
     }
+    // Holding Down through the groups column builds only the group focus rests on (~120ms), like
+    // TiviMate: passing groups never pay for building their rows. Right/OK applies it at once.
+    val pending = remember { PendingShow() }
+    fun showSoon(next: Source) {
+        pending.job?.cancel()
+        pending.target = next
+        pending.job = scope.launch {
+            delay(GROUP_REST_MS)
+            pending.target = null
+            show(next)
+        }
+    }
     // A newly shown group's rows are built over two frames, names first and their guide lines on
     // the next, so neither frame is long enough to drop; the column is still fading in meanwhile.
     // Read only inside the rows, so the second frame recomposes the rows and nothing else.
@@ -551,6 +563,19 @@ fun ChannelOverlay(
         }
     }
 
+    /** Right/OK from the groups column: a group still waiting to show is shown now, then entered. */
+    fun enterChannels() {
+        val target = pending.target
+        pending.job?.cancel()
+        pending.target = null
+        if (target == null) return focusChannels()
+        show(target)
+        scope.launch {
+            withFrameNanos {}
+            focusChannels()
+        }
+    }
+
     /** The groups column, on the shown source's row, once the column has laid out and scrolled to it. */
     fun focusGroups() {
         moveFocus {
@@ -652,7 +677,7 @@ fun ChannelOverlay(
                         .onKeyEvent {
                             when (val code = it.nativeKeyEvent.keyCode) {
                                 AndroidKeyEvent.KEYCODE_DPAD_RIGHT -> {
-                                    if (it.type == KeyEventType.KeyDown) focusChannels()
+                                    if (it.type == KeyEventType.KeyDown) enterChannels()
                                     true
                                 }
                                 AndroidKeyEvent.KEYCODE_DPAD_UP, AndroidKeyEvent.KEYCODE_DPAD_DOWN -> {
@@ -676,7 +701,7 @@ fun ChannelOverlay(
                             marked = source == SearchSource && inChannels,
                             focus = if (source == SearchSource) groupFocus else null,
                             onFocused = { show(SearchSource); groupKey = SearchSource.key; wantChannels = false },
-                            onClick = { focusChannels() },
+                            onClick = { enterChannels() },
                         )
                     }
                     item(key = LiveSource.key) {
@@ -685,7 +710,7 @@ fun ChannelOverlay(
                             marked = source == LiveSource && inChannels,
                             focus = if (source == LiveSource) groupFocus else null,
                             onFocused = { show(LiveSource); groupKey = LiveSource.key; wantChannels = false },
-                            onClick = { focusChannels() },
+                            onClick = { enterChannels() },
                         )
                     }
                     items(feed.groups, key = { "g|$it" }) { group ->
@@ -694,8 +719,8 @@ fun ChannelOverlay(
                             group,
                             marked = here && inChannels,
                             focus = if (here) groupFocus else null,
-                            onFocused = { show(GroupSource(group)); groupKey = "g|$group"; wantChannels = false },
-                            onClick = { focusChannels() },
+                            onFocused = { showSoon(GroupSource(group)); groupKey = "g|$group"; wantChannels = false },
+                            onClick = { enterChannels() },
                         )
                     }
                 }
@@ -982,3 +1007,11 @@ private fun Empty(title: String, hint: String? = null) {
         if (hint != null) Text(hint, style = Type.caption)
     }
 }
+
+/** A group the groups column is about to show, once focus rests on it. */
+private class PendingShow {
+    var job: kotlinx.coroutines.Job? = null
+    var target: Source? = null
+}
+
+private const val GROUP_REST_MS = 120L

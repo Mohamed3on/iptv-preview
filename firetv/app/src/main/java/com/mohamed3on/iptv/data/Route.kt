@@ -66,6 +66,10 @@ fun ProviderRoute.streamUrl(kind: RouteKind, streamId: Int): String =
 fun ProviderRoute.movieUrl(kind: RouteKind, movieId: Int, ext: String): String =
     "${(if (kind == RouteKind.Vpn) vpn else plain).trimEnd('/')}/movie/$user/$pass/$movieId.$ext"
 
+/** A show episode's stream: the provider's series path, with the file's own [ext]. */
+fun ProviderRoute.episodeUrl(kind: RouteKind, episodeId: Int, ext: String): String =
+    "${(if (kind == RouteKind.Vpn) vpn else plain).trimEnd('/')}/series/$user/$pass/$episodeId.$ext"
+
 /** The backup provider's feeds are its own stream ids offset by this (the server's BACKUP_ID). */
 const val BACKUP_ID = 1_000_000_000
 

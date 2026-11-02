@@ -35,6 +35,7 @@ import androidx.compose.runtime.State
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
@@ -187,6 +188,8 @@ private fun PlayerChrome(
     var info by remember { mutableStateOf(false) }
     // Movies rise over the open channel list, which keeps its place underneath for Back.
     var movies by remember { mutableStateOf(false) }
+    // Which library is up (kept while it leaves, so its exit draws the right one).
+    var library by remember { mutableStateOf(LibraryKind.Movies) }
     val moviesShown = animateFloatAsState(if (movies) 1f else 0f, if (reduced) tween(Motion.FADE_MS) else Motion.panel(), label = "movies")
     val moviesComposed by remember { derivedStateOf { movies || moviesShown.value > 0f } }
 
@@ -429,13 +432,14 @@ private fun PlayerChrome(
                         }
                     },
                     entrance = { shown.value },
-                    // Watching, not picking a tile: Movies is one of the list's groups.
-                    onMovies = if (pick == null && !multiView) ({ movies = true }) else null,
+                    // Watching, not picking a tile: Movies and Shows are among the list's groups.
+                    onLibrary = if (pick == null && !multiView) ({ library = it; movies = true }) else null,
                 )
             }
         }
 
-        if (moviesComposed) MoviesLayer(
+        if (moviesComposed) key(library) { MoviesLayer(
+            kind = library,
             feed = feed,
             session = session,
             tiles = tiles,
@@ -443,7 +447,7 @@ private fun PlayerChrome(
             open = movies,
             onPlaying = onMovie,
             onClose = { movies = false },
-        )
+        ) }
 
         AnimatedVisibility(
             visible = layer == Layer.Recent,

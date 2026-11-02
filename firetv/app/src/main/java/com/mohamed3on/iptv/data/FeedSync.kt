@@ -44,19 +44,18 @@ class FeedSync(
 ) {
     private val feedFile = File(dir, "feed.json")
     private val guideFile = File(dir, "guide.db")
-    private val moviesFile = File(dir, "movies.json")
     private val channelsLock = Mutex()
     private val guideLock = Mutex()
-    private val moviesLock = Mutex()
 
     private val _state = MutableStateFlow<FeedState>(FeedState.Loading)
     val state: StateFlow<FeedState> = _state
     private val _guide = MutableStateFlow<GuideDb?>(null)
     /** The open cached guide; replaced (and the old one closed) after each validated download. */
     val guide: StateFlow<GuideDb?> = _guide
-    private val _movies = MutableStateFlow<Movies?>(null)
-    /** The movie library, null until the cached copy is read or the first download lands. */
-    val movies: StateFlow<Movies?> = _movies
+    /** The 4K films and UFC replays (v2). */
+    val movies = Library("movies")
+    /** The shows (series), in the same shape; each show's episodes come from [episodes]. */
+    val shows = Library("shows")
 
     /** Loads whatever is cached, without touching the network. */
     suspend fun loadCached() = withContext(Dispatchers.IO) {
@@ -68,35 +67,58 @@ class FeedSync(
         }
     }
 
-    /** Reads the cached movie list (1.5MB, so only once it's wanted), without touching the network. */
-    suspend fun loadCachedMovies() = moviesLock.withLock {
-        withContext(Dispatchers.IO) {
-            if (_movies.value == null && moviesFile.exists()) {
-                // An unreadable copy goes, so the next sync downloads it whole instead of hearing "unchanged".
-                runCatching { parseMovies(moviesFile.readText()) }.onSuccess { _movies.value = it }.onFailure { moviesFile.delete() }
+    /**
+     * An on-demand library (/api/app/[kind]): read from disk only once it's wanted (megabytes), and
+     * synced at most every [sync]'s maxAge.
+     */
+    inner class Library(private val kind: String) {
+        private val file = File(dir, "$kind.json")
+        private val lock = Mutex()
+        private val _items = MutableStateFlow<Movies?>(null)
+        /** Null until the cached copy is read or the first download lands. */
+        val items: StateFlow<Movies?> = _items
+
+        /** Reads the cached copy, without touching the network. */
+        suspend fun loadCached() = lock.withLock {
+            withContext(Dispatchers.IO) {
+                if (_items.value == null && file.exists()) {
+                    // An unreadable copy goes, so the next sync downloads it whole instead of hearing "unchanged".
+                    runCatching { parseMovies(file.readText()) }.onSuccess { _items.value = it }.onFailure { file.delete() }
+                }
+            }
+        }
+
+        /** Returns null when the list is current (fetched, unchanged, or younger than [maxAge]). */
+        suspend fun sync(maxAge: Duration): SyncError? = lock.withLock {
+            withContext(Dispatchers.IO) {
+                if (age(file) < maxAge && _items.value != null) return@withContext null
+                val tmp = File(dir, "$kind.json.tmp")
+                val error = when (val d = download(kind, file, tmp)) {
+                    Download.Unchanged -> null.also { file.setLastModified(now()) }
+                    is Download.Failed -> d.error
+                    is Download.Done -> try {
+                        val items = parseMovies(tmp.readText())
+                        replace(tmp, file, kind, d.etag)
+                        _items.value = items
+                        null
+                    } catch (e: Exception) {
+                        SyncError.Malformed
+                    }
+                }
+                tmp.delete()
+                error
             }
         }
     }
 
-    /** Returns null when the movie list is current (fetched, unchanged, or younger than [maxAge]). */
-    suspend fun syncMovies(maxAge: Duration): SyncError? = moviesLock.withLock {
-        withContext(Dispatchers.IO) {
-            if (age(moviesFile) < maxAge && _movies.value != null) return@withContext null
-            val tmp = File(dir, "movies.json.tmp")
-            val error = when (val d = download("movies", moviesFile, tmp)) {
-                Download.Unchanged -> null.also { moviesFile.setLastModified(now()) }
-                is Download.Failed -> d.error
-                is Download.Done -> try {
-                    val movies = parseMovies(tmp.readText())
-                    replace(tmp, moviesFile, "movies", d.etag)
-                    _movies.value = movies
-                    null
-                } catch (e: Exception) {
-                    SyncError.Malformed
-                }
+    /** A show's episodes, in order; fetched each time a show is opened (the server caches them). */
+    suspend fun episodes(seriesId: Int): Result<List<Episode>> = withContext(Dispatchers.IO) {
+        runCatching {
+            val request = Request.Builder().url("$baseUrl/api/app/episodes?t=$token&id=$seriesId").build()
+            client.newCall(request).execute().use { res ->
+                if (!res.isSuccessful) throw IOException("HTTP ${res.code}")
+                parseEpisodes(res.body.string())
             }
-            tmp.delete()
-            error
         }
     }
 

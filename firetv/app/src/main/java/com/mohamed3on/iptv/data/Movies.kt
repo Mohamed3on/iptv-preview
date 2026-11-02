@@ -48,6 +48,18 @@ private const val SEARCH_CAP = 120
 
 private val json = Json { ignoreUnknownKeys = true }
 
+/** One episode of a show, from `/api/app/episodes`; [secs] is 0 when unknown. */
+@Serializable
+data class Episode(val id: Int, val season: Int, val episode: Int, val title: String = "", val ext: String = "mkv", val secs: Int = 0) {
+    /** "S1 E3". */
+    val code get() = "S$season E$episode"
+}
+
+@Serializable
+private class Episodes(val episodes: List<Episode>)
+
+fun parseEpisodes(text: String): List<Episode> = json.decodeFromString(Episodes.serializer(), text).episodes
+
 /** Parses and validates the movie list; throws on anything that is not one with at least one movie. */
 fun parseMovies(text: String): Movies {
     val movies = json.decodeFromString(Movies.serializer(), text)
@@ -79,7 +91,7 @@ fun movieTitle(raw: String): MovieTitle {
 private val GROUP_LANGUAGE = Regex("""^([A-Z]{2})\s+-\s+""")
 private val GROUP_NOISE = Regex("""\s*\(VOD\)|\s+4K$""")
 /** Words kept as their makers spell them; everything else reads in sentence case. */
-private val BRANDS = listOf("UFC", "PPV", "Netflix", "Amazon", "Disney+", "Apple+", "Marvel", "OSN+", "HDR").associateBy { it.uppercase() }
+private val BRANDS = listOf("UFC", "PPV", "Netflix", "Amazon", "Disney+", "Apple+", "Marvel", "OSN+", "HDR", "HBO", "Max", "FIFA+", "WWE").associateBy { it.uppercase() }
 private val groupLabels = java.util.concurrent.ConcurrentHashMap<String, GroupLabel>()
 
 fun groupLabel(raw: String): GroupLabel = groupLabels.getOrPut(raw) {
@@ -97,9 +109,12 @@ private val TMDB_SIZE = Regex("""^https?://(?:image\.tmdb\.org|www\.themoviedb\.
 /** TMDB posters at the size a card needs (w342) rather than 600×900 or the original, a tenth of the bytes. */
 fun posterUrl(raw: String): String = raw.replace(TMDB_SIZE, "https://image.tmdb.org/t/p/w342/")
 
-/** A movie's place: [pos] and [dur] in ms ([dur] 0 when unknown), saved [at] (epoch ms). Carries the movie, in case the list drops it. */
+/**
+ * A movie's place: [pos] and [dur] in ms ([dur] 0 when unknown), saved [at] (epoch ms). Carries the movie, in case the list drops it.
+ * For a show, [movie] is the show and [episode] the episode's id, [label] its "S1 E3".
+ */
 @Serializable
-data class Resume(val movie: Movie, val pos: Long, val dur: Long, val at: Long)
+data class Resume(val movie: Movie, val pos: Long, val dur: Long, val at: Long, val episode: Int? = null, val label: String? = null)
 
 private const val MIN_RESUME_MS = 60_000L
 private const val FINISHED = 0.95
@@ -108,28 +123,53 @@ private const val FINISHED = 0.95
 fun resumeAt(pos: Long, dur: Long): Long = if (pos > MIN_RESUME_MS && (dur <= 0 || pos < dur * FINISHED)) pos else 0L
 
 /**
- * Saved places, newest first, at most [CAP], persisted as one JSON value. Only resumable ones are
- * kept: a movie saved before its first minute or past 95% (finished) drops out of Continue watching.
+ * Saved places, newest first, at most [CAP], persisted as one JSON value under [key]. Only resumable
+ * ones are kept: a movie saved before its first minute or past 95% (finished) drops out of Continue
+ * watching. A show's episode stays from its start (the next episode is saved at 0 when one ends),
+ * and only a finished episode with nothing after it drops the show.
  */
-class ResumeStore(private val store: KeyValueStore, private val now: () -> Long = System::currentTimeMillis) {
+class ResumeStore(private val store: KeyValueStore, private val key: String = "movies.resume", private val now: () -> Long = System::currentTimeMillis) {
     private val serializer = ListSerializer(Resume.serializer())
     private val _entries = MutableStateFlow(
-        store.get(KEY)?.let { runCatching { json.decodeFromString(serializer, it) }.getOrNull() }.orEmpty()
+        store.get(key)?.let { runCatching { json.decodeFromString(serializer, it) }.getOrNull() }.orEmpty()
     )
     val entries: StateFlow<List<Resume>> = _entries
 
-    fun startAt(movie: Movie): Long = _entries.value.firstOrNull { it.movie.id == movie.id }?.let { resumeAt(it.pos, it.dur) } ?: 0L
+    fun startAt(movie: Movie, episode: Int? = null): Long =
+        _entries.value.firstOrNull { it.movie.id == movie.id && it.episode == episode }?.let { resumeAt(it.pos, it.dur) } ?: 0L
 
-    fun save(movie: Movie, pos: Long, dur: Long) {
+    fun find(movie: Movie): Resume? = _entries.value.firstOrNull { it.movie.id == movie.id }
+
+    fun save(movie: Movie, pos: Long, dur: Long, episode: Int? = null, label: String? = null) {
         val rest = _entries.value.filter { it.movie.id != movie.id }
-        val next = if (resumeAt(pos, dur) > 0) (listOf(Resume(movie, pos, dur, now())) + rest).take(CAP) else rest
+        val keep = resumeAt(pos, dur) > 0 || (episode != null && (dur <= 0 || pos < dur * FINISHED))
+        val next = if (keep) (listOf(Resume(movie, pos, dur, now(), episode, label)) + rest).take(CAP) else rest
         if (next == _entries.value) return
         _entries.value = next
-        store.put(KEY, json.encodeToString(serializer, next))
+        store.put(key, json.encodeToString(serializer, next))
     }
 
     private companion object {
-        const val KEY = "movies.resume"
         const val CAP = 50
+    }
+}
+
+/**
+ * What was watched to the end (past 95%), by movie or episode id, persisted under [key]; the newest
+ * [CAP] are kept.
+ */
+class WatchedStore(private val store: KeyValueStore, private val key: String) {
+    private val _ids = MutableStateFlow<Set<Int>>(store.get(key)?.split(',')?.mapNotNull(String::toIntOrNull)?.toCollection(LinkedHashSet()) ?: emptySet())
+    val ids: StateFlow<Set<Int>> = _ids
+
+    fun mark(id: Int) {
+        if (id in _ids.value) return
+        val next = (_ids.value + id).toList().takeLast(CAP).toCollection(LinkedHashSet())
+        _ids.value = next
+        store.put(key, next.joinToString(","))
+    }
+
+    private companion object {
+        const val CAP = 5_000
     }
 }

@@ -1,6 +1,17 @@
 package com.mohamed3on.iptv.ui
 
 import android.view.SurfaceView
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.offset
+import androidx.compose.ui.graphics.Shadow
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.text.style.TextAlign
+import androidx.media3.common.text.Cue
+import androidx.media3.common.text.CueGroup
+import com.mohamed3on.iptv.player.SubtitleOption
+import com.mohamed3on.iptv.player.SubtitleState
+import com.mohamed3on.iptv.player.SubtitleTracks
+import com.mohamed3on.iptv.player.qualityLine
 import androidx.activity.compose.LocalActivity
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
@@ -124,22 +135,27 @@ private class MovieState {
  * Any key shows the controls (title, progress, elapsed and remaining), which hide 4s after the last
  * key while it plays. OK pauses and plays; Left/Right step 10s (30s once held for a second), ⏪/⏩ 30s,
  * and a run of steps seeks once it stops; Menu has audio and Play from beginning; Back returns.
+ * [onSave] keeps the place (ms); [onEnded] follows the end, after the place is saved as finished.
  */
 @Composable
-internal fun MoviePlayback(movie: Movie, from: Long, url: String, onClose: () -> Unit) {
+internal fun MoviePlayback(movie: Movie, from: Long, url: String, onSave: (pos: Long, dur: Long) -> Unit, onEnded: () -> Unit, onClose: () -> Unit) {
     val context = LocalContext.current
     val graph = context.graph
     val window = LocalActivity.current?.window
     val reduced = LocalReducedMotion.current
     val scope = rememberCoroutineScope()
     val close by rememberUpdatedState(onClose)
+    val ended by rememberUpdatedState(onEnded)
+    val keep by rememberUpdatedState(onSave)
     val exo = remember { moviePlayer(context, graph.http) }
     val ui = remember { MovieState() }
     val audio = remember { AudioTracks(exo) }
+    val subtitles = remember { SubtitleTracks(exo) }
+    var cues by remember { mutableStateOf<List<Cue>>(emptyList()) }
     val focus = remember { FocusRequester() }
 
     fun save() {
-        if (ui.started) graph.resume.save(movie, exo.currentPosition, exo.duration.coerceAtLeast(0))
+        if (ui.started) keep(exo.currentPosition, exo.duration.coerceAtLeast(0))
     }
 
     DisposableEffect(Unit) {
@@ -161,10 +177,14 @@ internal fun MoviePlayback(movie: Movie, from: Long, url: String, onClose: () ->
             override fun onPlaybackStateChanged(state: Int) {
                 ui.buffering = state == Player.STATE_BUFFERING || state == Player.STATE_IDLE
                 if (state == Player.STATE_ENDED) {
-                    graph.resume.save(movie, exo.duration, exo.duration) // finished: out of Continue watching
+                    keep(exo.duration, exo.duration) // finished: out of Continue watching
                     ui.started = false
-                    close()
+                    ended()
                 }
+            }
+
+            override fun onCues(cueGroup: CueGroup) {
+                cues = cueGroup.cues
             }
 
             override fun onPlayerError(error: PlaybackException) {
@@ -181,6 +201,7 @@ internal fun MoviePlayback(movie: Movie, from: Long, url: String, onClose: () ->
             save()
             frameRate?.detach()
             audio.release()
+            subtitles.release()
             exo.removeListener(listener)
             exo.release()
         }
@@ -205,6 +226,7 @@ internal fun MoviePlayback(movie: Movie, from: Long, url: String, onClose: () ->
     val position = remember { mutableLongStateOf(from) }
     val duration = remember { mutableLongStateOf(0L) }
     val buffered = remember { mutableLongStateOf(0L) }
+    var quality by remember { mutableStateOf("") }
     var note by remember { mutableStateOf(if (from > 0) "Resuming from ${playTime(from)}" else null) }
     LaunchedEffect(kick, ui.playing, target, panel) {
         controls = true
@@ -224,6 +246,7 @@ internal fun MoviePlayback(movie: Movie, from: Long, url: String, onClose: () ->
             position.longValue = exo.currentPosition
             duration.longValue = exo.duration.coerceAtLeast(0)
             buffered.longValue = exo.bufferedPosition
+            quality = qualityLine(exo.videoFormat, exo.audioFormat)
             delay(250)
         }
     }
@@ -318,6 +341,7 @@ internal fun MoviePlayback(movie: Movie, from: Long, url: String, onClose: () ->
             factory = { SurfaceView(it).apply { keepScreenOn = true }.also(exo::setVideoSurfaceView) },
             modifier = Modifier.fillMaxSize(),
         )
+        Subtitles(cues)
 
         var spinner by remember { mutableStateOf(false) }
         LaunchedEffect(ui.buffering, ui.error) {
@@ -339,7 +363,7 @@ internal fun MoviePlayback(movie: Movie, from: Long, url: String, onClose: () ->
             val shown = reveal()
             Box(Modifier.fillMaxWidth().bottomScrim { shown.value }.padding(top = Space.xxxl * 2)) {
                 Controls(
-                    movie, ui.paused, note,
+                    movie, ui.paused, note, quality,
                     position = { target ?: position.longValue },
                     duration = { duration.longValue },
                     buffered = { buffered.longValue },
@@ -357,8 +381,11 @@ internal fun MoviePlayback(movie: Movie, from: Long, url: String, onClose: () ->
         ) {
             val shown = reveal()
             val audioState by audio.state.collectAsState()
+            val subtitleState by subtitles.state.collectAsState()
             MoviePanel(
                 audioState,
+                subtitleState,
+                onSubtitle = { subtitles.select(it) },
                 open = panel,
                 onAudio = { audio.select(it) },
                 onFromStart = {
@@ -382,6 +409,7 @@ private fun Controls(
     movie: Movie,
     paused: Boolean,
     note: String?,
+    quality: String,
     position: () -> Long,
     duration: () -> Long,
     buffered: () -> Long,
@@ -407,6 +435,7 @@ private fun Controls(
                 }
             }
         }
+        if (quality.isNotEmpty()) Text(quality, style = Type.body, maxLines = 1)
         if (note != null) Text(note, style = Type.body)
         Row(horizontalArrangement = Arrangement.spacedBy(Space.l), verticalAlignment = Alignment.CenterVertically) {
             Text(elapsed, style = Type.body.copy(color = Palette.textPrimary))
@@ -444,11 +473,11 @@ private fun PauseMark() {
     }
 }
 
-private enum class PanelPage { Main, Audio }
+private enum class PanelPage { Main, Audio, Subtitles }
 
-/** Menu while a movie plays: audio track (when there is a choice) and Play from beginning. */
+/** Menu while a movie plays: audio track (when there is a choice), subtitles (when there are any) and Play from beginning. */
 @Composable
-private fun MoviePanel(audio: AudioState, open: Boolean, onAudio: (com.mohamed3on.iptv.player.AudioOption) -> Unit, onFromStart: () -> Unit, modifier: Modifier) {
+private fun MoviePanel(audio: AudioState, subtitles: SubtitleState, onSubtitle: (SubtitleOption?) -> Unit, open: Boolean, onAudio: (com.mohamed3on.iptv.player.AudioOption) -> Unit, onFromStart: () -> Unit, modifier: Modifier) {
     val stay by rememberUpdatedState(open)
     var page by remember { mutableStateOf(PanelPage.Main) }
     Column(
@@ -466,7 +495,7 @@ private fun MoviePanel(audio: AudioState, open: Boolean, onAudio: (com.mohamed3o
             .padding(Space.xl),
         verticalArrangement = Arrangement.spacedBy(Space.xs),
     ) {
-        Text(if (page == PanelPage.Main) "Options" else "Audio", style = Type.title, modifier = Modifier.padding(start = Space.l, bottom = Space.l))
+        Text(if (page == PanelPage.Main) "Options" else page.name, style = Type.title, modifier = Modifier.padding(start = Space.l, bottom = Space.l))
         val first = remember(page) { FocusRequester() }
         LaunchedEffect(page) {
             withFrameNanos {}
@@ -474,16 +503,22 @@ private fun MoviePanel(audio: AudioState, open: Boolean, onAudio: (com.mohamed3o
         }
         when (page) {
             PanelPage.Main -> {
-                if (audio.options.size > 1) {
-                    PanelRow("Audio", audio.selected?.let(::languageName), focus = first) { page = PanelPage.Audio }
-                    PanelRow("Play from beginning", onClick = onFromStart)
-                } else {
-                    PanelRow("Play from beginning", focus = first, onClick = onFromStart)
-                }
+                // Focus starts on the first row there is.
+                var firstTaken = false
+                fun take() = (if (firstTaken) null else first).also { firstTaken = true }
+                if (audio.options.size > 1) PanelRow("Audio", audio.selected?.let(::languageName), focus = take()) { page = PanelPage.Audio }
+                if (subtitles.options.isNotEmpty()) PanelRow("Subtitles", subtitles.selected?.let(::subtitleName) ?: "Off", focus = take()) { page = PanelPage.Subtitles }
+                PanelRow("Play from beginning", focus = take(), onClick = onFromStart)
             }
             PanelPage.Audio -> audio.options.forEachIndexed { i, option ->
                 val selected = option == audio.selected || (audio.selected == null && i == 0)
                 PanelRow(audioLabel(option), checked = option == audio.selected, focus = if (selected) first else null) { onAudio(option) }
+            }
+            PanelPage.Subtitles -> {
+                PanelRow("Off", checked = subtitles.selected == null, focus = if (subtitles.selected == null) first else null) { onSubtitle(null) }
+                subtitles.options.forEach { option ->
+                    PanelRow(subtitleName(option), checked = option == subtitles.selected, focus = if (option == subtitles.selected) first else null) { onSubtitle(option) }
+                }
             }
         }
     }
@@ -513,3 +548,42 @@ internal fun playTime(ms: Long): String {
     val sec = s % 60
     return if (h > 0) "%d:%02d:%02d".format(h, m, sec) else "%d:%02d".format(m, sec)
 }
+
+/** "English", "English · SDH"; the file's own label when it has no language. */
+private fun subtitleName(option: SubtitleOption): String {
+    val language = option.language?.takeIf { it.isNotBlank() && it != "und" }
+        ?.let { java.util.Locale.forLanguageTag(it).getDisplayLanguage(java.util.Locale.ENGLISH).ifBlank { it } }
+    return listOfNotNull(language, option.label?.takeIf { it.isNotBlank() && !it.equals(language, ignoreCase = true) }).joinToString(" · ").ifEmpty { "Unknown language" }
+}
+
+/** The film's subtitles over the picture: text cues low and centred, picture cues (PGS) where the file puts them. */
+@Composable
+private fun Subtitles(cues: List<Cue>) {
+    if (cues.isEmpty()) return
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        val text = cues.mapNotNull { it.text?.toString()?.takeIf(String::isNotBlank) }
+        for (cue in cues) {
+            val bitmap = cue.bitmap ?: continue
+            val w = maxWidth * (if (cue.size != Cue.DIMEN_UNSET) cue.size else 0.5f)
+            val h = if (cue.bitmapHeight != Cue.DIMEN_UNSET) maxHeight * cue.bitmapHeight else w * bitmap.height / bitmap.width
+            val x = maxWidth * (if (cue.position != Cue.DIMEN_UNSET) cue.position else 0.5f) - when (cue.positionAnchor) {
+                Cue.ANCHOR_TYPE_MIDDLE -> w / 2
+                Cue.ANCHOR_TYPE_END -> w
+                else -> 0.dp
+            }
+            val y = if (cue.line != Cue.DIMEN_UNSET && cue.lineType == Cue.LINE_TYPE_FRACTION) maxHeight * cue.line - when (cue.lineAnchor) {
+                Cue.ANCHOR_TYPE_MIDDLE -> h / 2
+                Cue.ANCHOR_TYPE_END -> h
+                else -> 0.dp
+            } else maxHeight - h - SUBTITLE_BOTTOM
+            androidx.compose.foundation.Image(bitmap.asImageBitmap(), contentDescription = null, modifier = Modifier.offset(x, y).size(w, h))
+        }
+        if (text.isNotEmpty()) Text(
+            text.joinToString("\n"),
+            style = Type.title.copy(color = Color.White, textAlign = TextAlign.Center, shadow = Shadow(Color.Black, Offset(0f, 2f), 6f)),
+            modifier = Modifier.align(Alignment.BottomCenter).padding(start = Space.xxxl, end = Space.xxxl, bottom = SUBTITLE_BOTTOM),
+        )
+    }
+}
+
+private val SUBTITLE_BOTTOM = 56.dp

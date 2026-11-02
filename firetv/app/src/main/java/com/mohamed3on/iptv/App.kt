@@ -12,6 +12,7 @@ import com.mohamed3on.iptv.data.PrefsStore
 import com.mohamed3on.iptv.data.Route
 import com.mohamed3on.iptv.data.ResumeStore
 import com.mohamed3on.iptv.data.VpnMonitor
+import com.mohamed3on.iptv.data.WatchedStore
 import com.mohamed3on.iptv.data.WatchHistory
 import com.mohamed3on.iptv.update.Updater
 import kotlinx.coroutines.CoroutineScope
@@ -35,7 +36,7 @@ class App : Application(), SingletonImageLoader.Factory {
             graph.sync.refresh(Duration.ZERO, Duration.ZERO) // launch refresh; playback never waits on it (R25)
             // The movie library is read once the first tune has had the stick to itself, so Movies opens at once.
             delay(5.seconds)
-            graph.sync.loadCachedMovies()
+            graph.sync.movies.loadCached()
         }
     }
 
@@ -58,6 +59,11 @@ class AppGraph(context: Context) {
     val history = WatchHistory(prefs)
     /** Where each movie was left (v2). */
     val resume = ResumeStore(prefs)
+    /** Where each show was left: its episode and place. */
+    val showResume = ResumeStore(prefs, "shows.resume")
+    /** Films and episodes watched to the end. */
+    val watchedMovies = WatchedStore(prefs, "movies.watched")
+    val watchedEpisodes = WatchedStore(prefs, "shows.watched")
     val sync = FeedSync(http, BuildConfig.SERVER_URL, BuildConfig.APP_TOKEN, context.filesDir, prefs)
     val updater = Updater(context, http, BuildConfig.SERVER_URL, BuildConfig.APP_TOKEN, scope)
 }

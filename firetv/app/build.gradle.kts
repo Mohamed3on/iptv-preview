@@ -17,8 +17,9 @@ val keystoreFile = secret("IPTV_KEYSTORE_FILE")
 
 // The baseline profile plugin's own build types (generation, benchmarks) talk to a local fixture
 // server (baselineprofile/fixture-server.ts) on the emulator's host instead: its feed points the
-// provider route at a dead port, so an emulator never takes the account's one stream slot, and its
-// events never reach the box's log. -Piptv.profileServer= (empty) uses the real server instead.
+// provider route back at itself (one local test clip), so an emulator plays without ever taking the
+// account's one stream slot, and its events never reach the box's log. -Piptv.profileServer= (empty)
+// uses the real server instead.
 val profilingBuildTypes = setOf("nonMinifiedRelease", "benchmarkRelease")
 val profilingServerUrl = providers.gradleProperty("iptv.profileServer").orElse("http://10.0.2.2:8791").get()
 

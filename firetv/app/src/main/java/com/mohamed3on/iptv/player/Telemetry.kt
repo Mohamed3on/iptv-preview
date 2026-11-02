@@ -22,7 +22,7 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import kotlin.math.roundToInt
 
 /** What the playing stream really is, measured from it: the banner's badges come from this. */
-data class LiveQuality(val width: Int, val height: Int, val fps: Float?, val codec: String, val atmos: Boolean) {
+data class LiveQuality(val width: Int, val height: Int, val fps: Float?, val codec: String, val atmos: Boolean, val surround: Boolean) {
     /** Same rules as the server's probed badges (api/_app-feed.ts). */
     val badges: List<String>
         get() = buildList {
@@ -42,7 +42,8 @@ fun liveQuality(exo: ExoPlayer, fps: Float?): LiveQuality? {
         MimeTypes.VIDEO_MPEG2 -> "mpeg2video"
         else -> v.sampleMimeType?.substringAfter('/') ?: "unknown"
     }
-    return LiveQuality(v.width, v.height, fps, codec, exo.audioFormat?.sampleMimeType == MimeTypes.AUDIO_E_AC3_JOC)
+    val audio = exo.audioFormat
+    return LiveQuality(v.width, v.height, fps, codec, audio?.sampleMimeType == MimeTypes.AUDIO_E_AC3_JOC, (audio?.channelCount ?: 0) >= 6)
 }
 
 /**
@@ -125,7 +126,7 @@ class Telemetry(
         if (!qualityReported.add(feed.id)) return
         val body = buildJsonObject {
             put("id", feed.id); put("name", feed.name); put("w", q.width); put("h", q.height)
-            put("fps", fps); put("codec", q.codec); put("atmos", q.atmos)
+            put("fps", fps); put("codec", q.codec); put("atmos", q.atmos); put("surround", q.surround)
         }
         post("quality", body.toString()) { if ("\"stored\":true" in it) onStored() }
     }

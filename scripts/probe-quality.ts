@@ -137,7 +137,7 @@ async function probe(id: number): Promise<Meta | null> {
      // run's slowness was idle feeds sitting until a long timeout); 2M probesize
      // grabs ~1 keyframe for resolution+fps without streaming the feed.
      '-rw_timeout', '8000000', '-probesize', '2M', '-analyzeduration', '2M',
-     '-show_entries', 'stream=codec_type,width,height,codec_name,r_frame_rate,avg_frame_rate,field_order,profile',
+     '-show_entries', 'stream=codec_type,width,height,codec_name,r_frame_rate,avg_frame_rate,field_order,profile,channels',
      '-of', 'json', url],
     { stdout: 'pipe', stderr: 'ignore', timeout: 10000 },
   )
@@ -156,7 +156,8 @@ async function probe(id: number): Promise<Meta | null> {
       const fps = saneFps(interlaced ? rate(v.avg_frame_rate) || rate(v.r_frame_rate) / 2 : rate(v.r_frame_rate))
       // Atmos = E-AC-3 with JOC; the same 2M read already carries the audio header.
       const atmos = streams.some((s) => s.codec_type === 'audio' && /atmos/i.test(s.profile ?? ''))
-      return { w: v.width, h: v.height, fps, codec: v.codec_name, name: byId.get(id)!, ...(atmos && { atmos: true as const }) }
+      const surround = streams.some((s) => s.codec_type === 'audio' && s.channels >= 6)
+    return { w: v.width, h: v.height, fps, codec: v.codec_name, name: byId.get(id)!, ...(atmos && { atmos: true as const }), ...(surround && { surround: true as const }) }
     }
   } catch { /* unparseable / no video */ }
   return null

@@ -22,6 +22,10 @@ describe('app quality readings merge like the probe', () => {
     expect(mergeAppReading(fresh, reading({ fps: 50 }), today)?.fps).toBe(50)
     expect(mergeAppReading(fresh, reading({ fps: 25, atmos: true }), today)?.atmos).toBe(true)
   })
+  test('audio breaks a picture tie: 5.1 beats stereo, Atmos beats 5.1', () => {
+    expect(mergeAppReading(fresh, reading({ fps: 25, surround: true }), today)?.surround).toBe(true)
+    expect(mergeAppReading({ ...fresh, atmos: true }, reading({ fps: 25, surround: true }), today)).toBeNull()
+  })
   test('fewer fps lowers a fresh reading only when seen on two different days, keeping Atmos', () => {
     const p50 = { ...fresh, fps: 50, atmos: true as const }
     const first = mergeAppReading(p50, reading({ fps: 25 }), today)

@@ -15,6 +15,7 @@
 // (many "UHD 3840P" feeds are really 1080p30 or 720p). Refreshed offline by
 // scripts/probe-quality.ts; a missing entry just falls back to the name marker.
 import { QUALITY } from './quality-cache.js'
+import { audioRank } from './_quality.js'
 // Channels seen airing live matches of each competition in the EPG (tvg-id ->
 // competition -> last-seen date), learned daily by scripts/learn-competitions.ts.
 import { LEARNED } from './competition-cache.js'
@@ -319,8 +320,9 @@ function realRes(streamId: number, markerQ: number, trustMarker: boolean, name: 
   return MOBILE.test(name) ? { h: Math.min(r.h, 720), fps: Math.min(r.fps, 25) } : r
 }
 
-// 1 for a feed probed with Dolby Atmos audio — breaks ties between equal-res/fps feeds.
-const atmos = (streamId: number): number => (QUALITY[String(streamId)]?.atmos ? 1 : 0)
+// Atmos over 5.1 over stereo — breaks ties between equal-res/fps feeds (a centre channel
+// carries the commentary, so a soundbar can lift it over the crowd).
+const audio = (streamId: number): number => audioRank(QUALITY[String(streamId)])
 
 export interface XtreamConfig {
   host: string
@@ -878,7 +880,7 @@ export async function fetchCuratedChannels(cfg: XtreamConfig, vod = true): Promi
     items.sort(
       (a, b) =>
         (isArabic ? a.bein - b.bein : 0) ||
-        b.rh - a.rh || b.rf - a.rf || atmos(b.c.streamId) - atmos(a.c.streamId) || b.q - a.q ||
+        b.rh - a.rh || b.rf - a.rf || audio(b.c.streamId) - audio(a.c.streamId) || b.q - a.q ||
         a.lang - b.lang || a.region - b.region || a.backup - b.backup ||
         a.nkey.localeCompare(b.nkey, 'en', { numeric: true }) || a.idx - b.idx,
     )
@@ -1019,7 +1021,7 @@ export function withCompetitionGroups(channels: Channel[], now = Date.now()): Ch
     rows.sort(
       (a, b) =>
         Number(a.c.isEventSlot) - Number(b.c.isEventSlot) ||
-        b.rh - a.rh || b.rf - a.rf || atmos(b.c.streamId) - atmos(a.c.streamId) || (b.c.q ?? 0) - (a.c.q ?? 0) ||
+        b.rh - a.rh || b.rf - a.rf || audio(b.c.streamId) - audio(a.c.streamId) || (b.c.q ?? 0) - (a.c.q ?? 0) ||
         a.lang - b.lang || a.region - b.region || a.idx - b.idx,
     )
     const seen = new Map<string, number>()

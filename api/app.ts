@@ -75,6 +75,7 @@ export async function quality(req: Request): Promise<Response> {
   const reading: Meta = {
     w: r.w as number, h: r.h as number, fps: saneFps(r.fps), codec: r.codec, name: r.name,
     ...(r.atmos === true && { atmos: true as const }),
+    ...(r.surround === true && { surround: true as const }),
   }
   const id = String(r.id)
   const merged = mergeAppReading(QUALITY[id], reading, new Date().toISOString().slice(0, 10))

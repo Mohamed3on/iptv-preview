@@ -102,6 +102,9 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import kotlin.math.roundToInt
 import java.util.Locale
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.geometry.CornerRadius
+import com.mohamed3on.iptv.player.PlayerPool
 import com.mohamed3on.iptv.ui.theme.Radius
 import com.mohamed3on.iptv.ui.theme.tabular
 import com.mohamed3on.iptv.ui.theme.bottomScrim
@@ -329,9 +332,9 @@ private fun PlayerChrome(
                         note = note?.takeIf { it.first == channel.identity }?.second,
                         liveNow = zapContext,
                         health = health.takeIf { here },
-                        stats = if (info && here) {
+                        info = if (info && here) {
                             val members = feed.familyMembers(channel.family)
-                            streamStats(audioSelected, health, route, members.indexOfFirst { it.id == state.feed?.id }, members.size)
+                            StreamInfo(quality, audioSelected, health, route, members.indexOfFirst { it.id == state.feed?.id }, members.size)
                         } else null,
                     )
                 }
@@ -546,7 +549,7 @@ private fun PlayerChrome(
 @Composable
 private fun Banner(
     channel: Channel, feed: Feed, guide: GuideDb?, clock: State<Long>, tuning: Boolean, badges: List<String>, note: String?, liveNow: List<Channel>?,
-    health: Health?, stats: List<String>?,
+    health: Health?, info: StreamInfo?,
 ) {
     val inLiveNow = liveNow?.takeIf { list -> list.any { it.family == channel.family } }
     val list = inLiveNow ?: feed.channelsIn(channel.group)
@@ -555,16 +558,17 @@ private fun Banner(
         LogoTile(channel, LOGO_SIZE)
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(Space.xs)) {
             Row(horizontalArrangement = Arrangement.spacedBy(Space.m), verticalAlignment = Alignment.CenterVertically) {
-                Text(remember(channel.name) { displayName(channel.name) }, style = Type.title, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
-                Badges(badges)
+                // Event slots are named for the event, so a long name gets a second line rather than an ellipsis.
+                Text(remember(channel.name) { displayName(channel.name) }, style = Type.title, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+                if (info == null) Badges(badges)
                 if (tuning) Tuning()
             }
             Guide(channel, guide, clock)
-            stats?.forEach { Text(it, style = Type.caption.tabular, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+            if (info != null) StreamStats(info, badges)
         }
         Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(Space.xs)) {
             if (note != null) Text(note, style = Type.headline, maxLines = 1)
-            if (health != null) HealthLine(health, explain = stats != null)
+            if (health != null) HealthLine(health)
             Text(if (inLiveNow != null) "Live now" else groupLabel(channel.group), style = Type.caption, maxLines = 1)
             if (position >= 0) Text("${position + 1} of ${list.size}", style = Type.caption.tabular)
         }
@@ -675,42 +679,91 @@ private fun rememberMinuteClock(): State<Long> = produceState(System.currentTime
     }
 }
 
-/** The stream's numbers for the info view: picture and sound, then the connection. */
-/**
- * The info view's line: what explains trouble, nothing the banner already says (its badges show the
- * measured resolution, frame rate and Atmos). The two rates side by side say whether the line keeps up.
- */
-private fun streamStats(audio: AudioOption?, health: Health?, route: RouteKind, feedAt: Int, feeds: Int): List<String> = listOf(
-    listOfNotNull(
-        health?.stream?.let { "Stream ${mbps(it)} Mbps" },
-        health?.network?.let { "Network ${mbps(it)} Mbps" },
-        health?.let { "${it.buffered.roundToInt()} s buffered" },
-        audio?.let { channelLayout(it.channels) },
-        if (route == RouteKind.Vpn) "VPN" else "Plain route",
-        if (feeds > 1 && feedAt >= 0) "Feed ${feedAt + 1} of $feeds" else null,
-    ).joinToString(" · "),
+/** What the info view shows about the playing stream; [quality] is null until the player has measured it. */
+private class StreamInfo(
+    val quality: LiveQuality?, val audio: AudioOption?, val health: Health?, val route: RouteKind, val feedAt: Int, val feeds: Int,
 )
+
+/**
+ * The info view's row, colour before words: the picture as measured (its height too, which the
+ * badges leave out below 1080p), sound, route, which of the family's feeds plays as dots, then the
+ * buffer as a gauge in the health dot's colour and the bitrate. The line's speed shows only when it
+ * falls behind, in the health line's reason.
+ */
+@Composable
+private fun StreamStats(info: StreamInfo, badges: List<String>) {
+    Row(horizontalArrangement = Arrangement.spacedBy(Space.l), verticalAlignment = Alignment.CenterVertically) {
+        val q = info.quality
+        if (q != null) {
+            Pill(pictureLabel(q), if (q.height >= 1080) Palette.good else if (q.height >= 720) Palette.textPrimary else Palette.warning)
+            if (q.atmos) Pill("Atmos", Palette.textPrimary)
+        } else Badges(badges)
+        info.audio?.let { a -> channelLayout(a.channels)?.let { Pill(it, Palette.textSecondary) } }
+        if (info.route == RouteKind.Vpn) Pill("VPN", Palette.accent) else Pill("Plain", Palette.textSecondary)
+        if (info.feeds > 1 && info.feedAt >= 0) Row(horizontalArrangement = Arrangement.spacedBy(FEED_DOT)) {
+            repeat(info.feeds) { i ->
+                Box(Modifier.size(FEED_DOT).clip(CircleShape).background(if (i == info.feedAt) Palette.textPrimary else Palette.track))
+            }
+        }
+        // Last, so their numbers changing width each second moves nothing after them.
+        info.health?.let { h ->
+            Row(horizontalArrangement = Arrangement.spacedBy(Space.s), verticalAlignment = Alignment.CenterVertically) {
+                val color = levelColor(h.level)
+                val fill = (h.buffered * 1000 / PlayerPool.MAX_BUFFER_MS).coerceIn(0f, 1f)
+                Canvas(Modifier.size(GAUGE_WIDTH, GAUGE_HEIGHT)) {
+                    val r = CornerRadius(size.height / 2)
+                    drawRoundRect(Palette.track, cornerRadius = r)
+                    drawRoundRect(color, size = size.copy(width = size.width * fill), cornerRadius = r)
+                }
+                Text("${h.buffered.roundToInt()} s", style = Type.caption.tabular, maxLines = 1)
+            }
+            h.stream?.let { Text("${mbps(it)} Mbps", style = Type.caption.tabular, maxLines = 1) }
+        }
+    }
+}
+
+/** "720p50", "1080p25", "4K50": the measured picture in one word. */
+private fun pictureLabel(q: LiveQuality): String {
+    val height = when {
+        q.height >= 2160 -> "4K"
+        q.height >= 1080 -> "1080p"
+        q.height >= 720 -> "720p"
+        else -> "${q.height}p"
+    }
+    return height + (q.fps?.roundToInt()?.toString() ?: "")
+}
+
+/** A word on a tint of its own [color]: the info view's stats, read by colour first. */
+@Composable
+private fun Pill(text: String, color: Color) = Text(
+    text,
+    style = Type.caption.tabular.copy(color = color),
+    maxLines = 1,
+    modifier = Modifier.background(color.copy(alpha = 0.16f), RoundedCornerShape(Radius.chip)).padding(horizontal = Space.s, vertical = 1.dp),
+)
+
+private val GAUGE_WIDTH = 48.dp
+private val GAUGE_HEIGHT = 5.dp
+private val FEED_DOT = 6.dp
 
 private fun mbps(value: Float) = String.format(Locale.US, "%.1f", value)
 
-/** The health dot, with why when it is not good (or "Playing smoothly" when [explain] asks). */
+/** The health dot, with why when it is not good. */
 @Composable
-private fun HealthLine(health: Health, explain: Boolean) {
+private fun HealthLine(health: Health) {
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Space.s)) {
-        val why = health.reason ?: "Playing smoothly".takeIf { explain }
-        if (why != null) Text(why, style = Type.caption, maxLines = 1)
+        health.reason?.let { Text(it, style = Type.caption, maxLines = 1) }
         HealthDot(health.level)
     }
 }
 
 @Composable
-private fun HealthDot(level: Health.Level) {
-    val color = when (level) {
-        Health.Level.Good -> Palette.good
-        Health.Level.Warn -> Palette.warning
-        Health.Level.Bad -> Palette.live
-    }
-    Box(Modifier.size(HEALTH_DOT).clip(CircleShape).background(color))
+private fun HealthDot(level: Health.Level) = Box(Modifier.size(HEALTH_DOT).clip(CircleShape).background(levelColor(level)))
+
+private fun levelColor(level: Health.Level) = when (level) {
+    Health.Level.Good -> Palette.good
+    Health.Level.Warn -> Palette.warning
+    Health.Level.Bad -> Palette.live
 }
 
 /** Unasked trouble in the corner: the dot and why, then just the dot until it clears; it fades out once fine. */

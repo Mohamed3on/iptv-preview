@@ -103,12 +103,12 @@ class PlayerPool(private val context: Context, private val http: OkHttpClient) {
         override fun getRetryDelayMsFor(info: LoadErrorHandlingPolicy.LoadErrorInfo) = C.TIME_UNSET
     }
 
-    private companion object {
-        const val MIN_BUFFER_MS = 10_000
+    companion object {
+        private const val MIN_BUFFER_MS = 10_000
         const val MAX_BUFFER_MS = 30_000
-        const val START_BUFFER_MS = 500
-        const val TILE_MIN_BUFFER_MS = 4_000
-        const val TILE_MAX_BUFFER_MS = 8_000
+        private const val START_BUFFER_MS = 500
+        private const val TILE_MIN_BUFFER_MS = 4_000
+        private const val TILE_MAX_BUFFER_MS = 8_000
 
         /** The TS extractor as Media3's default factory builds it, minus the sniffing of every other container. */
         fun liveTs() = TsExtractor(

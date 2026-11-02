@@ -10,15 +10,18 @@ import coil3.request.crossfade
 import com.mohamed3on.iptv.data.FeedSync
 import com.mohamed3on.iptv.data.PrefsStore
 import com.mohamed3on.iptv.data.Route
+import com.mohamed3on.iptv.data.ResumeStore
 import com.mohamed3on.iptv.data.VpnMonitor
 import com.mohamed3on.iptv.data.WatchHistory
 import com.mohamed3on.iptv.update.Updater
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import okhttp3.OkHttpClient
 import kotlin.time.Duration
+import kotlin.time.Duration.Companion.seconds
 
 class App : Application(), SingletonImageLoader.Factory {
     lateinit var graph: AppGraph
@@ -30,6 +33,9 @@ class App : Application(), SingletonImageLoader.Factory {
         graph.scope.launch {
             graph.sync.loadCached()
             graph.sync.refresh(Duration.ZERO, Duration.ZERO) // launch refresh; playback never waits on it (R25)
+            // The movie library is read once the first tune has had the stick to itself, so Movies opens at once.
+            delay(5.seconds)
+            graph.sync.loadCachedMovies()
         }
     }
 
@@ -50,6 +56,8 @@ class AppGraph(context: Context) {
     val prefs = PrefsStore(context.getSharedPreferences("iptv", Context.MODE_PRIVATE))
     val route = Route(prefs, VpnMonitor(context).active, scope)
     val history = WatchHistory(prefs)
+    /** Where each movie was left (v2). */
+    val resume = ResumeStore(prefs)
     val sync = FeedSync(http, BuildConfig.SERVER_URL, BuildConfig.APP_TOKEN, context.filesDir, prefs)
     val updater = Updater(context, http, BuildConfig.SERVER_URL, BuildConfig.APP_TOKEN, scope)
 }

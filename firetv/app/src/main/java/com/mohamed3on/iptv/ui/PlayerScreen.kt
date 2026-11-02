@@ -137,10 +137,11 @@ private const val HEALTH_TEXT_MS = 6_000L
 @Composable
 fun PlayerScreen(feed: Feed, session: StreamSession?, audio: AudioTracks?, surface: SurfaceView, tiles: MultiView<ExoStreamPlayer>, live: Pair<Int, LiveQuality>?, health: Health?) {
     val grid by tiles.state.collectAsState()
+    var movie by remember { mutableStateOf(false) }
     Box(Modifier.fillMaxSize().background(Color.Black)) {
-        // Gone, not just stopped, in multi-view: its last frame would fight the tiles' surfaces.
-        if (grid.tiles.isEmpty()) AndroidView(factory = { surface }, modifier = Modifier.fillMaxSize())
-        if (session != null) PlayerChrome(feed, session, audio, tiles, grid, live, health)
+        // Gone, not just stopped, in multi-view and under a movie: its last frame would fight their surfaces.
+        if (grid.tiles.isEmpty() && !movie) AndroidView(factory = { surface }, modifier = Modifier.fillMaxSize())
+        if (session != null) PlayerChrome(feed, session, audio, tiles, grid, live, health, onMovie = { movie = it })
     }
 }
 
@@ -148,7 +149,16 @@ fun PlayerScreen(feed: Feed, session: StreamSession?, audio: AudioTracks?, surfa
 private enum class Pick { MultiView, AddTile, ReplaceTile }
 
 @Composable
-private fun PlayerChrome(feed: Feed, session: StreamSession, audio: AudioTracks?, tiles: MultiView<ExoStreamPlayer>, grid: MultiViewState<ExoStreamPlayer>, live: Pair<Int, LiveQuality>?, health: Health?) {
+private fun PlayerChrome(
+    feed: Feed,
+    session: StreamSession,
+    audio: AudioTracks?,
+    tiles: MultiView<ExoStreamPlayer>,
+    grid: MultiViewState<ExoStreamPlayer>,
+    live: Pair<Int, LiveQuality>?,
+    health: Health?,
+    onMovie: (Boolean) -> Unit,
+) {
     val graph = LocalContext.current.graph
     val reduced = LocalReducedMotion.current
     val multiView = grid.tiles.isNotEmpty()
@@ -175,6 +185,10 @@ private fun PlayerChrome(feed: Feed, session: StreamSession, audio: AudioTracks?
     var bannerKick by remember { mutableStateOf(0) }
     // OK's info view: the banner stays up, with the stream's numbers, across zaps until Back.
     var info by remember { mutableStateOf(false) }
+    // Movies rise over the open channel list, which keeps its place underneath for Back.
+    var movies by remember { mutableStateOf(false) }
+    val moviesShown = animateFloatAsState(if (movies) 1f else 0f, if (reduced) tween(Motion.FADE_MS) else Motion.panel(), label = "movies")
+    val moviesComposed by remember { derivedStateOf { movies || moviesShown.value > 0f } }
 
     // Until the debounced tune starts, the feed playing is still the previous channel's (KTD9).
     val tuning = state.phase == Phase.Connecting || state.feed?.family != state.requested?.family
@@ -260,6 +274,11 @@ private fun PlayerChrome(feed: Feed, session: StreamSession, audio: AudioTracks?
             // Bubbles up from whatever is focused: an open layer's own keys never get here as player keys.
             .onKeyEvent { event ->
                 val key = remoteKey(event.nativeKeyEvent.keyCode) ?: return@onKeyEvent false
+                // Movies move their own focus; Back only gets here before focus has landed in them.
+                if (movies) {
+                    if (key == RemoteKey.Back && event.type == KeyEventType.KeyDown) movies = false
+                    return@onKeyEvent key == RemoteKey.Back
+                }
                 if ((layer == Layer.ChannelList || layer == Layer.Recent) && !layerFocused && key != RemoteKey.Back) return@onKeyEvent true
                 val action = keyAction(key, PlayerKeys(state.requested, graph.history.last, graph.history.previous, layer, zapContext, multiView, info), feed)
                 if (action == KeyAction.Pass) return@onKeyEvent false
@@ -356,8 +375,9 @@ private fun PlayerChrome(feed: Feed, session: StreamSession, audio: AudioTracks?
             Box(
                 Modifier
                     .fillMaxSize()
+                    // Gone under Movies once they cover it: an alpha-0 layer isn't drawn.
                     .graphicsLayer {
-                        alpha = if (shown.value > 0f) 1f - RECEDE * recede.value else 0f
+                        alpha = if (shown.value > 0f) (1f - RECEDE * recede.value) * (1f - moviesShown.value.coerceIn(0f, 1f)) else 0f
                         compositingStrategy = CompositingStrategy.ModulateAlpha
                     }
                     .leftScrim { shown.value }
@@ -375,7 +395,7 @@ private fun PlayerChrome(feed: Feed, session: StreamSession, audio: AudioTracks?
                     clock = clock,
                     current = selectedTile ?: state.requested,
                     context = zapContext.takeIf { !multiView },
-                    open = listOpen,
+                    open = listOpen && !movies,
                     opens = opens,
                     memory = memory,
                     startInGroups = openInGroups,
@@ -409,9 +429,21 @@ private fun PlayerChrome(feed: Feed, session: StreamSession, audio: AudioTracks?
                         }
                     },
                     entrance = { shown.value },
+                    // Watching, not picking a tile: Movies is one of the list's groups.
+                    onMovies = if (pick == null && !multiView) ({ movies = true }) else null,
                 )
             }
         }
+
+        if (moviesComposed) MoviesLayer(
+            feed = feed,
+            session = session,
+            tiles = tiles,
+            shown = { moviesShown.value },
+            open = movies,
+            onPlaying = onMovie,
+            onClose = { movies = false },
+        )
 
         AnimatedVisibility(
             visible = layer == Layer.Recent,

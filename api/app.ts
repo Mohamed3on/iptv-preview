@@ -82,9 +82,9 @@ export async function quality(req: Request): Promise<Response> {
 }
 
 // POST /api/app/events?t=TOKEN — a batch of what happened while watching (tunes and their time to
-// picture, stalls, feed switches, busy/wrong-route/offline). Appended to a capped log on the box
-// for later analysis: which feeds actually hold up, and real zap times.
-const EVENT_TYPES = new Set(['tune', 'stall', 'failover', 'problem'])
+// picture, stalls, rebuffers, feed switches, busy/wrong-route/offline). Appended to a capped log on
+// the box for later analysis: which feeds actually hold up, and real zap times.
+const EVENT_TYPES = new Set(['tune', 'stall', 'rebuffer', 'failover', 'problem'])
 const EVENTS_MAX_BYTES = 20 * 1024 * 1024
 export async function events(req: Request): Promise<Response> {
   if (!appTokenOk(req.url)) return forbidden()

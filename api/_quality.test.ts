@@ -74,8 +74,8 @@ describe('/api/app/events', () => {
   test('appends a valid batch with the time received, and refuses the rest', async () => {
     expect((await post([{ type: 'tune', id: 1, ms: 900 }], 'tv')).status).toBe(403)
     expect((await post([{ type: 'nope' }])).status).toBe(400)
-    expect((await post([{ type: 'tune', id: 1, ms: 900 }, { type: 'stall', id: 1 }])).status).toBe(204)
+    expect((await post([{ type: 'tune', id: 1, ms: 900 }, { type: 'stall', id: 1 }, { type: 'rebuffer', id: 1, netMbps: 4.1, streamMbps: 6.2, cushionMs: 3000 }])).status).toBe(204)
     const lines = (await Bun.file(file).text()).trim().split('\n').map((l) => JSON.parse(l))
-    expect(lines.map((l) => [l.type, typeof l.at])).toEqual([['tune', 'string'], ['stall', 'string']])
+    expect(lines.map((l) => [l.type, typeof l.at])).toEqual([['tune', 'string'], ['stall', 'string'], ['rebuffer', 'string']])
   })
 })

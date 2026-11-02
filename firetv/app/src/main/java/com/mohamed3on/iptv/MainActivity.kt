@@ -47,6 +47,7 @@ import com.mohamed3on.iptv.data.FeedState
 import com.mohamed3on.iptv.data.StartAction
 import com.mohamed3on.iptv.data.SyncError
 import com.mohamed3on.iptv.data.startAction
+import com.mohamed3on.iptv.player.Cushion
 import com.mohamed3on.iptv.player.ExoStreamPlayer
 import com.mohamed3on.iptv.player.Health
 import com.mohamed3on.iptv.player.HealthModel
@@ -179,11 +180,12 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    /** Reads the main player each second into [health]; each rebuffer goes to the session log. */
+    /** Reads the main player each second into [health]; each rebuffer grows its cushion and goes to the session log. */
     private suspend fun watchHealth(player: ExoStreamPlayer, s: StreamSession) {
         var played: ChannelIdentity? = null
         val model = HealthModel(onRebuffer = { network, stream ->
-            s.state.value.feed?.let { telemetry.rebuffer(it, network, stream, graph.route.effective.value) }
+            val cushion = player.cushion.onRebuffer(SystemClock.elapsedRealtime())
+            s.state.value.feed?.let { telemetry.rebuffer(it, network, stream, graph.route.effective.value, cushion) }
         })
         while (true) {
             val st = s.state.value
@@ -195,9 +197,10 @@ class MainActivity : ComponentActivity() {
                 Phase.Connecting -> if (requested != null && requested.identity == played) StreamPhase.Reconnecting else StreamPhase.Tuning
                 else -> null // the problem card says what is wrong
             }
+            val now = SystemClock.elapsedRealtime()
             health.value = if (phase == null || feed == null) null else model.next(
                 HealthSample(
-                    at = SystemClock.elapsedRealtime(),
+                    at = now,
                     phase = phase,
                     feedId = feed.id,
                     buffering = player.exo.playbackState == Player.STATE_BUFFERING,
@@ -206,6 +209,7 @@ class MainActivity : ComponentActivity() {
                     bytes = player.bytesLoaded,
                     spare = feed.id != requested?.id,
                     plainRoute = graph.route.effective.value == RouteKind.Plain,
+                    cushionMs = player.cushion.resumeMs(now).takeIf { it > Cushion.BASE_MS },
                 ),
             )
             delay(1_000)

@@ -10,6 +10,7 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
+import androidx.media3.common.Timeline
 import androidx.media3.common.util.TimestampAdjuster
 import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DataSpec
@@ -17,6 +18,10 @@ import androidx.media3.datasource.TransferListener
 import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.LoadControl
+import androidx.media3.exoplayer.analytics.PlayerId
+import androidx.media3.exoplayer.source.TrackGroupArray
+import androidx.media3.exoplayer.trackselection.ExoTrackSelection
 import androidx.media3.exoplayer.source.MediaSource
 import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy
@@ -42,16 +47,20 @@ class PlayerPool(private val context: Context, private val http: OkHttpClient) {
 
     /** A multi-view [tile] buffers less: up to three streams share the line and the stick's memory. */
     fun acquire(tile: Boolean = false): ExoStreamPlayer {
+        val cushion = Cushion()
         val exo = ExoPlayer.Builder(context)
             .setLoadControl(
-                DefaultLoadControl.Builder()
-                    .setBufferDurationsMs(
-                        if (tile) TILE_MIN_BUFFER_MS else MIN_BUFFER_MS,
-                        if (tile) TILE_MAX_BUFFER_MS else MAX_BUFFER_MS,
-                        START_BUFFER_MS,
-                        REBUFFER_MS,
-                    )
-                    .build()
+                CushionLoadControl(
+                    DefaultLoadControl.Builder()
+                        .setBufferDurationsMs(
+                            if (tile) TILE_MIN_BUFFER_MS else MIN_BUFFER_MS,
+                            if (tile) TILE_MAX_BUFFER_MS else MAX_BUFFER_MS,
+                            START_BUFFER_MS,
+                            Cushion.BASE_MS.toInt(),
+                        )
+                        .build(),
+                    cushion,
+                )
             )
             .build()
         // Each player counts its own bytes, so a stream's download rate is its own (stream health).
@@ -59,7 +68,7 @@ class PlayerPool(private val context: Context, private val http: OkHttpClient) {
         val liveSources = ProgressiveMediaSource.Factory(OkHttpDataSource.Factory(http).setTransferListener(bytes), ExtractorsFactory { arrayOf(liveTs()) })
             // The session owns every retry (KTD8); ExoPlayer's own retries would hide a 458 for seconds.
             .setLoadErrorHandlingPolicy(NoRetry)
-        return ExoStreamPlayer(exo, liveSources, bytes).also { players += it }
+        return ExoStreamPlayer(exo, liveSources, bytes, cushion).also { players += it }
     }
 
     fun release(player: ExoStreamPlayer) {
@@ -69,6 +78,27 @@ class PlayerPool(private val context: Context, private val http: OkHttpClient) {
 
     fun releaseAll() = players.toList().forEach(::release)
 
+    /**
+     * After a stall, waits for the [cushion] to fill before playing again; everything else is [base]'s.
+     * Kotlin's `by` skips Java default methods, so each one DefaultLoadControl overrides is forwarded here.
+     */
+    private class CushionLoadControl(private val base: DefaultLoadControl, private val cushion: Cushion) : LoadControl by base {
+        override fun shouldStartPlayback(parameters: LoadControl.Parameters) =
+            base.shouldStartPlayback(parameters) &&
+                (!parameters.rebuffering || parameters.bufferedDurationUs >= cushion.resumeMs(SystemClock.elapsedRealtime()) * 1000)
+
+        override fun onPrepared(playerId: PlayerId) = base.onPrepared(playerId)
+        override fun onTracksSelected(parameters: LoadControl.Parameters, trackGroups: TrackGroupArray, trackSelections: Array<ExoTrackSelection>) =
+            base.onTracksSelected(parameters, trackGroups, trackSelections)
+        override fun onStopped(playerId: PlayerId) = base.onStopped(playerId)
+        override fun onReleased(playerId: PlayerId) = base.onReleased(playerId)
+        override fun getBackBufferDurationUs(playerId: PlayerId) = base.getBackBufferDurationUs(playerId)
+        override fun retainBackBufferFromKeyframe(playerId: PlayerId) = base.retainBackBufferFromKeyframe(playerId)
+        override fun shouldContinueLoading(parameters: LoadControl.Parameters) = base.shouldContinueLoading(parameters)
+        override fun shouldContinuePreloading(playerId: PlayerId, timeline: Timeline, mediaPeriodId: MediaSource.MediaPeriodId, bufferedDurationUs: Long) =
+            base.shouldContinuePreloading(playerId, timeline, mediaPeriodId, bufferedDurationUs)
+    }
+
     private object NoRetry : DefaultLoadErrorHandlingPolicy() {
         override fun getRetryDelayMsFor(info: LoadErrorHandlingPolicy.LoadErrorInfo) = C.TIME_UNSET
     }
@@ -77,7 +107,6 @@ class PlayerPool(private val context: Context, private val http: OkHttpClient) {
         const val MIN_BUFFER_MS = 10_000
         const val MAX_BUFFER_MS = 30_000
         const val START_BUFFER_MS = 500
-        const val REBUFFER_MS = 1_500
         const val TILE_MIN_BUFFER_MS = 4_000
         const val TILE_MAX_BUFFER_MS = 8_000
 
@@ -98,14 +127,21 @@ interface TilePlayer : StreamPlayer {
  * A pooled ExoPlayer as a [StreamPlayer]. [exo] is exposed for the surface, audio tracks (U14)
  * and, later, VOD: live specifics live in the per-item media source, not in the player (R11).
  */
-class ExoStreamPlayer internal constructor(val exo: ExoPlayer, private val liveSources: MediaSource.Factory, private val bytes: ByteCounter) : TilePlayer {
+class ExoStreamPlayer internal constructor(
+    val exo: ExoPlayer,
+    private val liveSources: MediaSource.Factory,
+    private val bytes: ByteCounter,
+    /** Grows with each rebuffer it is told of; nothing tells a multi-view tile's, so tiles keep the usual one. */
+    val cushion: Cushion,
+) : TilePlayer {
     /** Bytes of stream received since the player was built; read from any thread. */
-    val bytesLoaded get() = bytes.total.get()
+    override val bytesLoaded get() = bytes.total.get()
 
     private var listener: StreamPlayer.Listener? = null
     /** When the last [open] ran, for the zap timing log; 0 once its first frame is logged. */
     private var openedAt = 0L
     private var playingAt = 0L
+    private var openUrl: String? = null
 
     init {
         exo.playWhenReady = true
@@ -137,6 +173,9 @@ class ExoStreamPlayer internal constructor(val exo: ExoPlayer, private val liveS
     override fun open(url: String) {
         openedAt = SystemClock.elapsedRealtime()
         playingAt = openedAt
+        // Reopening the same feed after a stall keeps its cushion; another feed starts afresh.
+        if (url != openUrl) cushion.onTune()
+        openUrl = url
         exo.stop()
         val item = MediaItem.Builder().setUri(url).setMimeType(MimeTypes.VIDEO_MP2T).build()
         exo.setMediaSource(liveSources.createMediaSource(item))

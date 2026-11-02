@@ -25,6 +25,9 @@ interface StreamPlayer {
     /** Playback position in ms; it stops advancing when data stops arriving. */
     val position: Long
 
+    /** Bytes of stream received so far, across opens; it stops growing when data stops arriving. */
+    val bytesLoaded: Long
+
     fun setListener(listener: Listener?)
 
     interface Listener {
@@ -162,18 +165,34 @@ class StreamSession(
         work = scope.launch { watch() }
     }
 
-    /** A stall is a position that stops advancing; before the first frame, a start that takes too long. */
+    /**
+     * A stall is a position that stops advancing while no data arrives either (buffering a bigger
+     * cushion freezes the picture for longer, #3), or for [STALL_MAX_MS] however much trickles in;
+     * before the first frame, a start that takes too long.
+     */
     private suspend fun watch() {
+        var lastBytes = player.bytesLoaded
+        var dataAt = progressAt
         while (true) {
             delay(TICK_MS)
+            val t = now()
             val position = player.position
             if (position != lastPosition) {
                 lastPosition = position
-                progressAt = now()
+                progressAt = t
+            }
+            val bytes = player.bytesLoaded
+            if (bytes != lastBytes) {
+                lastBytes = bytes
+                dataAt = t
             }
             val playing = _state.value.phase == Phase.Playing
-            if (now() - progressAt >= if (playing) STALL_MS else START_MS) {
-                if (playing) stalled() else failed(StreamFailure.Timeout)
+            if (playing && (t - maxOf(progressAt, dataAt) >= STALL_MS || t - progressAt >= STALL_MAX_MS)) {
+                stalled()
+                return
+            }
+            if (!playing && t - progressAt >= START_MS) {
+                failed(StreamFailure.Timeout)
                 return
             }
         }
@@ -266,6 +285,8 @@ class StreamSession(
         const val DEBOUNCE_MS = 300L
         const val TICK_MS = 1_000L
         const val STALL_MS = 5_000L
+        /** Three times the biggest cushion: a line far too slow for the feed still fails over. */
+        const val STALL_MAX_MS = 3 * Cushion.MAX_MS
         /** Covers OkHttp's 10s connect timeout plus the first keyframe. */
         const val START_MS = 10_000L
         const val BUSY_RETRY_MS = 5_000L

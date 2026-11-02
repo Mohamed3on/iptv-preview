@@ -41,6 +41,8 @@ data class HealthSample(
     val bytes: Long,
     val spare: Boolean,
     val plainRoute: Boolean,
+    /** The picture a rebuffer waits for when stalls raised it above the usual ([Cushion]); null at the usual. */
+    val cushionMs: Long? = null,
 )
 
 /**
@@ -121,6 +123,7 @@ class HealthModel(
                 Health.Level.Bad,
                 when {
                     starved -> "Buffering · no data from the provider"
+                    s.cushionMs != null -> "Buffering · building a ${s.cushionMs / 1000} s cushion$vpn"
                     slowLine -> "Buffering · $numbers$vpn"
                     else -> "Buffering"
                 },

@@ -38,6 +38,7 @@ private class FakePlayer(private val scope: CoroutineScope, private val clock: (
     private var frozen = 0L
 
     override val position get() = playingSince?.let { frozen + clock() - it } ?: frozen
+    override var bytesLoaded = 0L
 
     override fun open(url: String) {
         stop()
@@ -255,6 +256,41 @@ class StreamSessionTest {
         r.player.play()
         assertEquals(Phase.Playing, r.phase)
         assertEquals(hd, r.session.state.value.feed)
+    }
+
+    // #3: building a bigger cushion after a stall freezes the picture for longer than STALL_MS.
+    @Test fun aStalledFeedStillReceivingDataIsGivenTimeToBuildItsCushion() = runTest {
+        val r = rig()
+        val fhd = ch(1, family = "sky", rank = 0)
+        val hd = ch(2, family = "sky", rank = 1)
+        r.session.zap(fhd, feedOf(fhd, hd))
+        r.player.play()
+        at(60_000)
+        r.player.freeze()
+        for (t in 61_000L..72_000L step 1_000) {
+            r.player.bytesLoaded += 50_000
+            at(t)
+        }
+        assertEquals(1, r.player.opens.size)
+        at(76_999) // then nothing arrives
+        assertEquals(1, r.player.opens.size)
+        at(77_000)
+        assertEquals(listOf(plain(1), plain(2)), r.urls)
+    }
+
+    @Test fun aTrickleOfDataDoesNotHoldOffFailoverForever() = runTest {
+        val r = rig()
+        val fhd = ch(1, family = "sky", rank = 0)
+        val hd = ch(2, family = "sky", rank = 1)
+        r.session.zap(fhd, feedOf(fhd, hd))
+        r.player.play()
+        at(60_000)
+        r.player.freeze()
+        for (t in 61_000L..90_000L step 1_000) {
+            r.player.bytesLoaded += 1_000
+            at(t)
+        }
+        assertEquals(listOf(plain(1), plain(2)), r.urls)
     }
 
     @Test fun serverErrorsBackOff1s2s4s8s8s() = runTest {

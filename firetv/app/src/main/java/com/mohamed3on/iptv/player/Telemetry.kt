@@ -105,9 +105,12 @@ class Telemetry(
         }
     }
 
-    /** A rebuffer while [feed] played, with the line's speed and the stream's bitrate in Mbps when measured. */
-    fun rebuffer(feed: Channel, network: Float?, stream: Float?, route: RouteKind) = record("rebuffer") {
-        put("id", feed.id); put("route", route.name.lowercase())
+    /**
+     * A rebuffer while [feed] played, with the line's speed and the stream's bitrate in Mbps when
+     * measured, and the cushion it waits for before playing again.
+     */
+    fun rebuffer(feed: Channel, network: Float?, stream: Float?, route: RouteKind, cushionMs: Long) = record("rebuffer") {
+        put("id", feed.id); put("route", route.name.lowercase()); put("cushionMs", cushionMs)
         network?.let { put("netMbps", it) }
         stream?.let { put("streamMbps", it) }
     }

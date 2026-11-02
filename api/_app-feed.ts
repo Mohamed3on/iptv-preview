@@ -1,7 +1,7 @@
 // Builders for the Fire TV app's own feeds (/api/app/*). They read the same curated
 // channels and guide as the TiviMate feeds, so both apps always show the same thing.
 import { Database } from 'bun:sqlite'
-import { chanKey, COMPS, couldBeLiveMatch, learnedCompetitions, saneFps, unxml, VPN_HOST, type BackupConfig, type Channel, type XtreamConfig } from './_lib.js'
+import { chanKey, COMPS, couldBeLiveMatch, learnedCompetitions, replayAirings, saneFps, unxml, VPN_HOST, type BackupConfig, type Channel, type XtreamConfig } from './_lib.js'
 import { medianMbps } from './_quality.js'
 import { QUALITY } from './quality-cache.js'
 
@@ -118,19 +118,24 @@ export function buildAppGuide(channels: Channel[], xmltv: string, now = Date.now
     title TEXT NOT NULL, norm TEXT NOT NULL, descr TEXT NOT NULL, synthetic INTEGER NOT NULL, match INTEGER NOT NULL, comp TEXT)`)
   const insert = db.prepare('INSERT INTO programmes VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
   const cutoff = now / 1000 - 2 * 3600
+  // Every programme first, the ones already over too: a re-run is told by the airings before it.
+  const rows = [...xmltv.matchAll(/<programme\b([^>]*)>([\s\S]*?)<\/programme>/g)].map((m) => {
+    const attr = (k: keyof typeof ATTR) => unxml(m[1].match(ATTR[k])?.[1] ?? '')
+    const tvgId = attr('channel')
+    const title = unxml(m[2].match(/<title\b[^>]*>([\s\S]*?)<\/title>/)?.[1] ?? '').trim()
+    const descr = unxml(m[2].match(/<desc\b[^>]*>([\s\S]*?)<\/desc>/)?.[1] ?? '').trim()
+    return { tvgId, title, descr, start: xmltvSeconds(attr('start')), stop: xmltvSeconds(attr('stop')), synthetic: filler.has(`${tvgId}\n${title}\n${descr}`) }
+  })
+  const replays = replayAirings(rows.map((r) => (r.synthetic ? { ...r, title: '' } : r)), new Date(now))
   db.transaction(() => {
-    for (const m of xmltv.matchAll(/<programme\b([^>]*)>([\s\S]*?)<\/programme>/g)) {
-      const attr = (k: keyof typeof ATTR) => unxml(m[1].match(ATTR[k])?.[1] ?? '')
-      const stop = xmltvSeconds(attr('stop'))
-      if (!(stop > cutoff)) continue
-      const id = attr('channel')
-      const title = unxml(m[2].match(/<title\b[^>]*>([\s\S]*?)<\/title>/)?.[1] ?? '').trim()
-      const descr = unxml(m[2].match(/<desc\b[^>]*>([\s\S]*?)<\/desc>/)?.[1] ?? '').trim()
-      const synthetic = filler.has(`${id}\n${title}\n${descr}`)
-      const comp = synthetic ? undefined : learnedCompetitions(title)[0]
-      insert.run(id, xmltvSeconds(attr('start')), stop, title, searchNorm(title), descr,
-        synthetic ? 1 : 0, couldBeLiveMatch(title) ? 1 : 0, comp ? compGroup.get(comp)! : null)
-    }
+    rows.forEach((r, i) => {
+      if (!(r.stop > cutoff)) return
+      // A re-run is no live match, and no 🏆 group's either (Live now lists those).
+      const rerun = replays.has(i)
+      const comp = r.synthetic || rerun ? undefined : learnedCompetitions(r.title)[0]
+      insert.run(r.tvgId, r.start, r.stop, r.title, searchNorm(r.title), r.descr,
+        r.synthetic ? 1 : 0, !rerun && couldBeLiveMatch(r.title) ? 1 : 0, comp ? compGroup.get(comp)! : null)
+    })
   })()
   db.run('CREATE INDEX programmes_channel ON programmes (tvg_id, start)')
   db.run('CREATE INDEX programmes_start ON programmes (start)')

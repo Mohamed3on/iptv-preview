@@ -9,6 +9,7 @@ import {
   fetchMyepgGuide,
   jevCompetitions,
   learnedCompetitions,
+  replayAirings,
   qualityScore,
   saneFps,
   staticCompetitions,
@@ -189,6 +190,28 @@ describe('competition groups', () => {
     expect(couldBeLiveMatch('BL: FC Bayern München - VfB Stuttgart, 1. Spieltag')).toBe(true)
     expect(couldBeLiveMatch('Premier League Review')).toBe(false)
     expect(couldBeLiveMatch('EFL Cup 07/08: Chelsea v Spurs', new Date('2026-09-20'))).toBe(false)
+  })
+
+  test('re-runs: a fixture airing after its first full airing or its highlights; live airings never', () => {
+    const h = 3600
+    const air = (tvgId: string, title: string, start: number, hours = 2) => ({ tvgId, title, start: start * h, stop: (start + hours) * h })
+    const rerun = (airings: ReturnType<typeof air>[]) => [...replayAirings(airings)].sort()
+    // Simulcast live on several channels, even when one starts its coverage later: all live.
+    expect(rerun([air('a', 'Liverpool v Arsenal', 10), air('b', 'Premier League: Liverpool - Arsenal', 11, 1.5)])).toEqual([])
+    // Once the first airing ended, the next one (any title) is a re-run; so is one after the highlights.
+    expect(rerun([air('a', 'Liverpool v Arsenal', 10), air('b', 'Liverpool vs Arsenal - English Premier League', 13)])).toEqual([1])
+    expect(rerun([air('a', 'MATCH HIGHLIGHTS Liverpool v Arsenal', 9, 0.5), air('b', 'Liverpool v Arsenal: The Match', 10)])).toEqual([1])
+    // Other fixtures of the same clubs are not the same match.
+    expect(rerun([air('a', 'Real Madrid v Real Betis', 10), air('b', 'Real Madrid v Real Sociedad', 13)])).toEqual([])
+    // An event channel's hourly blocks are one airing; its "Next |" announcements and previews aren't airings.
+    expect(rerun([
+      air('ppv', 'Live | Senegal - Argentina | Futsal', 10, 1), air('ppv', 'Live | Senegal - Argentina | Futsal', 11, 1),
+      air('ppv2', 'Next | Deportivo vs. Osasuna | 20:00 (GMT)', 10, 9),
+      air('es', 'La Casa del Fútbol Previa - RC Deportivo - CA Osasuna', 19.5, 0.25),
+      air('es', 'LaLiga EA Sports - Deportivo de La Coruña - Osasuna', 19.9),
+    ])).toEqual([])
+    // Tagged live is live.
+    expect(rerun([air('a', 'Liverpool v Arsenal', 10), air('b', 'Live: Liverpool v Arsenal', 13)])).toEqual([])
   })
 
   test('Jev verdicts count only confident live men\'s matches; no key means the regexes decide', async () => {

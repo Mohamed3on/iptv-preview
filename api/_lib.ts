@@ -489,7 +489,7 @@ const UEFA_ALL = ['ucl', 'uel', 'uecl']
 // non-match programming (a channel airing "Premier League Review" isn't showing it).
 const OTHER_SPORT = /basket|handball|pallamano|volley|superlega|hockey|rugby|darts|netball|cricket|snooker|golf|tennis|boxing|drone|horse|esport|virtual|vela\b/i
 const WOMEN = /women|femen|frauen|femminile|f[ée]minin|\bwsl\b|uwcl|سيدات|نساء/i
-const SHOW = /highlight|hoogtepunten|review|\bshow\b|magazin|stories|\bbest\b|top goals|top \d+|goals? of|legend|classic|rewind|preview|analys|resumen|resúmen|zusammenfassung|replay|re-live|wiederholung|special|especial|feature|weekly|daily|\bnews\b|press conference|conferenza|rueda de prensa|pressekonferenz|weigh|goal rush|greatest|documentar|\bfilm\b|pel[ií]cula|countdown|build-?up|warm-?up|inside|kompakt|\bpur\b|retro|netbusters|full impact|\bep\.? ?\d|episode|folge/i
+const SHOW = /highlight|hoogtepunten|review|\bshow\b|magazin|stories|\bbest\b|top goals|top \d+|goals? of|legend|classic|rewind|preview|previa|pre-?match|vorbericht|anteprima|analys|resumen|resúmen|zusammenfassung|replay|re-live|wiederholung|special|especial|feature|weekly|daily|\bnews\b|press conference|conferenza|rueda de prensa|pressekonferenz|weigh|goal rush|greatest|documentar|\bfilm\b|pel[ií]cula|countdown|build-?up|warm-?up|inside|kompakt|\bpur\b|retro|netbusters|full impact|\bep\.? ?\d|episode|folge/i
 const vetoed = (text: string) => OTHER_SPORT.test(text) || WOMEN.test(text) || SHOW.test(text)
 // A programme that is a live match: a "live" tag or a fixture ("X v Y", "X - Y", "X vs Y", Arabic "X × Y").
 const LIVE = /\blive\b|ᴸᶦᵛᵉ|\ben directo\b|\ben vivo\b|\bdiretta\b|\ben direct\b|مباشر/i
@@ -523,6 +523,94 @@ export function couldBeLiveMatch(title: string, now = new Date()): boolean {
 export function learnedCompetitions(title: string, now = new Date()): string[] {
   if (!couldBeLiveMatch(title, now)) return []
   return COMPS.filter((c) => c.re.test(title) && !c.not?.test(title)).map((c) => c.key)
+}
+
+// Re-runs. A match airs again and again (beIN repeats a fixture four times a day, club TV every few
+// hours) under the very title of the live airing, so the title can't tell them apart; the guide can.
+// Two airings are the same fixture when the words either side of their "v"/"-" overlap on both sides.
+// Club words (Real, City, United…) and competition words don't count, so "Real Madrid v Real Betis" is
+// not "Real Madrid v Real Sociedad". After a match: words that only follow a played match.
+const AFTER = /highlight|hoogtepunten|resumen|resúmen|zusammenfassung|\breview\b|rewind|replay|re-live|wiederholung|shortcut|\bsintesi\b|\bresume\b|résumé|ملخص/i
+const SEP = /\s(?:v|vs\.?|x|×|@|-|–|—)\s/gi
+const NOT_TEAM = new Set(('fc cf ac as sc sv ssc afc cd ud sd rc rcd vfb vfl tsg rb club de del la el le the of and real city united ' +
+  'athletic atletico atlético sporting borussia inter olympique stade calcio football fussball fußball soccer futbol fútbol ' +
+  'premier league liga laliga bundesliga serie ligue cup copa coppa pokal champions europa conference uefa efl fa ' +
+  'live match matchday jornada spieltag giornata journee highlights the full english tv hd uhd ea sports').split(' '))
+const teamWords = (s: string): string[] =>
+  s.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase().split(/[^\p{L}]+/u).filter((w) => w.length > 2 && !NOT_TEAM.has(w))
+
+/** Each way a title reads as "A v B": up to two team words either side of a separator. */
+function fixtureSides(title: string): [string[], string[]][] {
+  const sides: [string[], string[]][] = []
+  for (const m of title.matchAll(SEP)) {
+    const left = teamWords(title.slice(0, m.index)).slice(-2)
+    const right = teamWords(title.slice(m.index! + m[0].length)).slice(0, 2)
+    if (left.length && right.length) sides.push([left, right])
+  }
+  return sides
+}
+const meets = (a: string[], b: string[]) => a.some((w) => b.includes(w))
+function sameFixture(a: [string[], string[]][], b: [string[], string[]][]): boolean {
+  return a.some(([l1, r1]) => b.some(([l2, r2]) => (meets(l1, l2) && meets(r1, r2)) || (meets(l1, r2) && meets(r1, l2))))
+}
+
+export interface Airing { tvgId: string; title: string; start: number; stop: number }
+
+// "Next | Deportivo vs. Osasuna | … 20:00 (GMT)": an event channel announcing a match, not airing it.
+const ANNOUNCED = /^\s*next\b/i
+// Only an airing a whole match long can be the one that aired it first; a 15-minute preview titled with the fixture isn't.
+const FULL_MATCH_SEC = 90 * 60
+
+/**
+ * Which of [airings] (indexes) are re-runs of a match: each airing [couldBeLiveMatch] whose fixture
+ * already aired — it starts after the fixture's first airing ended, or after a highlights show of it
+ * began. Airings of a fixture that overlap its first one (the same match live on several channels)
+ * stay live, and so does anything tagged live. Back-to-back blocks of one title on one channel (event
+ * channels cut a match into hours) are one airing; announcements of a match ([ANNOUNCED]) aren't one.
+ * Unsure means live: a re-run left in costs a row, a live match marked a re-run would hide it.
+ */
+export function replayAirings(airings: Airing[], now = new Date()): Set<number> {
+  type Run = { members: number[]; title: string; start: number; stop: number; sides: [string[], string[]][]; post: boolean }
+  const byShow = new Map<string, number[]>()
+  airings.forEach((a, i) => {
+    if (!FIXTURE.test(a.title) || ANNOUNCED.test(a.title)) return
+    const key = `${a.tvgId}\n${a.title}`
+    ;(byShow.get(key) ?? byShow.set(key, []).get(key)!).push(i)
+  })
+  const runs: Run[] = []
+  for (const members of byShow.values()) {
+    const { title } = airings[members[0]]
+    const sides = fixtureSides(title)
+    const post = !couldBeLiveMatch(title, now)
+    if (!sides.length || (post && !AFTER.test(title))) continue
+    let run: Run | null = null
+    for (const i of members.sort((x, y) => airings[x].start - airings[y].start)) {
+      const a = airings[i]
+      if (run && a.start <= run.stop) {
+        run.members.push(i)
+        run.stop = Math.max(run.stop, a.stop)
+      } else runs.push((run = { members: [i], title, start: a.start, stop: a.stop, sides, post }))
+    }
+  }
+  // Candidates share a team word, so each run is compared with the few that could be its fixture.
+  const byWord = new Map<string, Run[]>()
+  for (const r of runs) {
+    for (const w of new Set(r.sides.flatMap(([l, rt]) => [...l, ...rt]))) (byWord.get(w) ?? byWord.set(w, []).get(w)!).push(r)
+  }
+  const replays = new Set<number>()
+  for (const m of runs) {
+    if (m.post || LIVE.test(m.title)) continue
+    const peers = new Set(m.sides.flatMap(([l, r]) => [...l, ...r]).flatMap((w) => byWord.get(w) ?? []))
+    let first = m
+    let highlightsFrom = Infinity
+    for (const p of peers) {
+      if (p === m || !sameFixture(m.sides, p.sides)) continue
+      if (p.post) highlightsFrom = Math.min(highlightsFrom, p.start)
+      else if (p.start < first.start && p.stop - p.start >= FULL_MATCH_SEC) first = p
+    }
+    if (m.start >= first.stop || m.start > highlightsFrom) for (const i of m.members) replays.add(i)
+  }
+  return replays
 }
 
 // Jev's options: the group names, terse (every option is billed in every question), with a hint

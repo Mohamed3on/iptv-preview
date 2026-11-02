@@ -106,9 +106,12 @@ describe('sibling feeds', () => {
     const prog = (id: string, title: string) =>
       `<programme start="20261002180000 +0000" stop="20261002190000 +0000" channel="${id}"><title>${title}</title></programme>`
     // The guide lists Sky Sport Bundesliga 10 twice; the entry with our exact name has no programmes.
-    let guide = `<tv><channel id="beinsports3.fr"><display-name>BEIN SPORTS 3</display-name></channel>` +
-      `<channel id="alkassone.qa"><display-name>Alkass One</display-name></channel>` +
+    let guide = `<tv><channel id="beinsports3.fr"><display-name>BEIN SPORTS 3</display-name><icon src="https://l/bein3.png"/></channel>` +
+      `<channel id="alkassone.qa"><display-name>Alkass One</display-name><icon src="https://l/alkass1.png"/></channel>` +
       `<channel id="skysportbundesliga10.de"><display-name>DE: SKY SPORT BUNDESLIGA 10 (MOBIL)</display-name></channel>` +
+      // lists our feeds' exact names (TNT's carry a different id); the placeholder logo is no logo
+      `<channel id="tntsports1.uk"><display-name>TNT Sports 1</display-name><display-name>UK: TNT SPORTS 1 &amp; ᴿᴬᵂ</display-name><icon src="https://l/tnt1.png"/></channel>` +
+      `<channel id="x.qa"><display-name>F: ALKASS 1 ᴿᴬᵂ</display-name><icon src="https://logos.myepg.top/myepg-logo.png"/></channel>` +
       `<channel id="Sky.Sport.Bundesliga.10.de"><display-name>Sky Sport Bundesliga 10</display-name></channel>` +
       prog('beinsports3.fr', 'Ligue 1: Lens v Nice') + prog('alkassone.qa', 'QSL: Al Sadd v Al Duhail') +
       prog('Sky.Sport.Bundesliga.10.de', 'BL: FC Bayern München - VfB Stuttgart') + '</tv>'
@@ -116,6 +119,7 @@ describe('sibling feeds', () => {
     const channels = [
       ch(1, '8K: beIN SP⚽RTS 3 FRANCE ᴿᴬᵂ', 'BeinSports3.fr'), ch(2, 'SPO: Al Kass 1 4K', 'AlKassOne.qa'),
       ch(3, 'F: ALKASS 1 ᴿᴬᵂ', 'sx.3'), ch(4, 'DE: SKY SPORT BUNDESLIGA 10 (MOBIL)', 'SkyBundesliga10.de'),
+      ch(5, 'UK: TNT SPORTS 1 & ᴿᴬᵂ', 'TNTSport1.uk'), ch(6, 'FR: CANAL+ SPORT', 'BeinSports3.fr'),
     ]
     const channelOf = (p: string) => p.match(/channel="([^"]*)"/)?.[1]
     try {
@@ -124,6 +128,12 @@ describe('sibling feeds', () => {
       expect(await guided({})).toEqual(['BeinSports3.fr', 'AlKassOne.qa'])
       const jev = { 'alkassone.qa': ['sx.3'], 'Sky.Sport.Bundesliga.10.de': ['SkyBundesliga10.de'] }
       expect(await guided(jev)).toEqual(['BeinSports3.fr', 'AlKassOne.qa', 'sx.3', 'SkyBundesliga10.de'])
+      // the guide's logos follow the same matches, and the guide's exact names of our feeds (a channel
+      // without an <icon> keeps the provider's, and so does an id the provider stamps on two channels)
+      expect((await fetchMyepgGuide(['https://guide.example/epg.xml.gz'], channels, jev)).icons).toEqual(new Map([
+        ['AlKassOne.qa', 'https://l/alkass1.png'], ['sx.3', 'https://l/alkass1.png'],
+        ['TNTSport1.uk', 'https://l/tnt1.png'], ['UK: TNT SPORTS 1 & ᴿᴬᵂ', 'https://l/tnt1.png'],
+      ]))
       // once the duplicate entry carries programmes too, only the first feeder counts
       guide = guide.replace('</tv>', prog('skysportbundesliga10.de', 'BL: Schalke 04 - Bayern') + '</tv>')
       expect(await guided(jev)).toEqual(['BeinSports3.fr', 'AlKassOne.qa', 'sx.3', 'SkyBundesliga10.de'])

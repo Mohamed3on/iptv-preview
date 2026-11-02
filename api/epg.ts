@@ -7,6 +7,7 @@ import {
   fetchCuratedChannels,
   fetchMyepgGuide,
   fetchProviderEpg,
+  saveEpgIcons,
   tokenOk,
   type Channel,
   type MyepgGuide,
@@ -29,7 +30,7 @@ export async function curatedGuide(): Promise<{ channels: Channel[]; xml: string
     // myepg needs the channels, so it waits for them
     const providerEpgPromise = fetchProviderEpg(cfg)
     const job = channelsPromise.then((channels) =>
-      Promise.all([providerEpgPromise, fetchMyepgGuide(epgUrls, channels)]))
+      Promise.all([providerEpgPromise, fetchMyepgGuide(epgUrls, channels).then(async (g) => (await saveEpgIcons(g.icons), g))]))
     guides = { at: Date.now(), job }
     job.catch(() => { if (guides?.job === job) guides = undefined })
   }

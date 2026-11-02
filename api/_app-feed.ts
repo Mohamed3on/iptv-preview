@@ -1,7 +1,7 @@
 // Builders for the Fire TV app's own feeds (/api/app/*). They read the same curated
 // channels and guide as the TiviMate feeds, so both apps always show the same thing.
 import { Database } from 'bun:sqlite'
-import { chanKey, COMPS, couldBeLiveMatch, learnedCompetitions, saneFps, VPN_HOST, type Channel, type XtreamConfig } from './_lib.js'
+import { chanKey, COMPS, couldBeLiveMatch, learnedCompetitions, saneFps, unxml, VPN_HOST, type Channel, type XtreamConfig } from './_lib.js'
 import { QUALITY } from './quality-cache.js'
 
 export interface AppChannel {
@@ -83,10 +83,6 @@ export function buildAppFeed(cfg: XtreamConfig, channels: Channel[]): AppFeed {
   }
 }
 
-const unxml = (s: string) =>
-  s.replace(/&(?:#(\d+)|#x([0-9a-f]+)|(amp|lt|gt|quot|apos));/gi, (_, dec, hex, name) =>
-    dec ? String.fromCodePoint(Number(dec)) : hex ? String.fromCodePoint(parseInt(hex, 16))
-      : ({ amp: '&', lt: '<', gt: '>', quot: '"', apos: "'" } as Record<string, string>)[name.toLowerCase()])
 /** XMLTV "20261101120000 +0200" → epoch seconds. */
 const xmltvSeconds = (v: string) => {
   const m = v.match(/^(\d{4})(\d\d)(\d\d)(\d\d)(\d\d)(\d\d)\s*([+-]\d\d)(\d\d)/)

@@ -669,13 +669,22 @@ export async function savedVodChannels(cfg: XtreamConfig): Promise<Channel[]> {
   return saved.length ? saved : vodChannels(cfg)
 }
 
+// The guide's logos (MyepgGuide.icons), saved by each guide build: the playlist and the app's
+// channel list never pull the guide themselves, and a restart would otherwise lose them.
+const EPG_ICONS = new URL('../.cache/epg-icons.json', import.meta.url)
+
+export async function saveEpgIcons(icons: Map<string, string>): Promise<void> {
+  if (icons.size) await writeFile(EPG_ICONS, JSON.stringify(Object.fromEntries(icons))).catch(() => {})
+}
+
 /** Fetch + filter provider channels into ordered, quality-sorted buckets. `vod: false`
  *  leaves out the on-demand entries (and the 74MB catalogue download), for the EPG. */
 export async function fetchCuratedChannels(cfg: XtreamConfig, vod = true): Promise<Channel[]> {
-  const [cats, streams, vodList] = await Promise.all([
+  const [cats, streams, vodList, icons] = await Promise.all([
     apiGet<Category[]>(cfg, 'get_live_categories'),
     apiGet<Stream[]>(cfg, 'get_live_streams'),
     vod ? vodChannels(cfg) : [],
+    readFile(EPG_ICONS, 'utf8').then((j) => new Map<string, string>(Object.entries(JSON.parse(j)))).catch(() => new Map<string, string>()),
   ])
   const catName = new Map(cats.map((c) => [Number(c.category_id), c.category_name]))
   const byCat = new Map<number, Stream[]>()
@@ -713,6 +722,8 @@ export async function fetchCuratedChannels(cfg: XtreamConfig, vod = true): Promi
       // Feeds that only light up during a match (PPV slots, beIN's "(EVENT ONLY)"
       // 4K slots) keep their marker tier when probed low — that's idle filler.
       const { h: rh, fps: rf } = realRes(s.stream_id, q, isEventSlot || EVENT_ONLY.test(name), name)
+      // Event slots get a synthetic id served by /api/epg; others use provider EPG ids
+      const tvgId = isEventSlot ? `ppv.${s.stream_id}` : String(s.epg_channel_id ?? '')
       const item: Item = {
         q,
         rh,
@@ -727,9 +738,8 @@ export async function fetchCuratedChannels(cfg: XtreamConfig, vod = true): Promi
         c: {
           streamId: s.stream_id,
           name,
-          logo: String(s.stream_icon ?? ''),
-          // Event slots get a synthetic id served by /api/epg; others use provider EPG ids
-          tvgId: isEventSlot ? `ppv.${s.stream_id}` : String(s.epg_channel_id ?? ''),
+          logo: icons.get(name) ?? icons.get(tvgId) ?? String(s.stream_icon ?? ''),
+          tvgId,
           group: chBucket,
           isEventSlot,
           q,
@@ -890,6 +900,11 @@ export function buildM3U(cfg: XtreamConfig, channels: Channel[], epgUrls: string
   return lines.join('\n') + '\n'
 }
 
+export const unxml = (s: string) =>
+  s.replace(/&(?:#(\d+)|#x([0-9a-f]+)|(amp|lt|gt|quot|apos));/gi, (_, dec, hex, name) =>
+    dec ? String.fromCodePoint(Number(dec)) : hex ? String.fromCodePoint(parseInt(hex, 16))
+      : ({ amp: '&', lt: '<', gt: '>', quot: '"', apos: "'" } as Record<string, string>)[name.toLowerCase()])
+
 const xml = (v: string) =>
   v.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 
@@ -924,6 +939,9 @@ export interface MyepgGuide {
   programmes: string[]
   /** our tvg-ids that received myepg programmes, so provider EPG only fills the rest */
   covered: Set<string>
+  /** our channel name or tvg-id -> the guide channel's <icon>: real-shape logos, where the
+   *  provider's are 96×96 squares with wide logos squashed in */
+  icons: Map<string, string>
 }
 
 /** Our channels keyed by every way a myepg <channel> might name them. */
@@ -945,6 +963,7 @@ function resolveMyepgChannel(
   covered: Set<string>,
   lookups: MyepgLookups,
   matches: Record<string, string[]>,
+  icons: Map<string, string>,
 ): void {
   const idm = block.match(/\bid="([^"]*)"/)
   if (!idm) return
@@ -974,7 +993,29 @@ function resolveMyepgChannel(
   ])].filter((id) => !covered.has(id))
   if (!ours.length) return
   remap.set(mid, ours)
-  for (const id of ours) claimed.add(id)
+  const icon = guideIcon(block)
+  for (const id of ours) {
+    claimed.add(id)
+    if (icon && !icons.has(id)) icons.set(id, icon)
+  }
+}
+
+/** A guide <channel>'s logo, unless it is myepg's placeholder. */
+function guideIcon(block: string): string | undefined {
+  const src = block.match(/<icon\b[^>]*\bsrc="([^"]+)"/)?.[1]
+  return src && !src.endsWith('/myepg-logo.png') ? unxml(src) : undefined
+}
+
+// The guide lists many of our feeds under their exact provider name, often under the right channel
+// where the provider's tvg-id points elsewhere (its Sky Sports F1 UHD carries the darts id), so
+// those logos go by name, ahead of the tvg-id's.
+function collectNameIcons(block: string, names: Set<string>, icons: Map<string, string>): void {
+  const icon = guideIcon(block)
+  if (!icon) return
+  for (const dm of block.matchAll(/<display-name[^>]*>([^<]*)<\/display-name>/g)) {
+    const n = unxml(dm[1]).trim()
+    if (names.has(n) && !icons.has(n)) icons.set(n, icon)
+  }
 }
 
 /**
@@ -993,6 +1034,8 @@ export async function fetchMyepgGuide(
 ): Promise<MyepgGuide> {
   const programmes: string[] = []
   const covered = new Set<string>()
+  const icons = new Map<string, string>()
+  const names = new Set(channels.filter(isRegular).map((c) => c.name))
   // OUR channels, keyed by every way a myepg <channel> might name them.
   const lookups: MyepgLookups = { ids: new Map(), byRaw: new Map(), byExact: new Map(), byFuzzy: new Map() }
   const put = (m: Map<string, string>, key: string, id: string) => { if (key && !m.has(key)) m.set(key, id) }
@@ -1004,7 +1047,7 @@ export async function fetchMyepgGuide(
     put(lookups.byExact, ex, c.tvgId)
     put(lookups.byFuzzy, epgFuzzyTokens(ex), c.tvgId)
   }
-  if (!lookups.ids.size) return { programmes, covered }
+  if (!lookups.ids.size) return { programmes, covered, icons }
 
   for (const url of urls) {
     try {
@@ -1030,7 +1073,11 @@ export async function fetchMyepgGuide(
           let i: number
           while ((i = buf.indexOf('</channel>', pos)) >= 0) {
             const s = buf.lastIndexOf('<channel', i)
-            if (s >= 0) resolveMyepgChannel(buf.slice(s, i), remap, claimed, covered, lookups, matches)
+            if (s >= 0) {
+              const block = buf.slice(s, i)
+              resolveMyepgChannel(block, remap, claimed, covered, lookups, matches, icons)
+              collectNameIcons(block, names, icons)
+            }
             pos = i + 10
           }
           buf = buf.slice(pos)
@@ -1067,7 +1114,12 @@ export async function fetchMyepgGuide(
       /* skip this source */
     }
   }
-  return { programmes, covered }
+  // An id the provider also stamps on a differently-named channel (its Arabic kids channels share
+  // one, SKYGO Sky Sport F1 carries the darts id) would give them all one wrong logo: none goes by it.
+  const keys = new Map<string, Set<string>>()
+  for (const c of channels) if (isRegular(c)) (keys.get(c.tvgId) ?? keys.set(c.tvgId, new Set()).get(c.tvgId)!).add(chanKey(c.name))
+  for (const [id, k] of keys) if (k.size > 1) icons.delete(id)
+  return { programmes, covered, icons }
 }
 
 /**

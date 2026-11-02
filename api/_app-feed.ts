@@ -50,6 +50,7 @@ function badges(streamId: number): string[] {
   const fps = saneFps(m.fps)
   if (fps >= 50) out.push(`${Math.round(fps)}fps`)
   if (m.atmos) out.push('Atmos')
+  else if (m.surround) out.push('5.1')
   return out
 }
 

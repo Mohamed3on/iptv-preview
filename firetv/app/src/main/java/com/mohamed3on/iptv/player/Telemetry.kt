@@ -28,7 +28,7 @@ data class LiveQuality(val width: Int, val height: Int, val fps: Float?, val cod
         get() = buildList {
             if (height >= 2160) add("4K") else if (height >= 1080) add("FHD")
             fps?.takeIf { it >= 49f }?.let { add("${it.roundToInt()}fps") }
-            if (atmos) add("Atmos")
+            if (atmos) add("Atmos") else if (surround) add("5.1")
         }
 }
 

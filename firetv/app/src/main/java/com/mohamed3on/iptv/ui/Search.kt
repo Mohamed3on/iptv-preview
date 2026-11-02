@@ -175,7 +175,7 @@ internal fun SearchBox(query: String, busy: Boolean, onQuery: (String) -> Unit, 
                         val word = key.length > 1
                         KeyCap(
                             key,
-                            style = if (word) Type.caption.copy(color = Palette.textPrimary) else Type.headline,
+                            style = if (word) Type.caption else Type.headline,
                             modifier = Modifier.weight(if (word) 1.5f else 1f),
                             focus = if (at == r to c) entry else null,
                             onFocused = { at = r to c; onFocused() },
@@ -205,11 +205,12 @@ private fun KeyCap(label: String, style: TextStyle, modifier: Modifier, focus: F
             .then(if (focus != null) Modifier.focusRequester(focus) else Modifier)
             .onFocusChanged { if (it.isFocused) onFocused() }
             .focusLift(focused, Radius.chip)
-            .background(Palette.edge, RoundedCornerShape(Radius.chip))
+            .background(Palette.tile, RoundedCornerShape(Radius.chip))
             .clickable(interaction, indication = null, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
-        Text(label, style = style, maxLines = 1)
+        // Idle keys recede; the focused one reads at full strength (colour only, never weight).
+        Text(label, style = style, color = if (focused) Palette.textPrimary else Palette.textSecondary, maxLines = 1)
     }
 }
 

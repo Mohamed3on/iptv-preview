@@ -125,8 +125,9 @@ private fun Chips(labels: List<String>, style: TextStyle, fill: Color?, outline:
     val measurer = LocalTextMeasurer.current
     val density = LocalDensity.current
     val layouts: List<TextLayoutResult> = remember(labels, style, measurer) { labels.map { measurer.measure(it, style, maxLines = 1) } }
-    val padH = with(density) { CHIP_PAD_H.toPx() }
-    val padV = with(density) { CHIP_PAD_V.toPx() }
+    val bare = fill == null && outline == null
+    val padH = if (bare) 0f else with(density) { CHIP_PAD_H.toPx() }
+    val padV = if (bare) 0f else with(density) { CHIP_PAD_V.toPx() }
     val gap = with(density) { Space.s.toPx() }
     val width = layouts.sumOf { it.size.width.toDouble() }.toFloat() + layouts.size * padH * 2 + (layouts.size - 1) * gap
     val height = layouts.maxOf { it.size.height } + padV * 2
@@ -148,11 +149,11 @@ private fun Chips(labels: List<String>, style: TextStyle, fill: Color?, outline:
 }
 
 private val badgeStyle = Type.caption
-private val badgeFill = Color(0x14FFFFFF)
 
-/** Quality badges (4K, FHD, 50fps, Atmos): faint filled capsules, quiet next to the name. */
+/** Quality badges (4K, FHD, 50fps, Atmos) as one quiet line, "4K · 50fps · Atmos": no capsules to compete with the name. */
 @Composable
-fun Badges(labels: List<String>, modifier: Modifier = Modifier) = Chips(labels, badgeStyle, fill = badgeFill, outline = null, modifier)
+fun Badges(labels: List<String>, modifier: Modifier = Modifier) =
+    Chips(remember(labels) { if (labels.isEmpty()) labels else listOf(labels.joinToString(" · ")) }, badgeStyle, fill = null, outline = null, modifier)
 
 private val liveLabel = listOf("LIVE")
 private val liveStyle = Type.caption.copy(color = Palette.live)

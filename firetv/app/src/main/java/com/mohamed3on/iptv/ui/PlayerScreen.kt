@@ -338,8 +338,9 @@ private fun PlayerChrome(
             }
         }
 
+        // Out of the way while the channel list is open: it would read through the list's see-through scrim.
         AnimatedContent(
-            targetState = problem,
+            targetState = problem.takeIf { layer != Layer.ChannelList },
             transitionSpec = { fadeIn(Motion.panel()) togetherWith fadeOut(Motion.panel()) },
             modifier = Modifier.fillMaxSize(),
             label = "problem",

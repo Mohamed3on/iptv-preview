@@ -34,7 +34,13 @@ data class Channel(
 }
 
 @Serializable
-data class Feed(val groups: List<String>, val route: ProviderRoute, val channels: List<Channel>) {
+data class Feed(
+    val groups: List<String>,
+    val route: ProviderRoute,
+    val channels: List<Channel>,
+    /** The backup provider's fronts and account, when the server has one; its feeds are ids from [BACKUP_ID]. */
+    val backup: ProviderRoute? = null,
+) {
     private val byGroup by lazy { channels.groupBy { it.group } }
     @kotlinx.serialization.Transient private val rowsByGroup = java.util.concurrent.ConcurrentHashMap<String, List<Channel>>()
     private val byIdentity by lazy { channels.associateBy { it.identity } }

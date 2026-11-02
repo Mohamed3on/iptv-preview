@@ -62,6 +62,15 @@ class Route(private val store: KeyValueStore, private val vpnActive: StateFlow<B
 fun ProviderRoute.streamUrl(kind: RouteKind, streamId: Int): String =
     "${(if (kind == RouteKind.Vpn) vpn else plain).trimEnd('/')}/live/$user/$pass/$streamId.ts"
 
+/** The backup provider's feeds are its own stream ids offset by this (the server's BACKUP_ID). */
+const val BACKUP_ID = 1_000_000_000
+
+val Channel.isBackup get() = id >= BACKUP_ID
+
+/** [channel]'s stream on [kind]: the backup provider's front and account for its feeds, else the main one's. */
+fun Feed.streamUrl(kind: RouteKind, channel: Channel): String =
+    backup?.takeIf { channel.isBackup }?.streamUrl(kind, channel.id - BACKUP_ID) ?: route.streamUrl(kind, channel.id)
+
 /** Whether the stick's default network is a VPN, kept current by a network callback. */
 class VpnMonitor(context: Context) {
     private val cm = context.getSystemService(ConnectivityManager::class.java)

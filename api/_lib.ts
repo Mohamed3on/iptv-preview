@@ -7,7 +7,8 @@
 // Russian kids pulled by name from the general RU category) get their own buckets.
 // Per-competition "🏆" groups (withCompetitionGroups) copy football channels from
 // every region under the league/cup they carry, quality first.
-// Credentials come from env (XTREAM_HOST, XTREAM_USER, XTREAM_PASS, PLAYLIST_TOKEN).
+// Credentials come from env (XTREAM_HOST, XTREAM_USER, XTREAM_PASS, PLAYLIST_TOKEN); a backup
+// provider's from XTREAM2_HOST/USER/PASS (+ XTREAM2_VPN_HOST), which adds its feeds as spares.
 
 // Real probed video quality (height/fps) keyed by streamId, so buckets sort by
 // ACTUAL resolution×fps instead of the provider's unreliable "UHD"/"RAW" markers
@@ -338,6 +339,22 @@ export function configFromEnv(): XtreamConfig {
   return { host: XTREAM_HOST.replace(/\/$/, ''), user: XTREAM_USER, pass: XTREAM_PASS }
 }
 
+/** A backup subscription (provider B): its plain front, its VPN front (the plain one unless it has its own) and account. */
+export interface BackupConfig extends XtreamConfig {
+  vpnHost: string
+}
+
+/** Provider B from XTREAM2_HOST/USER/PASS (+ optional XTREAM2_VPN_HOST); undefined until they are set. */
+export function backupConfigFromEnv(): BackupConfig | undefined {
+  const { XTREAM2_HOST, XTREAM2_USER, XTREAM2_PASS, XTREAM2_VPN_HOST } = process.env
+  if (!XTREAM2_HOST || !XTREAM2_USER || !XTREAM2_PASS) return undefined
+  const host = XTREAM2_HOST.replace(/\/$/, '')
+  return { host, vpnHost: XTREAM2_VPN_HOST?.replace(/\/$/, '') || host, user: XTREAM2_USER, pass: XTREAM2_PASS }
+}
+
+/** Provider B's stream ids are offset by this, so they never collide with A's (quality cache, app ids). */
+export const BACKUP_ID = 1_000_000_000
+
 interface Category {
   category_id: string
   category_name: string
@@ -374,6 +391,8 @@ export interface Channel {
   comps?: string[]
   /** VOD container extension (mkv/mp4) — served from /movie/ instead of /live/ */
   vodExt?: string
+  /** A provider-B feed (withBackupFeeds); its streamId is BACKUP_ID + B's own id. */
+  backup?: true
 }
 
 const EVENT_GROUP = /PPV|EVENT|REPLAY/i
@@ -822,6 +841,45 @@ export async function fetchCuratedChannels(cfg: XtreamConfig, vod = true): Promi
   return channels
 }
 
+/**
+ * Provider B's copy of each curated channel, listed right after provider A's feeds of it, so
+ * TiviMate gets it as one more spare and the app as the family's last-ranked feed: failover reaches
+ * it when A's feeds fail, and it is another account, so it plays while A says busy. B's channels are
+ * matched to A's by bucket (from B's category name) + chanKey, best marker tier first, one per
+ * channel; B's event slots (named for the event) and channels A lacks are left out. A's guide id
+ * and logo carry over. Unchanged when B is not configured.
+ */
+export async function withBackupFeeds(channels: Channel[], b = backupConfigFromEnv()): Promise<Channel[]> {
+  if (!b) return channels
+  const [cats, streams] = await Promise.all([
+    apiGet<Category[]>(b, 'get_live_categories'),
+    apiGet<Stream[]>(b, 'get_live_streams'),
+  ]).catch(() => [[], []] as [Category[], Stream[]]) // B down: serve A alone
+  const catName = new Map(cats.map((c) => [c.category_id, c.category_name]))
+  const familyKey = (group: string, name: string) => `${group}|${chanKey(name)}`
+  const wanted = new Set(channels.filter((c) => !c.vodExt && !c.isEventSlot).map((c) => familyKey(c.group, c.name)))
+  const best = new Map<string, { s: Stream; q: number }>()
+  for (const s of streams) {
+    const group = catName.get(String(s.category_id))
+    const name = String(s.name ?? '').trim()
+    if (!group || !name || EVENT_GROUP.test(group) || SEPARATOR.test(name)) continue
+    const q = qualityScore(name, group)
+    const key = familyKey(bucketForCategory(group), name)
+    if (q === 0 || !wanted.has(key) || (best.get(key)?.q ?? -1) >= q) continue
+    best.set(key, { s, q })
+  }
+  const lastOf = new Map<string, number>()
+  // After the family's last A feed, event slots too (one can share a family with a 24/7 channel).
+  channels.forEach((c, i) => { if (!c.vodExt) lastOf.set(familyKey(c.group, c.name), i) })
+  const after = new Map<number, Channel>()
+  for (const [key, { s, q }] of best) {
+    const i = lastOf.get(key)!
+    const a = channels[i]
+    after.set(i, { streamId: BACKUP_ID + s.stream_id, name: String(s.name).trim(), logo: a.logo, tvgId: a.tvgId, group: a.group, isEventSlot: false, q, backup: true })
+  }
+  return channels.flatMap((c, i) => (after.has(i) ? [c, after.get(i)!] : [c]))
+}
+
 // Buckets whose channels may be listed under a competition (football only).
 export const COMP_SOURCE = new Set<string>([B.uk, B.fbPpv, B.ar, B.de, B.es, B.it, B.fr, B.plAbroad])
 // An EPG-learned association is trusted for this long (a cup round is ~monthly).
@@ -847,7 +905,8 @@ export function withCompetitionGroups(channels: Channel[], now = Date.now()): Ch
   type Row = { c: Channel; rh: number; rf: number; lang: number; region: number; idx: number }
   const byComp = new Map<string, Row[]>()
   channels.forEach((c, idx) => {
-    if (c.vodExt || !COMP_SOURCE.has(c.group)) return
+    // Provider-B feeds stay in their home group: the app reaches them through the family.
+    if (c.vodExt || c.backup || !COMP_SOURCE.has(c.group)) return
     const keys = new Set(c.comps)
     // EPG-learned memberships apply to 24/7 channels only — never to event slots
     // (their name IS the event) nor to news/highlights channels whose guide merely
@@ -886,12 +945,15 @@ export function withCompetitionGroups(channels: Channel[], now = Date.now()): Ch
 
 const q = (v: string) => v.replace(/"/g, "'")
 
-export function buildM3U(cfg: XtreamConfig, channels: Channel[], epgUrls: string[]): string {
+/** `backup` is provider B's front and account, for its feeds (withBackupFeeds). */
+export function buildM3U(cfg: XtreamConfig, channels: Channel[], epgUrls: string[], backup?: XtreamConfig): string {
   const lines = [`#EXTM3U url-tvg="${epgUrls.join(',')}"`]
   for (const c of channels) {
     const src = c.vodExt
       ? `${cfg.host}/movie/${cfg.user}/${cfg.pass}/${c.streamId}.${c.vodExt}`
-      : `${cfg.host}/live/${cfg.user}/${cfg.pass}/${c.streamId}.ts`
+      : c.backup && backup
+        ? `${backup.host}/live/${backup.user}/${backup.pass}/${c.streamId - BACKUP_ID}.ts`
+        : `${cfg.host}/live/${cfg.user}/${cfg.pass}/${c.streamId}.ts`
     lines.push(
       `#EXTINF:-1 tvg-id="${q(c.tvgId)}" tvg-name="${q(c.name)}" tvg-logo="${q(c.logo)}" group-title="${q(c.group)}",${c.name}`,
       src,

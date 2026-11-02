@@ -136,6 +136,20 @@ class StreamSessionTest {
         assertEquals(Phase.Playing, r.phase)
     }
 
+    @Test fun aBusyAccountPlaysTheBackupProvidersFeedOnItsOwnFrontAndAccount() = runTest {
+        val r = rig()
+        val a = ch(1, family = "sky", rank = 0)
+        val b = ch(1_000_000_007, family = "sky", rank = 1)
+        val feed = Feed(listOf("G"), provider, listOf(a, b), backup = ProviderRoute("http://b.test", "http://bvpn.test", "bu", "bp"))
+        r.player.respond = { if (it == plain(1)) StreamFailure.Http(458) else null }
+        r.session.zap(a, feed)
+        runCurrent()
+        assertEquals(listOf(plain(1), "http://b.test/live/bu/bp/7.ts"), r.urls)
+        r.player.play()
+        assertEquals(Phase.Playing, r.phase)
+        assertEquals(b, r.session.state.value.feed)
+    }
+
     @Test fun a458RightAfterTheAutomaticRouteSwitchIsRetriedQuietlyOnce() = runTest {
         val r = rig(vpnOn = false) // stale: the stick is actually on VPN
         val a = ch(1)

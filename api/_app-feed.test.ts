@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, setSystemTime, spyOn, test } from 'bun:test'
 import { buildAppFeed, buildAppGuide } from './_app-feed.js'
-import { buildM3U, VPN_HOST, withCompetitionGroups, type Channel } from './_lib.js'
+import { BACKUP_ID, buildM3U, VPN_HOST, withBackupFeeds, withCompetitionGroups, type Channel } from './_lib.js'
 import { Database } from 'bun:sqlite'
 import { rm } from 'node:fs/promises'
 import { channels as channelsRoute, guide as guideRoute } from './app.js'
@@ -44,6 +44,31 @@ describe('app channel feed', () => {
     expect([tnt1.rank, tnt2.rank]).toEqual([0, 1])
     expect(mainEvent.family).not.toBe(news.family)
     expect(tnt2.q).toBe(3)
+  })
+
+  test("the backup provider's copy joins its channel's family last, on its own front and account", async () => {
+    const backup = { host: 'http://b.example', vpnHost: 'http://bvpn.example', user: 'bu', pass: 'bp' }
+    const fetchSpy = spyOn(globalThis, 'fetch').mockImplementation((async (url: string) => {
+      const action = new URL(url).searchParams.get('action')
+      if (action === 'get_live_categories') return Response.json([{ category_id: '7', category_name: 'UK| SPORTS' }, { category_id: '8', category_name: 'UK| PPV EVENTS' }])
+      return Response.json([
+        { stream_id: 50, name: 'UK: TNT SPORTS 1 FHD', category_id: '7' },
+        { stream_id: 51, name: 'UK: TNT SPORTS 1 HD', category_id: '7' }, // a lower tier of the same channel
+        { stream_id: 52, name: 'UK: SKY SPORTS F1 HD', category_id: '7' }, // not in A's list
+        { stream_id: 53, name: 'UK: TNT SPORTS 1', category_id: '8' }, // an event slot
+      ])
+    }) as typeof fetch)
+    try {
+      const merged = await withBackupFeeds([ch(1, 'VIP: TNT SPORTS 1 RAW', 'TNTSport1.uk'), ch(2, 'NOW: TNT SPORT 1 HD', 'tntsports1.uk', { q: 3 }), ch(3, 'UK: SKY SPORTS NEWS HD', 'SkySportsNews.uk')], backup)
+      expect(merged.map((c) => c.streamId)).toEqual([1, 2, BACKUP_ID + 50, 3])
+      const feed = buildAppFeed(cfg, merged, backup)
+      const b = byId(feed, BACKUP_ID + 50)[0]
+      expect([b.family, b.rank, b.tvgId, b.group]).toEqual([byId(feed, 1)[0].family, 2, 'tntsports1.uk', UK])
+      expect(feed.backup).toEqual({ plain: 'http://b.example', vpn: 'http://bvpn.example', user: 'bu', pass: 'bp' })
+      expect(buildM3U(cfg, merged, [], backup).split('\n')[6]).toBe('http://b.example/live/bu/bp/50.ts')
+    } finally {
+      fetchSpy.mockRestore()
+    }
   })
 
   test('buildM3U output for the same channels is unchanged by the VPN_HOST move', () => {

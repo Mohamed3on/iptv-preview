@@ -1,7 +1,7 @@
 // Builders for the Fire TV app's own feeds (/api/app/*). They read the same curated
 // channels and guide as the TiviMate feeds, so both apps always show the same thing.
 import { Database } from 'bun:sqlite'
-import { chanKey, COMPS, couldBeLiveMatch, learnedCompetitions, saneFps, unxml, VPN_HOST, type Channel, type XtreamConfig } from './_lib.js'
+import { chanKey, COMPS, couldBeLiveMatch, learnedCompetitions, saneFps, unxml, VPN_HOST, type BackupConfig, type Channel, type XtreamConfig } from './_lib.js'
 import { medianMbps } from './_quality.js'
 import { QUALITY } from './quality-cache.js'
 
@@ -29,9 +29,13 @@ export interface AppChannel {
   mbps?: number
 }
 
+type ProviderRoute = { plain: string; vpn: string; user: string; pass: string }
+
 export interface AppFeed {
   groups: string[]
-  route: { plain: string; vpn: string; user: string; pass: string }
+  route: ProviderRoute
+  /** Provider B's fronts and account, when configured; its feeds are the ids from BACKUP_ID up. */
+  backup?: ProviderRoute
   channels: AppChannel[]
 }
 
@@ -49,7 +53,7 @@ function badges(streamId: number): string[] {
   return out
 }
 
-export function buildAppFeed(cfg: XtreamConfig, channels: Channel[]): AppFeed {
+export function buildAppFeed(cfg: XtreamConfig, channels: Channel[], backup?: BackupConfig): AppFeed {
   const live = channels.filter((c) => !c.vodExt)
   const home = new Map<number, string>()
   for (const c of live) if (!isComp(c.group) && !home.has(c.streamId)) home.set(c.streamId, c.group)
@@ -65,6 +69,7 @@ export function buildAppFeed(cfg: XtreamConfig, channels: Channel[]): AppFeed {
   return {
     groups: [...new Set(live.map((c) => c.group))],
     route: { plain: cfg.host, vpn: VPN_HOST, user: cfg.user, pass: cfg.pass },
+    ...(backup && { backup: { plain: backup.host, vpn: backup.vpnHost, user: backup.user, pass: backup.pass } }),
     channels: live.map((c) => {
       const family = familyOf(c)
       return {

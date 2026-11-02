@@ -55,7 +55,13 @@ export async function handle(req: Request): Promise<Response> {
   if (pathname === '/api/app/version') return app.version(req)
   if (pathname === '/api/app/apk') return app.apk(req)
   if (pathname === '/api/app/dm') return app.dm(req)
-  if (pathname === '/api/app/quality' && req.method === 'POST') return app.quality(req)
+  if (pathname === '/api/app/quality' && req.method === 'POST') {
+    const res = await app.quality(req)
+    // A stored reading can reorder feeds, so the channel lists rebuild on their next request.
+    if (res.ok && (await res.clone().json()).stored)
+      for (const url of cache.keys()) if (/^\/api\/(app\/channels|playlist)$/.test(new URL(url).pathname)) cache.delete(url)
+    return res
+  }
   if (pathname === '/api/app/bitrate' && req.method === 'POST') return app.bitrate(req)
   if (pathname === '/api/app/events' && req.method === 'POST') return app.events(req)
   const handler = routes[pathname]

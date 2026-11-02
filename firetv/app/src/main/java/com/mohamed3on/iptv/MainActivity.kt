@@ -141,7 +141,7 @@ class MainActivity : ComponentActivity() {
                         val playing = st.feed?.takeIf { st.phase == Phase.Playing }
                         val q = playing?.let { liveQuality(player.exo, fps) }
                         live.value = if (playing != null && q != null && fps != null) playing.id to q else null
-                        if (playing != null && q != null) telemetry.reportQuality(playing, q)
+                        if (playing != null && q != null) telemetry.reportQuality(playing, q) { graph.scope.launch { sync.syncChannels() } }
                     }
                 }
                 launch { watchHealth(player, s) }

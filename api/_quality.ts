@@ -20,20 +20,21 @@ export const better = (a: Meta | null, b: Meta | null | undefined): boolean =>
 
 /**
  * The app's reading merged into a cache entry, or null to keep the entry. Like the probe:
- * fill a missing or dead entry, replace a stale one, upgrade a fresh one. Unlike it, the
- * app's fps is measured from rendered frames, where a 1080i25 feed can read 50, so it
- * never raises the fps of a same-height reading (that would rank interlaced feeds as 50p).
- * It does lower one: a 25/30 fps cadence is never a 50p feed. A shorter picture lowers a
- * fresh reading only once seen on two different days ([Meta.low] holds the first), so one
- * zap onto a passing fallback doesn't demote a good feed; a reading at full height in
- * between starts over. (Event feeds keep their marker's tier however low they read.)
+ * fill a missing or dead entry, replace a stale one, upgrade a fresh one. The app's fps
+ * counts rendered frames, so a 1080i25 feed reads 50: 50 motion samples a second, which
+ * for sport is as smooth as 50p, so it ranks with them. A lower reading (shorter picture
+ * or fewer fps) lowers a fresh one only once seen on two different days ([Meta.low] holds
+ * the first), so one zap onto a passing fallback or 25 fps slate doesn't demote a good
+ * feed; a reading as good in between starts over. A demotion keeps Atmos (it's about the
+ * picture). (Event feeds keep their marker's tier however low they read.)
  */
 export function mergeAppReading(old: Meta | null | undefined, reading: Meta, today: string): Meta | null {
   const next = { ...reading, at: today, ...keepMbps(old) }
   if (!old || !(old.at && old.at >= staleBefore(today))) return next
-  if (reading.h > old.h || (reading.h === old.h && reading.atmos && !old.atmos)) return { ...next, fps: reading.h === old.h ? old.fps : reading.fps }
-  if (reading.h === old.h && reading.fps <= 30 && reading.fps < old.fps) return { ...next, ...(old.atmos && { atmos: true as const }) }
-  if (reading.h < old.h) return old.low && old.low !== today ? next : old.low ? null : { ...old, low: today }
+  if (better(reading, old)) return next
+  if (reading.h < old.h || (reading.h === old.h && reading.fps < old.fps)) {
+    return old.low && old.low !== today ? { ...next, ...(old.atmos && { atmos: true as const }) } : old.low ? null : { ...old, low: today }
+  }
   if (!old.low) return null
   const { low: _, ...kept } = old
   return kept

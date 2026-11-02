@@ -17,14 +17,16 @@ describe('app quality readings merge like the probe', () => {
     const old = { ...fresh, h: 2160, w: 3840, at: '2026-10-01' }
     expect(mergeAppReading(old, reading({ fps: 25 }), today)).toEqual({ ...reading({ fps: 25 }), at: today })
   })
-  test('a fresh reading is upgraded by a taller picture or newly found Atmos', () => {
+  test('a fresh reading is upgraded at once by a taller picture, more fps or newly found Atmos', () => {
     expect(mergeAppReading(fresh, reading({ w: 3840, h: 2160 }), today)?.h).toBe(2160)
+    expect(mergeAppReading(fresh, reading({ fps: 50 }), today)?.fps).toBe(50)
     expect(mergeAppReading(fresh, reading({ fps: 25, atmos: true }), today)?.atmos).toBe(true)
   })
-  test('rendered fps never raises a same-height reading (interlaced feeds render 50 from 25), but 25/30 lowers it', () => {
-    expect(mergeAppReading(fresh, reading({ fps: 50 }), today)).toBeNull()
+  test('fewer fps lowers a fresh reading only when seen on two different days, keeping Atmos', () => {
     const p50 = { ...fresh, fps: 50, atmos: true as const }
-    expect(mergeAppReading(p50, reading({ fps: 25 }), today)).toMatchObject({ fps: 25, atmos: true, at: today })
+    const first = mergeAppReading(p50, reading({ fps: 25 }), today)
+    expect(first).toMatchObject({ fps: 50, low: today })
+    expect(mergeAppReading(first, reading({ fps: 25 }), '2026-11-02')).toMatchObject({ fps: 25, atmos: true, at: '2026-11-02' })
   })
   test('a shorter picture lowers a fresh reading only when seen on two different days', () => {
     const lower = reading({ h: 720, w: 1280 })
@@ -79,7 +81,7 @@ describe('/api/app/quality', () => {
     expect(file).toStartWith('// Auto-generated')
     expect(file).toContain('"990001":{"w":1920,"h":1080,"fps":50')
     expect(await (await post({ id: 990001, ...reading({ w: 3840, h: 2160, fps: 25 }) })).json()).toEqual({ stored: true })
-    expect(await (await post({ id: 990001, ...reading({ w: 3840, h: 2160, fps: 50 }) })).json()).toEqual({ stored: false })
+    expect(await (await post({ id: 990001, ...reading({ w: 3840, h: 2160, fps: 25 }) })).json()).toEqual({ stored: false })
   })
 })
 

@@ -116,15 +116,18 @@ class Telemetry(
         stream?.let { put("streamMbps", it) }
     }
 
-    /** Sends [feed]'s measured quality once per app run, once its frame rate is known. */
-    fun reportQuality(feed: Channel, q: LiveQuality) {
+    /**
+     * Sends [feed]'s measured quality once per app run, once its frame rate is known; [onStored] runs
+     * when the server kept it, since the feed order may have changed.
+     */
+    fun reportQuality(feed: Channel, q: LiveQuality, onStored: () -> Unit) {
         val fps = q.fps ?: return
         if (!qualityReported.add(feed.id)) return
         val body = buildJsonObject {
             put("id", feed.id); put("name", feed.name); put("w", q.width); put("h", q.height)
             put("fps", fps); put("codec", q.codec); put("atmos", q.atmos)
         }
-        post("quality", body.toString())
+        post("quality", body.toString()) { if ("\"stored\":true" in it) onStored() }
     }
 
     /** Sends [feed]'s measured bitrate (Mbps) once per app run; the server keeps a recent median per feed. */
@@ -147,12 +150,12 @@ class Telemetry(
         if (batch.isNotEmpty()) post("events", JsonArray(batch).toString())
     }
 
-    private fun post(route: String, json: String) {
+    private fun post(route: String, json: String, onReply: (String) -> Unit = {}) {
         scope.launch(Dispatchers.IO) {
             runCatching {
                 http.newCall(
                     Request.Builder().url("$baseUrl/api/app/$route?t=$token").post(json.toRequestBody(JSON)).build(),
-                ).execute().close()
+                ).execute().use { if (it.isSuccessful) onReply(it.body.string()) }
             }
         }
     }

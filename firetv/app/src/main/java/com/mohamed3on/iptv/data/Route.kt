@@ -62,6 +62,10 @@ class Route(private val store: KeyValueStore, private val vpnActive: StateFlow<B
 fun ProviderRoute.streamUrl(kind: RouteKind, streamId: Int): String =
     "${(if (kind == RouteKind.Vpn) vpn else plain).trimEnd('/')}/live/$user/$pass/$streamId.ts"
 
+/** A movie's stream: the provider's VOD path, with the file's own [ext] (mkv, mp4). */
+fun ProviderRoute.movieUrl(kind: RouteKind, movieId: Int, ext: String): String =
+    "${(if (kind == RouteKind.Vpn) vpn else plain).trimEnd('/')}/movie/$user/$pass/$movieId.$ext"
+
 /** Whether the stick's default network is a VPN, kept current by a network callback. */
 class VpnMonitor(context: Context) {
     private val cm = context.getSystemService(ConnectivityManager::class.java)

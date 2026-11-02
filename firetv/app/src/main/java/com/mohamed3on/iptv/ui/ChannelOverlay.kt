@@ -231,6 +231,9 @@ private data object SearchSource : Source {
 private data object LiveSource : Source {
     override val key = "live"
 }
+private data object MoviesSource : Source {
+    override val key = "movies"
+}
 private data class GroupSource(val name: String) : Source {
     override val key get() = "g|$name"
 }
@@ -301,6 +304,7 @@ private fun itemsOf(source: Source, feed: Feed, live: LiveNow?, typed: Boolean, 
         }
     }
     is GroupSource -> feed.channelsIn(source.name).map(::ChannelItem)
+    MoviesSource -> listOf(Note("4K films and UFC replays", "Press OK to browse"))
     LiveSource -> live?.let {
         buildList {
             it.matches.mapTo(this, ::LiveItem)
@@ -373,6 +377,7 @@ fun ChannelOverlay(
     modifier: Modifier = Modifier,
     updateRow: LazyListScope.() -> Unit = {},
     entrance: () -> Float = { 1f },
+    onMovies: (() -> Unit)? = null,
 ) {
     val reduced = LocalReducedMotion.current
     val stay by rememberUpdatedState(open)
@@ -405,7 +410,14 @@ fun ChannelOverlay(
     var travel by remember { mutableStateOf(1f) }
     fun show(next: Source) {
         if (next == shown) return
-        val order = { s: Source -> if (s is GroupSource) feed.groups.indexOf(s.name) else if (s == LiveSource) -1 else -2 }
+        val order = { s: Source ->
+            when (s) {
+                is GroupSource -> feed.groups.indexOf(s.name)
+                MoviesSource -> -1
+                LiveSource -> -2
+                SearchSource -> -3
+            }
+        }
         travel = if (order(next) > order(shown)) 1f else -1f
         shown = next
         scope.launch(start = CoroutineStart.UNDISPATCHED) {
@@ -588,8 +600,9 @@ fun ChannelOverlay(
         }
     }
 
-    /** Right/OK from the groups column: a group still waiting to show is shown now, then entered. */
+    /** Right/OK from the groups column: a group still waiting to show is shown now, then entered; Movies opens. */
     fun enterChannels() {
+        if (source == MoviesSource) return onMovies?.invoke() ?: Unit
         val target = pending.target
         pending.job?.cancel()
         pending.target = null
@@ -613,12 +626,14 @@ fun ChannelOverlay(
                 val info = groupsState.layoutInfo
                 if (info.totalItemsCount == 0) return@repeat
                 if (info.visibleItemsInfo.none { it.key == source.key }) {
-                    // The update row (U12) and Search come first, then Live now, then the groups.
-                    val first = info.totalItemsCount - feed.groups.size - 1
+                    // The update row (U12) and Search come first, then Live now, Movies, then the groups.
+                    val movies = if (onMovies != null) 1 else 0
+                    val first = info.totalItemsCount - feed.groups.size - 1 - movies
                     val at = when (source) {
                         SearchSource -> first - 1
                         LiveSource -> first
-                        is GroupSource -> first + 1 + feed.groups.indexOf(source.name)
+                        MoviesSource -> first + 1
+                        is GroupSource -> first + 1 + movies + feed.groups.indexOf(source.name)
                     }
                     groupsState.scrollToItem((at - 2).coerceAtLeast(0))
                 } else {
@@ -654,6 +669,11 @@ fun ChannelOverlay(
             val near = list.indices.filter { list[it].focusable }.minByOrNull { kotlin.math.abs(it - focusedIndex) }
             if (near != null) focusChannels(near) else focusGroups()
         }
+    }
+
+    // Back from Movies: focus returns to its row, with the list as it was left.
+    LaunchedEffect(open) {
+        if (open && opened && !inGroups && !inChannels) focusGroups()
     }
 
     // Keep the focused row clear of the edge fades, with the next row in view.
@@ -747,6 +767,15 @@ fun ChannelOverlay(
                             focus = if (source == LiveSource) groupFocus else null,
                             onFocused = { show(LiveSource); groupKey = LiveSource.key; wantChannels = false },
                             onClick = { enterChannels() },
+                        )
+                    }
+                    if (onMovies != null) item(key = MoviesSource.key) {
+                        GroupRow(
+                            "Movies",
+                            marked = false,
+                            focus = if (source == MoviesSource) groupFocus else null,
+                            onFocused = { show(MoviesSource); groupKey = MoviesSource.key; wantChannels = false },
+                            onClick = onMovies,
                         )
                     }
                     items(feed.groups, key = { "g|$it" }) { group ->

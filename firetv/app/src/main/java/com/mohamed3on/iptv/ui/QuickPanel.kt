@@ -211,13 +211,13 @@ private fun routeValue(choice: RouteChoice, effective: RouteKind) =
     if (choice == RouteChoice.Auto || routeName(choice) != routeName(effective)) "${routeName(choice)} · ${routeName(effective)}"
     else routeName(choice)
 
-private fun languageName(option: AudioOption): String =
+internal fun languageName(option: AudioOption): String =
     option.language?.takeIf { it.isNotBlank() && it != "und" }
         ?.let { Locale.forLanguageTag(it).getDisplayLanguage(Locale.ENGLISH).ifBlank { it } }
         ?: "Unknown language"
 
 /** "English · AC3 · 5.1". */
-private fun audioLabel(option: AudioOption): String =
+internal fun audioLabel(option: AudioOption): String =
     listOfNotNull(languageName(option), option.codec, channelLayout(option.channels)).joinToString(" · ")
 
 /** "5.1", "Stereo"; null when unknown. */

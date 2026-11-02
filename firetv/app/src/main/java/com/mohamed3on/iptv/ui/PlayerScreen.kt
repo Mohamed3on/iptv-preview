@@ -307,7 +307,7 @@ private fun PlayerChrome(feed: Feed, session: StreamSession, audio: AudioTracks?
                         health = health.takeIf { here },
                         stats = if (info && here) {
                             val members = feed.familyMembers(channel.family)
-                            streamStats(quality, audioSelected, health, route, members.indexOfFirst { it.id == state.feed?.id }, members.size, state.feed?.id)
+                            streamStats(audioSelected, health, route, members.indexOfFirst { it.id == state.feed?.id }, members.size)
                         } else null,
                     )
                 }
@@ -635,21 +635,20 @@ private fun rememberMinuteClock(): State<Long> = produceState(System.currentTime
 }
 
 /** The stream's numbers for the info view: picture and sound, then the connection. */
-private fun streamStats(q: LiveQuality?, audio: AudioOption?, health: Health?, route: RouteKind, feedAt: Int, feeds: Int, feedId: Int?): List<String> = listOf(
+/**
+ * The info view's line: what explains trouble, nothing the banner already says (its badges show the
+ * measured resolution, frame rate and Atmos). The two rates side by side say whether the line keeps up.
+ */
+private fun streamStats(audio: AudioOption?, health: Health?, route: RouteKind, feedAt: Int, feeds: Int): List<String> = listOf(
     listOfNotNull(
-        q?.let { "${it.width}×${it.height}" + (it.fps?.let { f -> " · ${f.roundToInt()} fps" } ?: "") },
-        q?.codec?.uppercase(),
-        health?.stream?.let { "${mbps(it)} Mbps" },
-        audio?.let { audioLabel(it).removePrefix("Unknown language · ") }, // Atmos is a badge above
-    ),
-    listOfNotNull(
+        health?.stream?.let { "Stream ${mbps(it)} Mbps" },
         health?.network?.let { "Network ${mbps(it)} Mbps" },
-        health?.let { "${mbps(it.buffered)} s buffered" },
-        if (route == RouteKind.Vpn) "VPN route" else "Plain route",
+        health?.let { "${it.buffered.roundToInt()} s buffered" },
+        audio?.let { channelLayout(it.channels) },
+        if (route == RouteKind.Vpn) "VPN" else "Plain route",
         if (feeds > 1 && feedAt >= 0) "Feed ${feedAt + 1} of $feeds" else null,
-        feedId?.let { "#$it" },
-    ),
-).map { it.joinToString(" · ") }.filter(String::isNotEmpty)
+    ).joinToString(" · "),
+)
 
 private fun mbps(value: Float) = String.format(Locale.US, "%.1f", value)
 

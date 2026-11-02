@@ -217,13 +217,14 @@ private fun languageName(option: AudioOption): String =
         ?: "Unknown language"
 
 /** "English · AC3 · 5.1". */
-internal fun audioLabel(option: AudioOption): String {
-    val layout = when (option.channels) {
-        1 -> "Mono"
-        2 -> "Stereo"
-        6 -> "5.1"
-        8 -> "7.1"
-        else -> if (option.channels > 0) "${option.channels} ch" else null
-    }
-    return listOfNotNull(languageName(option), option.codec, layout).joinToString(" · ")
+private fun audioLabel(option: AudioOption): String =
+    listOfNotNull(languageName(option), option.codec, channelLayout(option.channels)).joinToString(" · ")
+
+/** "5.1", "Stereo"; null when unknown. */
+internal fun channelLayout(channels: Int): String? = when (channels) {
+    1 -> "Mono"
+    2 -> "Stereo"
+    6 -> "5.1"
+    8 -> "7.1"
+    else -> if (channels > 0) "$channels ch" else null
 }

@@ -5,7 +5,7 @@ plugins {
     alias(libs.plugins.baselineprofile)
 }
 
-// Generates the app's baseline profile, and benchmarks it, on a Gradle-managed emulator: Gradle starts
+// Generates the app's baseline profile on a Gradle-managed emulator: Gradle starts
 // its own headless one, so a Fire TV stick connected over adb is never used. Run via generate.sh,
 // which also starts the fixture server the app talks to here.
 android {
@@ -16,8 +16,6 @@ android {
         minSdk = 30
         targetSdk = 36
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-        // Emulator frame timings are indicative only; let the benchmarks run there anyway.
-        testInstrumentationRunnerArguments["androidx.benchmark.suppressErrors"] = "EMULATOR"
     }
 
     compileOptions {

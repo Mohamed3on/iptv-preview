@@ -211,7 +211,8 @@ private val GROUPS_WIDTH = 260.dp
 private val CHANNELS_WIDTH = 540.dp
 private val GROUP_ROW_HEIGHT = 52.dp
 private val ROW_HEIGHT = 84.dp
-private val TILE = DpSize(52.dp, 52.dp)
+// 2:1, so a wide logo (most real-shape ones are 2.5–3.5:1) reads; a square one keeps the full height.
+private val TILE = DpSize(112.dp, 56.dp)
 private val MARKER = DpSize(3.dp, 24.dp)
 private val DOT = 6.dp
 private val INLINE_PROGRESS = 72.dp

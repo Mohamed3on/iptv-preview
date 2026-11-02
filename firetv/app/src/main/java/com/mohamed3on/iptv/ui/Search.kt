@@ -164,6 +164,7 @@ internal fun SearchBox(query: String, busy: Boolean, onQuery: (String) -> Unit, 
     val focusManager = LocalFocusManager.current
     var listening by remember { mutableStateOf(false) }
     var field by remember { mutableStateOf(TextFieldValue()) }
+    var settled by remember { mutableStateOf("") }
     val voice = remember { FocusRequester() }
     val keyboard = LocalSoftwareKeyboardController.current
     // Back to the Voice search key before the field goes, so focus never drops out of the list.
@@ -175,6 +176,7 @@ internal fun SearchBox(query: String, busy: Boolean, onQuery: (String) -> Unit, 
     LaunchedEffect(listening) {
         if (!listening) return@LaunchedEffect
         field = TextFieldValue(query, TextRange(query.length))
+        settled = query
         withFrameNanos {}
         runCatching { voice.requestFocus() }
         keyboard?.show()
@@ -200,7 +202,9 @@ internal fun SearchBox(query: String, busy: Boolean, onQuery: (String) -> Unit, 
                         field,
                         onValueChange = {
                             // Dictation lands as words at once, typing as one letter: done speaking, so on to the results.
-                            val spoken = it.composition == null && it.text.length - field.text.length > 1
+                            // Measured from the last settled text, so it holds however the keyboard composes it.
+                            val spoken = it.composition == null && it.text.length - settled.length > 1
+                            if (it.composition == null) settled = it.text
                             field = it
                             onQuery(it.text)
                             if (spoken) {
@@ -211,7 +215,8 @@ internal fun SearchBox(query: String, busy: Boolean, onQuery: (String) -> Unit, 
                         textStyle = Type.title,
                         singleLine = true,
                         cursorBrush = SolidColor(Palette.accent),
-                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                        // No suggestions, so typed letters arrive one by one rather than as a finished word.
+                        keyboardOptions = KeyboardOptions(autoCorrectEnabled = false, imeAction = ImeAction.Search),
                         keyboardActions = KeyboardActions(onSearch = { stopListening() }),
                         modifier = Modifier
                             .weight(1f)

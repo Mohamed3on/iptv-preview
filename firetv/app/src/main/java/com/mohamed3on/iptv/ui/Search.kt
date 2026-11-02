@@ -154,8 +154,9 @@ private val KEYS: List<List<String>> =
  * under the query while a search runs; its height is always kept, so the keys never move.
  *
  * Voice search hands the query to the Fire TV keyboard: apps never get the remote's mic, but that
- * keyboard does ("Speak to search"), and what it hears is typed into the query. Its Search action,
- * Back or moving off the query hands focus back to the keys.
+ * keyboard does ("Speak to search"), and what it hears is typed into the query. It opens on arriving
+ * at Search and from the Voice search key; its Search action, Back or moving off the query hands
+ * focus back to the keys.
  */
 @Composable
 internal fun SearchBox(query: String, busy: Boolean, onQuery: (String) -> Unit, entry: FocusRequester, onFocused: () -> Unit, onDown: () -> Unit) {
@@ -178,7 +179,19 @@ internal fun SearchBox(query: String, busy: Boolean, onQuery: (String) -> Unit, 
         runCatching { voice.requestFocus() }
         keyboard?.show()
     }
-    Column(Modifier.fillMaxWidth().padding(horizontal = Space.m), verticalArrangement = Arrangement.spacedBy(Space.l)) {
+    // Arriving at Search from outside it opens the Fire TV keyboard, so the mic is ready at once; moving
+    // between the query and the keys, or coming back from that keyboard, doesn't.
+    var inside by remember { mutableStateOf(false) }
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = Space.m)
+            .onFocusChanged {
+                if (it.hasFocus && !inside) listening = true
+                inside = it.hasFocus
+            },
+        verticalArrangement = Arrangement.spacedBy(Space.l),
+    ) {
         Column(verticalArrangement = Arrangement.spacedBy(Space.xs)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 if (listening) {

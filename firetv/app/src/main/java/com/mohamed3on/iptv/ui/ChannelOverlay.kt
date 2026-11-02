@@ -821,9 +821,13 @@ fun ChannelOverlay(
                         if (list == null || onKeyboard) return@onKeyEvent false
                         val down = code == AndroidKeyEvent.KEYCODE_DPAD_DOWN
                         // Up from Search's first result goes back to the keyboard above it.
-                        val edge = focusedIndex == (if (down) list.indexOfLast { it.focusable } else list.indexOfFirst { it.focusable }) &&
-                            (down || source != SearchSource)
-                        if (edge && it.type == KeyEventType.KeyDown) bump(channelsNudge, down)
+                        val first = list.indexOfFirst { it.focusable }
+                        val last = list.indexOfLast { it.focusable }
+                        val edge = focusedIndex == (if (down) last else first) && (down || source != SearchSource)
+                        // A fresh press at either end wraps round; a held key stops there, so a fast scroll never laps.
+                        if (edge && it.type == KeyEventType.KeyDown) {
+                            if (it.nativeKeyEvent.repeatCount == 0 && first != last) focusChannels(if (down) first else last) else bump(channelsNudge, down)
+                        }
                         return@onKeyEvent edge
                     }
                     if (code != AndroidKeyEvent.KEYCODE_DPAD_LEFT && code != AndroidKeyEvent.KEYCODE_DPAD_RIGHT) return@onKeyEvent false

@@ -47,8 +47,11 @@ fun Modifier.material(radius: Dp = Radius.panel): Modifier {
     return clip(shape).background(Palette.material).border(1.dp, Palette.edge, shape)
 }
 
-/** The channel list's scrim under its columns: near-opaque, so the picture's own text never shows through a row. */
-val ListScrim = Color(0xF5000000)
+/**
+ * The channel list's scrim under its columns: see-through enough to follow the picture behind,
+ * dark enough that secondary text keeps ~4:1 even over a white sky.
+ */
+val ListScrim = Color(0xB3000000)
 
 /** Where the channel columns end, as a fraction of the screen's width. */
 private const val COLUMNS_END = 0.91f

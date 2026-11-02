@@ -56,22 +56,29 @@ jobs:
           ./gradlew --no-build-cache assembleRelease
           rm -f "$IPTV_KEYSTORE_FILE"
 
-      # The APK first, then the manifest that points at it, so the app never sees a
-      # manifest for a half-copied APK (rsync writes a temp file and renames it).
+      # The APK and its dex metadata first, then the manifest that points at them, so the app never
+      # sees a manifest for a half-copied file (rsync writes a temp file and renames it). The .dm
+      # (the baseline profile, compiled at install) is optional: without one, the manifest names none.
       - name: Copy to the box
         env:
           SSH_KEY: ${{ secrets.APP_DEPLOY_SSH_KEY }}
           HOST: ${{ secrets.SERVER_HOST }}
         run: |
           apk=app/build/outputs/apk/release/app-release.apk
+          dm="$RUNNER_TEMP/app.dm"
           code=$(git rev-list --count HEAD)
           mkdir -p ~/.ssh && chmod 700 ~/.ssh
           printf '%s\n' "$SSH_KEY" > ~/.ssh/app_deploy && chmod 600 ~/.ssh/app_deploy
           ssh-keyscan -H "$HOST" >> ~/.ssh/known_hosts 2>/dev/null
-          printf '{"versionCode":%s,"versionName":"1.%s","sha256":"%s"}\n' \
-            "$code" "$code" "$(sha256sum "$apk" | cut -d' ' -f1)" > "$RUNNER_TEMP/version.json"
+          dm_field=''
+          if baselineprofile/dex-metadata.sh "$apk" "$dm"; then
+            dm_field=$(printf ',"dmSha256":"%s"' "$(sha256sum "$dm" | cut -d' ' -f1)")
+          fi
+          printf '{"versionCode":%s,"versionName":"1.%s","sha256":"%s"%s}\n' \
+            "$code" "$code" "$(sha256sum "$apk" | cut -d' ' -f1)" "$dm_field" > "$RUNNER_TEMP/version.json"
           # The key may only write /opt/iptv-preview/app (rrsync -wo), so paths are relative to it.
           ssh_cmd='ssh -i ~/.ssh/app_deploy -o IdentitiesOnly=yes'
           rsync -t -e "$ssh_cmd" "$apk" "iptvapp@$HOST:app.apk"
+          if [ -n "$dm_field" ]; then rsync -t -e "$ssh_cmd" "$dm" "iptvapp@$HOST:app.dm"; fi
           rsync -t -e "$ssh_cmd" "$RUNNER_TEMP/version.json" "iptvapp@$HOST:version.json"
           rm -f ~/.ssh/app_deploy

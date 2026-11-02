@@ -11,6 +11,7 @@ import okio.Buffer
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
@@ -28,6 +29,7 @@ class UpdaterTest {
     private val server = MockWebServer()
     private val app = RuntimeEnvironment.getApplication()
     private val apk = "fake apk bytes".toByteArray()
+    private val dm = "fake profile".toByteArray()
     private lateinit var dir: File
 
     @Before fun setUp() {
@@ -44,9 +46,27 @@ class UpdaterTest {
 
     private fun sha(bytes: ByteArray) = MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
 
-    private fun serve(versionCode: Int, sha256: String = sha(apk), withApk: Boolean = true) {
-        server.enqueue(MockResponse.Builder().code(200).body("""{"versionCode":$versionCode,"versionName":"1.$versionCode","sha256":"$sha256"}""").build())
+    private fun serve(versionCode: Int, sha256: String = sha(apk), withApk: Boolean = true, dmSha256: String? = null) {
+        val dmField = dmSha256?.let { ""","dmSha256":"$it"""" } ?: ""
+        server.enqueue(MockResponse.Builder().code(200).body("""{"versionCode":$versionCode,"versionName":"1.$versionCode","sha256":"$sha256"$dmField}""").build())
         if (withApk) server.enqueue(MockResponse.Builder().code(200).body(Buffer().write(apk)).build())
+        if (dmSha256 != null) server.enqueue(MockResponse.Builder().code(200).body(Buffer().write(dm)).build())
+    }
+
+    @Test fun theProfileComesAlongWhenItVerifies() = runTest {
+        serve(101, dmSha256 = sha(dm))
+        val u = updater()
+        u.check()
+        assertTrue(u.ready.value?.dm?.readBytes()?.contentEquals(dm) == true)
+    }
+
+    @Test fun aProfileThatFailsItsChecksumLeavesAPlainUpdate() = runTest {
+        serve(101, dmSha256 = sha("other".toByteArray()))
+        val u = updater()
+        u.check()
+        assertEquals("1.101", u.ready.value?.versionName)
+        assertNull(u.ready.value?.dm)
+        assertEquals(listOf("update.apk"), dir.list()!!.toList())
     }
 
     @Test fun aNewerValidBuildShowsTheRowAndInstallsNothingUntilPicked() = runTest {

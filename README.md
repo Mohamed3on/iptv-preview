@@ -37,7 +37,7 @@ The repo's copies of those two files only seed a fresh box; a deploy never overw
 
 - `/api/app/channels`: groups, channels, feed families, quality badges and both provider fronts, as JSON.
 - `/api/app/guide`: the guide as a gzip SQLite file.
-- `/api/app/version` and `/api/app/apk`: the latest build, served from `/opt/iptv-preview/app/` (outside `dist/`, so deploys never prune it).
+- `/api/app/version`, `/api/app/apk` and `/api/app/dm`: the latest build and its dex metadata (the baseline profile, which the stick compiles at install), served from `/opt/iptv-preview/app/` (outside `dist/`, so deploys never prune it).
 - `/api/app/movies`: the on-demand library (4K movies, UFC replays), read from the copy the playlist build saves in `.cache/vod-last-good.json`, so the app never adds a pull of the 74 MB catalogue.
 - `POST /api/app/quality`: what the app measured on a stream it played (resolution, frame rate, codec, Atmos), merged into the quality cache with the probe's rules (`api/_quality.ts`).
 - `POST /api/app/events`: tunes with their time to picture, stalls, feed switches and busy / wrong-route / offline problems, appended to `.cache/app-events.jsonl` on the box (rolls over at 20 MB). Read it to see which feeds hold up and how fast zaps are.
@@ -51,6 +51,8 @@ To rotate the app token:
 3. Once the stick has self-updated, remove the old token from `APP_TOKENS` and restart again.
 
 First install: on the stick, enable Settings → My Fire TV → Developer options → ADB debugging. Then run `adb connect <stick-ip>` and `cd firetv && ./gradlew installRelease`. The first install must be the release build, or the first self-update fails on a signature mismatch. Grant the app "Install unknown apps" when it first offers an update.
+
+**Baseline profile.** Release builds ship one (`firetv/app/src/main/generated/baselineProfiles/`), so the hot paths (the channel list, zaps, the panels) run compiled from the first frame after an update instead of warming up in the JIT. CI turns it into a dex metadata file (`firetv/baselineprofile/dex-metadata.sh`) that the self-update installs as `base.dm` beside the APK; a missing or failed one never blocks an update. Regenerate it after big UI changes with `firetv/baselineprofile/generate.sh` (needs `bun`; Gradle boots its own headless API 34 emulator, so a connected stick is never used) and commit the result. The profiling builds talk to `firetv/baselineprofile/fixture-server.ts`, a local copy of the channels and guide whose provider route is a dead port: an emulator never takes the account's stream slot or writes to the event log.
 
 ## Tech Stack
 

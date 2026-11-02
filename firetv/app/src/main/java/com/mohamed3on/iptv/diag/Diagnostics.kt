@@ -114,7 +114,7 @@ fun DiagnosticsScreen() {
     LaunchedEffect(lines) { lines.forEach { Log.i(TAG, it) } }
 
     LazyColumn(
-        modifier = Modifier.fillMaxSize().background(Palette.ink).edgeFade(),
+        modifier = Modifier.fillMaxSize().background(Palette.ink).edgeFade(Palette.ink),
         contentPadding = Space.safe,
     ) {
         item { Text("Diagnostics", style = Type.title, modifier = Modifier.padding(bottom = Space.l)) }

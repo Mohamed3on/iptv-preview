@@ -32,6 +32,7 @@ import com.mohamed3on.iptv.data.GuideDb
 import com.mohamed3on.iptv.data.NowNext
 import com.mohamed3on.iptv.data.Watched
 import com.mohamed3on.iptv.data.resolve
+import com.mohamed3on.iptv.ui.theme.Palette
 import com.mohamed3on.iptv.ui.theme.Space
 import com.mohamed3on.iptv.ui.theme.Type
 import com.mohamed3on.iptv.ui.theme.edgeFade
@@ -60,7 +61,7 @@ fun RecentSheet(
     modifier: Modifier = Modifier,
 ) {
     val stay by rememberUpdatedState(open)
-    val channels = remember(feed, recent) { recent.mapNotNull(feed::resolve).distinctBy { it.identity } }
+    val channels = remember(feed, recent) { recent.mapNotNull(feed::resolve).distinctBy { it.family } }
     val tvgIds = remember(channels) { channels.map { it.tvgId }.filter(String::isNotEmpty).distinct() }
     val nowNext by produceState(emptyMap<String, NowNext>(), tvgIds, guide) {
         snapshotFlow { clock.value }.collectLatest { now ->
@@ -70,7 +71,7 @@ fun RecentSheet(
         }
     }
 
-    val start = remember(channels) { channels.indexOfFirst { it.id != current?.id }.coerceAtLeast(0) }
+    val start = remember(channels) { channels.indexOfFirst { it.family != current?.family }.coerceAtLeast(0) }
     val entry = remember { FocusRequester() }
     var focused by remember { mutableStateOf(-1) }
     LaunchedEffect(channels) {
@@ -97,17 +98,18 @@ fun RecentSheet(
             Text("Channels you watch show up here.", style = Type.body, modifier = Modifier.padding(horizontal = Space.xl, vertical = Space.m))
         }
         LazyColumn(
-            modifier = Modifier.fillMaxWidth().weight(1f).edgeFade(),
+            modifier = Modifier.fillMaxWidth().weight(1f).edgeFade(Palette.material),
             contentPadding = PaddingValues(horizontal = Space.m, vertical = Space.m),
             verticalArrangement = Arrangement.spacedBy(Space.xs),
         ) {
             itemsIndexed(channels, key = { _, c -> "${c.id}|${c.group}" }) { i, channel ->
                 ChannelRow(
                     channel, nowNext[channel.tvgId], clock,
-                    playing = channel.id == current?.id, watchHint = false,
+                    playing = channel.family == current?.family, watchHint = false,
                     focus = if (i == start) entry else null,
                     onFocused = { focused = i },
                     onClick = { onPick(channel) },
+                    badges = false,
                 )
             }
         }

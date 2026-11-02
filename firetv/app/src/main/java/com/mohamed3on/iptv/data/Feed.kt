@@ -34,12 +34,27 @@ data class Channel(
 @Serializable
 data class Feed(val groups: List<String>, val route: ProviderRoute, val channels: List<Channel>) {
     private val byGroup by lazy { channels.groupBy { it.group } }
+    @kotlinx.serialization.Transient private val rowsByGroup = java.util.concurrent.ConcurrentHashMap<String, List<Channel>>()
     private val byIdentity by lazy { channels.associateBy { it.identity } }
     private val byId by lazy { channels.groupBy { it.id } }
     private val byFamily by lazy { channels.groupBy { it.family } }
 
-    /** Channels of [group] in server order (display and zap order). */
-    fun channelsIn(group: String): List<Channel> = byGroup[group].orEmpty()
+    /**
+     * The rows of [group] as the app shows them, in server order (display, zap and banner order):
+     * one per channel family, on the family's top-ranked feed in the group, where the family first
+     * appears. The server also lists spare feeds (a 🏆 group carries a best feed and a spare of each
+     * channel, for TiviMate); a session fails over through the family by itself, so one row is enough.
+     */
+    fun channelsIn(group: String): List<Channel> = rowsByGroup.getOrPut(group) {
+        val rows = byGroup[group].orEmpty()
+        val best = rows.groupBy { it.family }.mapValues { (_, feeds) -> feeds.minBy { it.rank } }
+        rows.distinctBy { it.family }.map { best.getValue(it.family) }
+    }
+
+    /** [channel]'s row in its group as shown: itself, or its family's row when it is a spare feed. */
+    fun rowOf(channel: Channel): Channel? = channelsIn(channel.group).let { rows ->
+        rows.firstOrNull { it.identity == channel.identity } ?: rows.firstOrNull { it.family == channel.family }
+    }
 
     fun find(identity: ChannelIdentity): Channel? = byIdentity[identity]
 
@@ -63,7 +78,7 @@ fun parseFeed(text: String): Feed {
 private val FEED_PREFIX = Regex("""^[^\s:|]{1,6}[:|]\s*""")
 private const val SUP_FROM = "ᴬᴮᶜᴰᴱᶠᴳᴴᴵᴶᴷᴸᴹᴺᴼᴾᴿˢᵀᵁⱽᵂᵃᵇᵈᵉᵍʰⁱʲᵏˡᵐⁿᵒᵖʳᵗᵘᵛʷˣʸᶻ⁰¹²³⁴⁵⁶⁷⁸⁹"
 private const val SUP_TO = "ABCDEFGHIJKLMNOPRSTUVWabdeghijklmnoprtuvwxyz0123456789"
-/** Words that only tell feeds of one channel apart (quality, codec, fps, uplink); the badges say it better. */
+/** Words that only tell feeds of one channel apart (quality, codec, fps, uplink; "3840P+" too); the badges say it better. */
 private val FEED_WORDS = setOf(
     "8k", "4k", "hd", "sd", "fhd", "uhd", "hdr", "raw", "vip", "hevc", "fps", "50", "60",
     "3840p", "2160p", "1080p", "720p", "(sat)", "(mobil)", "(mobile)", "(bk)", "sat",
@@ -72,21 +87,36 @@ private val FEED_WORDS = setOf(
 private val ACRONYMS = setOf("DAZN", "ESPN", "UEFA", "FIFA", "MUTV", "LFCTV", "NBCSN")
 /** Short all-caps words that are words, not acronyms. */
 private val SHORT_WORDS = setOf("SKY", "ONE", "TWO", "TEN", "MAX", "MIX", "THE", "AND")
+private val SPACES = Regex("\\s+")
+private val BALL_AS_O = Regex("(?<=[A-Z])⚽|⚽(?=[A-Z])")
+private val FPS_WORD = Regex("(?i)\\d+fps")
+private val CONNECTOR = Regex("^[&+/|·:-]+$")
+/** An event slot's name is fields between bars: "Next | Lorient - Brest | Ligue 1 | 2026-11-01 | 20:00 (GMT) | 8K EXCLUSIVE | GB: DAZN PPV 58". */
+private val SLOT_FIELDS = Regex("""\s+\|\s+""")
+/** Fields that say when or where rather than what: a date, a time, a quality pitch, the provider's own channel code. */
+private val SLOT_NOISE = Regex("""^(\d{4}-\d{2}-\d{2}|\d{1,2}:\d{2}\b.*|.*\bEXCLUSIVE\b.*|[A-Z]{2,3}:\s.*)$""")
+/** Names are cleaned once each: rows, tiles and the banner ask for the same few hundred over and over. */
+private val displayNames = java.util.concurrent.ConcurrentHashMap<String, String>()
 
 /**
  * A channel name as people say it: the provider's feed prefix and quality markers dropped
  * ("SS: beIN SP⚽RTS 6 4K" → "beIN Sports 6"), shouting words re-cased, acronyms kept.
- * Event slots, whose name is the event, keep their wording.
+ * Event slots, whose name is the event, keep their wording, without the date, time and feed code.
  */
-fun displayName(raw: String): String {
+fun displayName(raw: String): String = displayNames.getOrPut(raw) { cleanName(raw) }
+
+private fun cleanName(raw: String): String {
+    // An event slot reads as the event: "Next · Lorient - Brest · Ligue 1".
+    val fields = raw.split(SLOT_FIELDS)
+    if (fields.size >= 3) fields.filterNot { SLOT_NOISE.matches(it.trim()) }.joinToString(" · ").takeIf { it.isNotBlank() }?.let { return it }
     val unsuper = { w: String -> w.map { c -> SUP_FROM.indexOf(c).let { if (it >= 0) SUP_TO[it] else c } }.joinToString("") }
-    val words = raw.replace(FEED_PREFIX, "").split(Regex("\\s+")).mapNotNull { token ->
+    val words = raw.replace(FEED_PREFIX, "").split(SPACES).mapNotNull { token ->
         // a word spelled in superscript ("ᴬʳᵉⁿᵃ") arrives as "Arena"; markers ("ᴿᴬᵂ", "³⁸⁴⁰ᴾ") are dropped below
         val spelled = token.isNotEmpty() && token.all { it in SUP_FROM }
-        val w = unsuper(token).replace(Regex("(?<=[A-Z])⚽|⚽(?=[A-Z])"), "O").replace("⚽", "o")
+        val w = unsuper(token).replace(BALL_AS_O, "O").replace("⚽", "o")
         val letters = w.filter { it.isLetter() }
         when {
-            w.isEmpty() || w.lowercase() in FEED_WORDS || Regex("(?i)\\d+fps").matches(w) -> null
+            w.isEmpty() || w.lowercase().trimEnd('+') in FEED_WORDS || FPS_WORD.matches(w) -> null
             letters.isNotEmpty() && letters.all { it in 'A'..'Z' } && w !in ACRONYMS && (letters.length >= 4 || w in SHORT_WORDS) ->
                 w.lowercase().replaceFirstChar(Char::uppercase)
             spelled -> w.replaceFirstChar(Char::uppercase)
@@ -94,7 +124,6 @@ fun displayName(raw: String): String {
         }
     }
     // A connector left dangling once markers are gone ("SKY SPORTS 1 ⁴ᵏ & ³⁸⁴⁰ᴾ") goes too; "Drake & Josh" keeps its.
-    val connector = Regex("^[&+/|·:-]+$")
-    val shown = words.dropWhile { connector.matches(it) }.dropLastWhile { connector.matches(it) }.joinToString(" ").trim()
+    val shown = words.dropWhile { CONNECTOR.matches(it) }.dropLastWhile { CONNECTOR.matches(it) }.joinToString(" ").trim()
     return if (shown.isEmpty()) raw.trim() else shown
 }

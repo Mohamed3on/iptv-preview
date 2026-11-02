@@ -3,6 +3,8 @@
 package com.mohamed3on.iptv.player
 
 import android.content.Context
+import android.os.SystemClock
+import android.util.Log
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
@@ -21,6 +23,9 @@ import androidx.media3.extractor.text.DefaultSubtitleParserFactory
 import androidx.media3.extractor.ts.DefaultTsPayloadReaderFactory
 import androidx.media3.extractor.ts.TsExtractor
 import okhttp3.OkHttpClient
+
+/** Tune-to-first-frame timings, one line per tune (no URLs). */
+private const val ZAP_TAG = "IptvZap"
 
 /**
  * Long-lived ExoPlayers reused across zaps (KTD7): one for single view; multi-view takes one per
@@ -89,12 +94,25 @@ interface TilePlayer : StreamPlayer {
  */
 class ExoStreamPlayer internal constructor(val exo: ExoPlayer, private val liveSources: MediaSource.Factory) : TilePlayer {
     private var listener: StreamPlayer.Listener? = null
+    /** When the last [open] ran, for the zap timing log; 0 once its first frame is logged. */
+    private var openedAt = 0L
+    private var playingAt = 0L
 
     init {
         exo.playWhenReady = true
         exo.addListener(object : Player.Listener {
             override fun onIsPlayingChanged(isPlaying: Boolean) {
+                if (isPlaying && playingAt != 0L) {
+                    Log.i(ZAP_TAG, "playing ${SystemClock.elapsedRealtime() - playingAt} ms")
+                    playingAt = 0L
+                }
                 if (isPlaying) listener?.onPlaying()
+            }
+
+            override fun onRenderedFirstFrame() {
+                if (openedAt == 0L) return
+                Log.i(ZAP_TAG, "first frame ${SystemClock.elapsedRealtime() - openedAt} ms")
+                openedAt = 0L
             }
 
             override fun onPlaybackStateChanged(state: Int) {
@@ -108,6 +126,8 @@ class ExoStreamPlayer internal constructor(val exo: ExoPlayer, private val liveS
     }
 
     override fun open(url: String) {
+        openedAt = SystemClock.elapsedRealtime()
+        playingAt = openedAt
         exo.stop()
         val item = MediaItem.Builder().setUri(url).setMimeType(MimeTypes.VIDEO_MP2T).build()
         exo.setMediaSource(liveSources.createMediaSource(item))

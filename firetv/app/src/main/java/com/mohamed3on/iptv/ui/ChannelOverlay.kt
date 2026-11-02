@@ -1,6 +1,10 @@
 package com.mohamed3on.iptv.ui
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandHorizontally
 import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -48,6 +52,8 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.type
@@ -63,7 +69,9 @@ import com.mohamed3on.iptv.data.GuideDb
 import com.mohamed3on.iptv.data.NowNext
 import com.mohamed3on.iptv.data.Programme
 import com.mohamed3on.iptv.data.displayName
-import com.mohamed3on.iptv.ui.theme.Badge
+import com.mohamed3on.iptv.ui.theme.Badges
+import com.mohamed3on.iptv.ui.theme.Edge
+import com.mohamed3on.iptv.ui.theme.ListScrim
 import com.mohamed3on.iptv.ui.theme.LiveMark
 import com.mohamed3on.iptv.ui.theme.LocalReducedMotion
 import com.mohamed3on.iptv.ui.theme.Motion
@@ -72,7 +80,11 @@ import com.mohamed3on.iptv.ui.theme.ProgressLine
 import com.mohamed3on.iptv.ui.theme.Space
 import com.mohamed3on.iptv.ui.theme.Type
 import com.mohamed3on.iptv.ui.theme.edgeFade
+import com.mohamed3on.iptv.ui.theme.reveal
+import com.mohamed3on.iptv.ui.theme.slideFade
+import com.mohamed3on.iptv.ui.theme.staggered
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -96,8 +108,8 @@ data class LiveEntry(
 /** Live now (R22): confirmed matches, then unconfirmed event slots. */
 data class LiveNow(val matches: List<LiveEntry>, val slots: List<LiveEntry>) {
     val entries get() = matches + slots
-    /** The zap context a Live now tune carries: Up/Down walk these. */
-    val context get() = entries.map { it.tune }
+    /** The zap context a Live now tune carries: Up/Down walk these, one stop per channel. */
+    val context get() = entries.map { it.tune }.distinctBy { it.family }
 }
 
 /**
@@ -147,6 +159,9 @@ private fun sameMatchOnce(matches: List<LiveEntry>): List<LiveEntry> {
 private val VERSUS = Regex("\\s(v|vs\\.?)\\s", RegexOption.IGNORE_CASE)
 private val LIVE_PREFIX = Regex("^live\\s*[:\\-]?\\s*", RegexOption.IGNORE_CASE)
 private val SUPERSCRIPT = Regex("[\\u1D2C-\\u1DBF\\u2070-\\u209F\\u00B2\\u00B3\\u00B9]+")
+
+/** A guide title without the broadcaster's superscript markers ("Eagles @ Commanders ᴸᶦᵛᵉ"). */
+internal fun cleanTitle(title: String): String = title.replace(SUPERSCRIPT, "").trim()
 
 /**
  * Just the fixture from a broadcaster's title: "LALIGA EA SPORTS 2026/2027 MD11 : Getafe CF vs
@@ -345,6 +360,7 @@ fun ChannelOverlay(
     onPreview: ((channel: Channel, context: List<Channel>?) -> Unit)?,
     modifier: Modifier = Modifier,
     updateRow: LazyListScope.() -> Unit = {},
+    entrance: () -> Float = { 1f },
 ) {
     val reduced = LocalReducedMotion.current
     val stay by rememberUpdatedState(open)
@@ -369,6 +385,28 @@ fun ChannelOverlay(
                 else -> GroupSource(current?.group ?: feed.groups.first())
             },
         )
+    }
+    // The channel column follows the groups column: a later group's rows rise from below, an earlier
+    // one's come down from above. The old rows go at once; only the new ones move.
+    val arrival = remember { Animatable(1f) }
+    var travel by remember { mutableStateOf(1f) }
+    fun show(next: Source) {
+        if (next == shown) return
+        val order = { s: Source -> if (s is GroupSource) feed.groups.indexOf(s.name) else if (s == LiveSource) -1 else -2 }
+        travel = if (order(next) > order(shown)) 1f else -1f
+        shown = next
+        scope.launch(start = CoroutineStart.UNDISPATCHED) {
+            arrival.snapTo(0f)
+            arrival.animateTo(1f, if (reduced) tween(Motion.FADE_MS) else Motion.spring(0.28f))
+        }
+    }
+    // A newly shown group's rows are built over two frames, names first and their guide lines on
+    // the next, so neither frame is long enough to drop; the column is still fading in meanwhile.
+    // Read only inside the rows, so the second frame recomposes the rows and nothing else.
+    val linesFor = remember { mutableStateOf(shown.key) }
+    LaunchedEffect(shown.key) {
+        withFrameNanos {}
+        linesFor.value = shown.key
     }
     // A refresh can drop the 🏆 group on screen; fall back to the first group.
     val source = shown.takeUnless { it is GroupSource && it.name !in feed.groups } ?: GroupSource(feed.groups.first())
@@ -408,15 +446,23 @@ fun ChannelOverlay(
         itemsOf(source, feed, live, typed, found)
     }
 
-    // Now/next for the whole shown group in one query, off the main thread, again each minute.
+    // Now/next for the whole shown group in one query, off the main thread, again each minute; then
+    // for every other channel too, so moving through the groups never builds a group's rows twice
+    // (once empty, again when its guide lands).
     val tvgIds = remember(items) { items?.mapNotNull { (it as? ChannelItem)?.channel?.tvgId?.takeIf(String::isNotEmpty) }?.distinct().orEmpty() }
-    val nowNext by produceState(emptyMap<String, NowNext>(), tvgIds, guide) {
-        snapshotFlow { clock.value }.collectLatest { now ->
-            val fresh = withContext(Dispatchers.IO) {
-                if (guide == null) tvgIds.associateWith { NowNext(null, null) } else runCatching { guide.nowNextFor(tvgIds, now) }.getOrNull()
-            } ?: return@collectLatest
-            value = value + fresh
-        }
+    val allTvgIds = remember(feed) { feed.channels.mapNotNull { it.tvgId.takeIf(String::isNotEmpty) }.distinct() }
+    val nowNextState = remember { mutableStateOf(emptyMap<String, NowNext>()) }
+    val nowNext by nowNextState
+    suspend fun loadNowNext(ids: List<String>, now: Long) {
+        val fresh = withContext(Dispatchers.IO) {
+            if (guide == null) ids.associateWith { NowNext(null, null) } else runCatching { guide.nowNextFor(ids, now) }.getOrNull()
+        } ?: return
+        nowNextState.value = nowNextState.value + fresh
+    }
+    LaunchedEffect(tvgIds, guide) { snapshotFlow { clock.value }.collectLatest { loadNowNext(tvgIds, it) } }
+    LaunchedEffect(allTvgIds, guide) {
+        delay(400) // the shown group's own query first
+        snapshotFlow { clock.value }.collectLatest { loadNowNext(allTvgIds, it) }
     }
 
     val lastFocused = remember { HashMap<String, String>() }
@@ -426,6 +472,18 @@ fun ChannelOverlay(
     var inChannels by remember { mutableStateOf(false) }
     var inGroups by remember { mutableStateOf(false) }
     var onKeyboard by remember { mutableStateOf(false) }
+    var groupKey by remember { mutableStateOf<String?>(null) }
+    // A list's end is felt, not crossed: Up on the first row or Down on the last nudges the column
+    // toward the key and springs it back, where focus search would otherwise jump to the other column.
+    val groupsNudge = remember { Animatable(0f) }
+    val channelsNudge = remember { Animatable(0f) }
+    fun bump(column: Animatable<Float, *>, down: Boolean) {
+        if (reduced) return
+        scope.launch {
+            column.animateTo(if (down) 1f else -1f, Motion.spring(0.1f))
+            column.animateTo(0f, Motion.spring(0.3f))
+        }
+    }
     var entryKey by remember { mutableStateOf<String?>(null) }
     var details by remember { mutableStateOf<Channel?>(null) }
     // The pane keeps its channel while it slides away.
@@ -440,12 +498,12 @@ fun ChannelOverlay(
         focusing[0] = scope.launch(block = block)
     }
 
-    /** The row last focused here, else the playing channel's (the same row, else the same stream), else the first. */
+    /** The row last focused here, else the playing channel's (the same row, else the same channel), else the first. */
     fun entryIndex(list: List<Item>): Int {
         lastFocused[source.key]?.let { k -> list.indexOfFirst { it.key == k }.takeIf { it >= 0 }?.let { return it } }
         current?.let { c ->
             list.indexOfFirst { it.target?.identity == c.identity }.takeIf { it >= 0 }?.let { return it }
-            list.indexOfFirst { it.target?.id == c.id }.takeIf { it >= 0 }?.let { return it }
+            list.indexOfFirst { it.target?.family == c.family }.takeIf { it >= 0 }?.let { return it }
         }
         return list.indexOfFirst { it.focusable }
     }
@@ -525,7 +583,7 @@ fun ChannelOverlay(
     /** A row chosen: tuned behind the list to preview it, or, when it is the one playing, watched full screen. */
     fun choose(channel: Channel, context: List<Channel>?) {
         val preview = onPreview
-        if (preview != null && channel.id != playing?.id) preview(channel, context) else onPick(channel, context)
+        if (preview != null && channel.family != playing?.family) preview(channel, context) else onPick(channel, context)
     }
     val watchHint = onPreview != null
 
@@ -576,21 +634,37 @@ fun ChannelOverlay(
     ) {
         AnimatedVisibility(
             visible = details == null,
-            enter = Motion.fromLeft(reduced) + expandHorizontally(Motion.panel()),
-            exit = Motion.toLeft(reduced) + shrinkHorizontally(Motion.panel()),
+            enter = expandHorizontally(Motion.panel()),
+            exit = shrinkHorizontally(Motion.panel()),
         ) {
+            // In with the list, first; and out of the way of the schedule (Right on a channel).
+            val aside = reveal()
             CompositionLocalProvider(LocalBringIntoViewSpec provides keepClear) {
                 LazyColumn(
                     state = groupsState,
                     modifier = Modifier
                         .width(GROUPS_WIDTH)
                         .fillMaxHeight()
-                        .edgeFade()
+                        .slideFade({ entrance() * aside.value }, Edge.Left, reduced)
+                        .graphicsLayer { translationY = groupsNudge.value * Space.s.toPx() }
+                        .edgeFade(ListScrim)
                         .onFocusChanged { inGroups = it.hasFocus }
                         .onKeyEvent {
-                            if (it.nativeKeyEvent.keyCode != AndroidKeyEvent.KEYCODE_DPAD_RIGHT) return@onKeyEvent false
-                            if (it.type == KeyEventType.KeyDown) focusChannels()
-                            true
+                            when (val code = it.nativeKeyEvent.keyCode) {
+                                AndroidKeyEvent.KEYCODE_DPAD_RIGHT -> {
+                                    if (it.type == KeyEventType.KeyDown) focusChannels()
+                                    true
+                                }
+                                AndroidKeyEvent.KEYCODE_DPAD_UP, AndroidKeyEvent.KEYCODE_DPAD_DOWN -> {
+                                    val down = code == AndroidKeyEvent.KEYCODE_DPAD_DOWN
+                                    val info = groupsState.layoutInfo
+                                    val at = info.visibleItemsInfo.firstOrNull { v -> v.key == groupKey }?.index
+                                    val edge = at != null && at == (if (down) info.totalItemsCount - 1 else 0)
+                                    if (edge && it.type == KeyEventType.KeyDown) bump(groupsNudge, down)
+                                    edge
+                                }
+                                else -> false
+                            }
                         },
                     contentPadding = PaddingValues(vertical = Space.xl),
                     verticalArrangement = Arrangement.spacedBy(Space.xs),
@@ -601,7 +675,7 @@ fun ChannelOverlay(
                             "Search",
                             marked = source == SearchSource && inChannels,
                             focus = if (source == SearchSource) groupFocus else null,
-                            onFocused = { shown = SearchSource; wantChannels = false },
+                            onFocused = { show(SearchSource); groupKey = SearchSource.key; wantChannels = false },
                             onClick = { focusChannels() },
                         )
                     }
@@ -610,7 +684,7 @@ fun ChannelOverlay(
                             "Live now",
                             marked = source == LiveSource && inChannels,
                             focus = if (source == LiveSource) groupFocus else null,
-                            onFocused = { shown = LiveSource; wantChannels = false },
+                            onFocused = { show(LiveSource); groupKey = LiveSource.key; wantChannels = false },
                             onClick = { focusChannels() },
                         )
                     }
@@ -620,7 +694,7 @@ fun ChannelOverlay(
                             group,
                             marked = here && inChannels,
                             focus = if (here) groupFocus else null,
-                            onFocused = { shown = GroupSource(group); wantChannels = false },
+                            onFocused = { show(GroupSource(group)); groupKey = "g|$group"; wantChannels = false },
                             onClick = { focusChannels() },
                         )
                     }
@@ -632,9 +706,30 @@ fun ChannelOverlay(
             Modifier
                 .width(CHANNELS_WIDTH)
                 .fillMaxHeight()
+                // In just behind the groups (and out just ahead of them), and in from the travel's side on a group change.
+                .graphicsLayer {
+                    val p = staggered(entrance())
+                    val a = arrival.value
+                    alpha = p * a
+                    compositingStrategy = CompositingStrategy.ModulateAlpha
+                    if (!reduced) {
+                        translationX = -(1f - p) * size.width / 3f
+                        translationY = (1f - a) * travel * Space.xl.toPx() + channelsNudge.value * Space.s.toPx()
+                    }
+                }
                 .onFocusChanged { inChannels = it.hasFocus }
                 .onKeyEvent {
                     val code = it.nativeKeyEvent.keyCode
+                    if (code == AndroidKeyEvent.KEYCODE_DPAD_UP || code == AndroidKeyEvent.KEYCODE_DPAD_DOWN) {
+                        val list = items
+                        if (list == null || onKeyboard) return@onKeyEvent false
+                        val down = code == AndroidKeyEvent.KEYCODE_DPAD_DOWN
+                        // Up from Search's first result goes back to the keyboard above it.
+                        val edge = focusedIndex == (if (down) list.indexOfLast { it.focusable } else list.indexOfFirst { it.focusable }) &&
+                            (down || source != SearchSource)
+                        if (edge && it.type == KeyEventType.KeyDown) bump(channelsNudge, down)
+                        return@onKeyEvent edge
+                    }
                     if (code != AndroidKeyEvent.KEYCODE_DPAD_LEFT && code != AndroidKeyEvent.KEYCODE_DPAD_RIGHT) return@onKeyEvent false
                     if (it.type == KeyEventType.KeyDown) {
                         if (code == AndroidKeyEvent.KEYCODE_DPAD_LEFT) focusGroups()
@@ -654,7 +749,7 @@ fun ChannelOverlay(
                 else -> CompositionLocalProvider(LocalBringIntoViewSpec provides keepClear) {
                     LazyColumn(
                         state = listState,
-                        modifier = Modifier.fillMaxWidth().fillMaxHeight().edgeFade(),
+                        modifier = Modifier.fillMaxWidth().fillMaxHeight().edgeFade(ListScrim),
                         contentPadding = PaddingValues(vertical = Space.xl),
                         verticalArrangement = Arrangement.spacedBy(Space.xs),
                     ) {
@@ -670,15 +765,15 @@ fun ChannelOverlay(
                             }
                             when (item) {
                                 is ChannelItem -> {
-                                    val on = item.channel.id == current?.id
+                                    val on = item.channel.family == current?.family
                                     ChannelRow(
-                                        item.channel, nowNext[item.channel.tvgId], clock,
+                                        item.channel, nowNext[item.channel.tvgId].takeIf { linesFor.value == source.key }, clock,
                                         playing = on, watchHint = watchHint && on, focus = focus, onFocused = onFocused,
                                         onClick = { choose(item.channel, null) },
                                     )
                                 }
                                 is LiveItem -> {
-                                    val on = item.entry.tune.id == current?.id
+                                    val on = item.entry.tune.family == current?.family
                                     LiveRow(
                                         item.entry, clock, playing = on, watchHint = watchHint && on, focus = focus, onFocused = onFocused,
                                         onClick = { choose(item.entry.tune, live?.context) },
@@ -699,7 +794,7 @@ fun ChannelOverlay(
                                     onDown = { focusChannels(list.indexOfFirst { it.focusable }) },
                                 )
                                 is HitItem -> {
-                                    val on = item.hit.tune.id == current?.id
+                                    val on = item.hit.tune.family == current?.family
                                     HitRow(
                                         item.hit, clock, playing = on, watchHint = watchHint && on, focus = focus, onFocused = onFocused,
                                         onPick = { choose(item.hit.tune, null) },
@@ -715,10 +810,16 @@ fun ChannelOverlay(
 
         AnimatedVisibility(
             visible = details != null,
-            enter = Motion.fromRight(reduced),
-            exit = Motion.toRight(reduced),
+            enter = EnterTransition.None,
+            exit = ExitTransition.None,
         ) {
-            detailsShown?.let { Details(it, guide, clock, stay = { details != null }, onClose = ::closeDetails) }
+            val shownNow = reveal()
+            detailsShown?.let {
+                Details(
+                    it, guide, clock, stay = { details != null }, onClose = ::closeDetails,
+                    modifier = Modifier.slideFade({ shownNow.value * staggered(entrance()) }, Edge.Right, reduced),
+                )
+            }
         }
     }
 }
@@ -773,7 +874,7 @@ internal fun RowFrame(
 /**
  * Name and badges, then now (with progress) and next. Until the guide lookup returns, the lines are
  * held empty at full height, so rows never jump as data fills in. [watchHint] puts [WATCH_HINT] in
- * place of next.
+ * place of next. Narrow sheets leave out the [badges], so the name keeps its room.
  */
 @Composable
 internal fun ChannelRow(
@@ -785,6 +886,7 @@ internal fun ChannelRow(
     focus: FocusRequester?,
     onFocused: () -> Unit,
     onClick: () -> Unit,
+    badges: Boolean = true,
 ) {
     val lines = remember(channel, guide) { guide?.let { rowLines(channel, it) } }
     val name = remember(channel.name) { displayName(channel.name) }
@@ -792,7 +894,7 @@ internal fun ChannelRow(
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Space.s)) {
             if (playing) PlayingDot()
             Text(name, style = Type.headline, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
-            channel.badges.forEach { Badge(it) }
+            if (badges) Badges(channel.badges)
         }
         val now = lines?.now
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Space.s)) {
@@ -800,15 +902,16 @@ internal fun ChannelRow(
                 lines?.noGuide == true -> Text("No guide", style = Type.body, maxLines = 1)
                 now != null -> {
                     if (now.match) LiveMark()
-                    Text(now.title, style = Type.body, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                    Text(remember(now) { cleanTitle(now.title) }, style = Type.body, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
                     Progress(now, clock)
                 }
                 else -> Text("", style = Type.body)
             }
         }
         val next = lines?.next
-        if (watchHint) Hint(WATCH_HINT)
-        else Text(remember(next) { next?.let { "Next · ${clockTime(it.start)} ${it.title}" } ?: "" }, style = Type.caption, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        LastLine(watchHint) {
+            Text(remember(next) { next?.let { "Next · ${clockTime(it.start)} ${cleanTitle(it.title)}" } ?: "" }, style = Type.caption, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
     }
 }
 
@@ -831,8 +934,7 @@ private fun LiveRow(entry: LiveEntry, clock: State<Long>, playing: Boolean, watc
             Text(if (programme == null) "Not confirmed" else if (entry.alsoOn > 0) "$channel · +${entry.alsoOn} more" else channel, style = Type.body, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
             if (programme != null) Progress(programme, clock)
         }
-        if (watchHint) Hint(WATCH_HINT)
-        else Text(entry.comp ?: entry.via.group, style = Type.caption, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        LastLine(watchHint) { Text(entry.comp ?: entry.via.group, style = Type.caption, maxLines = 1, overflow = TextOverflow.Ellipsis) }
     }
 }
 
@@ -847,6 +949,15 @@ internal fun Progress(programme: Programme, clock: State<Long>) {
 
 /** On the playing row while the list previews: OK on it again goes full screen. */
 internal const val WATCH_HINT = "Playing · OK to watch full screen"
+
+/** A row's last line; [WATCH_HINT] fades in in its place once the row plays behind the list. */
+@Composable
+internal fun LastLine(watchHint: Boolean, line: @Composable () -> Unit) {
+    if (!watchHint) return line()
+    val shown = remember { Animatable(0f) }
+    LaunchedEffect(Unit) { shown.animateTo(1f, Motion.spring(0.3f)) }
+    Box(Modifier.graphicsLayer { alpha = shown.value }) { Hint(WATCH_HINT) }
+}
 
 /** A quiet note in place of a row's last line. */
 @Composable

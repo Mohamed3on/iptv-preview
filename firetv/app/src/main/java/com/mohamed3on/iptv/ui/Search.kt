@@ -205,7 +205,7 @@ private fun KeyCap(label: String, style: TextStyle, modifier: Modifier, focus: F
             .then(if (focus != null) Modifier.focusRequester(focus) else Modifier)
             .onFocusChanged { if (it.isFocused) onFocused() }
             .focusLift(focused, Radius.chip)
-            .background(Palette.edge)
+            .background(Palette.edge, RoundedCornerShape(Radius.chip))
             .clickable(interaction, indication = null, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
@@ -244,10 +244,7 @@ internal fun HitRow(hit: SearchHit, clock: State<Long>, playing: Boolean, watchH
             )
             if (live) Progress(p, clock)
         }
-        when {
-            hint -> Hint("Starts at ${clockTime(p.start)}")
-            watchHint -> Hint(WATCH_HINT)
-            else -> Text(hit.comp ?: hit.tune.group, style = Type.caption, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        }
+        if (hint) Hint("Starts at ${clockTime(p.start)}")
+        else LastLine(watchHint) { Text(hit.comp ?: hit.tune.group, style = Type.caption, maxLines = 1, overflow = TextOverflow.Ellipsis) }
     }
 }

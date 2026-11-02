@@ -9,6 +9,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
@@ -26,7 +27,7 @@ object Palette {
     /** Behind everything when no video is playing (first run, errors). */
     val ink = Color(0xFF0B0E12)
     /** Floating chrome over video: overlay columns, banner, quick panel. */
-    val material = Color(0xE0121820)
+    val material = Color(0xEB121820)
     /** A lighter layer for the focused row: lifts toward the viewer. */
     val raised = Color(0xFF26303C)
     /** Hairline highlight along a material's top/leading edge, as light catching it. */
@@ -103,6 +104,10 @@ fun IptvTheme(reducedMotion: Boolean, content: @Composable () -> Unit) {
             border = Palette.accent,
         ),
     ) {
-        CompositionLocalProvider(LocalReducedMotion provides reducedMotion, content = content)
+        CompositionLocalProvider(
+            LocalReducedMotion provides reducedMotion,
+            LocalTextMeasurer provides rememberTextMeasurer(cacheSize = 32),
+            content = content,
+        )
     }
 }

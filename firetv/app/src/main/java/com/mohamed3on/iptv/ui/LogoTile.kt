@@ -33,15 +33,15 @@ import com.mohamed3on.iptv.ui.theme.Type
 private val SMALL_TILE = 56.dp
 
 /**
- * A channel's logo on a fixed-size tile, so nothing shifts while it loads. Until the image arrives,
- * and when there is none or it fails, the tile shows the channel's monogram instead of an empty box.
+ * A channel's logo on a fixed-size tile, so nothing shifts while it loads (from the cache, a frame or
+ * two). When there is none or it fails, the tile shows the channel's monogram instead of an empty box.
  * The request is sized to the tile.
  */
 @Composable
 fun LogoTile(channel: Channel, size: DpSize, modifier: Modifier = Modifier) {
     val context = LocalPlatformContext.current
     val density = LocalDensity.current
-    var loaded by remember(channel.logo) { mutableStateOf(false) }
+    var failed by remember(channel.logo) { mutableStateOf(false) }
     val request = remember(channel.logo, size) {
         channel.logo.takeIf { it.isNotEmpty() }?.let {
             with(density) { ImageRequest.Builder(context).data(it).size(size.width.roundToPx(), size.height.roundToPx()).build() }
@@ -51,14 +51,13 @@ fun LogoTile(channel: Channel, size: DpSize, modifier: Modifier = Modifier) {
         modifier.size(size).clip(RoundedCornerShape(Radius.row)).background(Palette.raised),
         contentAlignment = Alignment.Center,
     ) {
-        if (!loaded) Text(remember(channel.name) { monogram(channel.name) }, style = Type.headline.copy(color = Palette.textSecondary), maxLines = 1)
+        if (request == null || failed) Text(remember(channel.name) { monogram(channel.name) }, style = Type.headline.copy(color = Palette.textSecondary), maxLines = 1)
         if (request != null) {
             AsyncImage(
                 model = request,
                 contentDescription = null,
                 contentScale = ContentScale.Fit,
-                onSuccess = { loaded = true },
-                onError = { loaded = false },
+                onError = { failed = true },
                 modifier = Modifier.fillMaxSize().padding(if (size.height <= SMALL_TILE) Space.xs else Space.s),
             )
         }

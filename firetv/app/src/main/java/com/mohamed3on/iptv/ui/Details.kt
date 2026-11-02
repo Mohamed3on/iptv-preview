@@ -38,7 +38,7 @@ import com.mohamed3on.iptv.data.Channel
 import com.mohamed3on.iptv.data.GuideDb
 import com.mohamed3on.iptv.data.Programme
 import com.mohamed3on.iptv.data.displayName
-import com.mohamed3on.iptv.ui.theme.Badge
+import com.mohamed3on.iptv.ui.theme.Badges
 import com.mohamed3on.iptv.ui.theme.LiveMark
 import com.mohamed3on.iptv.ui.theme.Palette
 import com.mohamed3on.iptv.ui.theme.Space
@@ -105,7 +105,7 @@ internal fun Details(channel: Channel, guide: GuideDb?, clock: State<Long>, stay
         Column(Modifier.padding(horizontal = Space.xl), verticalArrangement = Arrangement.spacedBy(Space.s)) {
             Text(remember(channel.name) { displayName(channel.name) }, style = Type.title, maxLines = 2, overflow = TextOverflow.Ellipsis)
             if (channel.badges.isNotEmpty()) {
-                Row(horizontalArrangement = Arrangement.spacedBy(Space.s)) { channel.badges.forEach { Badge(it) } }
+                Badges(channel.badges)
             }
         }
         val programmes = schedule ?: return@Column
@@ -122,7 +122,7 @@ internal fun Details(channel: Channel, guide: GuideDb?, clock: State<Long>, stay
             runCatching { first.requestFocus() }
         }
         LazyColumn(
-            Modifier.fillMaxWidth().weight(1f).edgeFade(),
+            Modifier.fillMaxWidth().weight(1f).edgeFade(Palette.material),
             contentPadding = PaddingValues(horizontal = Space.m, vertical = Space.s),
         ) {
             items(lines, key = { it.key }, contentType = { it::class }) { line ->
@@ -153,7 +153,7 @@ private fun ScheduleRow(programme: Programme, clock: State<Long>, focus: FocusRe
         Text(clockTime(programme.start), style = Type.caption, modifier = Modifier.width(TIME_WIDTH))
         if (airing && programme.match) LiveMark()
         Text(
-            programme.title,
+            remember(programme) { cleanTitle(programme.title) },
             style = if (airing) Type.body.copy(color = Palette.textPrimary) else Type.body,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,

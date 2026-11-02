@@ -67,6 +67,8 @@ fun keyAction(key: RemoteKey, screen: PlayerKeys, feed: Feed): KeyAction {
     if (screen.layer != Layer.None) return when {
         key == RemoteKey.Back -> KeyAction.Close
         key == RemoteKey.Menu && screen.layer == Layer.QuickPanel -> KeyAction.Close
+        // Recent came in with Right; Left sends it back the way it came.
+        key == RemoteKey.Left && screen.layer == Layer.Recent -> KeyAction.Close
         else -> KeyAction.Pass
     }
     if (key == RemoteKey.Menu) return KeyAction.OpenPanel
@@ -105,14 +107,17 @@ private fun Feed.zapNeighbour(from: Channel, down: Boolean): Channel? {
     return neighbour(channelsIn(here.group), here, down)
 }
 
-/** The channel after or before [from] in [list], wrapping; null when [from] is not in it or alone. */
+/**
+ * The channel after or before [from] in [list], wrapping; null when [from] is not in it or alone.
+ * A spare feed (from Recent, say) stands at its family's row.
+ */
 private fun neighbour(list: List<Channel>, from: Channel, down: Boolean): Channel? {
-    val i = list.indexOfFirst { it.identity == from.identity }
+    val i = list.indexOfFirst { it.identity == from.identity }.takeIf { it >= 0 } ?: list.indexOfFirst { it.family == from.family }
     if (i < 0) return null
-    return list[(i + if (down) 1 else -1).mod(list.size)].takeIf { it.identity != from.identity }
+    return list[(i + if (down) 1 else -1).mod(list.size)].takeIf { it.family != from.family }
 }
 
 /** The step [down] (or up) through [list] from [from]; from outside it, its first (or last) channel. */
 internal fun stepThrough(list: List<Channel>, from: Channel?, down: Boolean): Channel? =
-    if (from != null && list.any { it.identity == from.identity }) neighbour(list, from, down)
+    if (from != null && list.any { it.family == from.family }) neighbour(list, from, down)
     else if (down) list.firstOrNull() else list.lastOrNull()

@@ -24,10 +24,12 @@ import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.DpOffset
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.tv.material3.Text
@@ -206,7 +208,9 @@ fun MultiViewTiles(state: MultiViewState<ExoStreamPlayer>, guide: GuideDb?, cloc
         state.tiles.forEachIndexed { i, tile ->
             key(tile.player) {
                 val o = at(i)
-                Box(Modifier.offset(o.x, o.y).size(w, h), contentAlignment = Alignment.Center) {
+                // Clipped, because a SurfaceView punches its hole by clearing the whole clip it draws in:
+                // unclipped, each tile's punch wiped the captions of the tiles drawn before it.
+                Box(Modifier.offset(o.x, o.y).size(w, h).clipToBounds(), contentAlignment = Alignment.Center) {
                     AndroidView(
                         factory = { SurfaceView(it).apply { keepScreenOn = true }.also(tile.player.exo::setVideoSurfaceView) },
                         modifier = Modifier.fillMaxSize(),
@@ -219,12 +223,13 @@ fun MultiViewTiles(state: MultiViewState<ExoStreamPlayer>, guide: GuideDb?, cloc
 
         val ring = at(state.selected.coerceIn(0, (n - 1).coerceAtLeast(0)))
         val spec = if (reduced) snap<Dp>() else Motion.focus<Dp>()
-        val x by animateDpAsState(ring.x, spec, label = "ringX")
-        val y by animateDpAsState(ring.y, spec, label = "ringY")
+        // Read while placing, so the glide moves the ring without recomposing the grid each frame.
+        val x = animateDpAsState(ring.x, spec, label = "ringX")
+        val y = animateDpAsState(ring.y, spec, label = "ringY")
         val pad = RING_GAP + RING_WIDTH
         if (n > 0) Box(
             Modifier
-                .offset(x - pad, y - pad)
+                .offset { IntOffset((x.value - pad).roundToPx(), (y.value - pad).roundToPx()) }
                 .size(w + pad * 2, h + pad * 2)
                 .border(RING_WIDTH, Palette.accent, RoundedCornerShape(Radius.chip + RING_GAP)),
         )

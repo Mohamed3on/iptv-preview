@@ -23,6 +23,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -66,8 +67,10 @@ fun QuickPanel(
     onRoute: (RouteChoice) -> Unit,
     onDiagnostics: () -> Unit,
     modifier: Modifier = Modifier,
+    open: Boolean = true,
     views: @Composable ColumnScope.() -> Unit = {},
 ) {
+    val stay by rememberUpdatedState(open)
     var page by remember { mutableStateOf(Page.Main) }
     // The row a nested list was opened from gets focus back when it closes.
     var openedFrom by remember { mutableStateOf<Page?>(null) }
@@ -88,8 +91,9 @@ fun QuickPanel(
                 }
                 true
             }
-            // Focus stays in the panel: Left/Right never land on the video underneath.
-            .focusProperties { onExit = { cancelFocusChange() } }
+            // Focus stays in the panel while it is open: Left/Right never land on the video underneath.
+            // Once it closes, focus may leave at once (to the list that Multi-view opens, say).
+            .focusProperties { onExit = { if (stay) cancelFocusChange() } }
             .focusGroup()
             .padding(Space.xl),
     ) {

@@ -3,6 +3,8 @@ package com.mohamed3on.iptv.ui
 import android.view.SurfaceView
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.SizeTransform
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.animateFloat
@@ -65,6 +67,10 @@ import com.mohamed3on.iptv.data.ChannelIdentity
 import com.mohamed3on.iptv.data.Feed
 import com.mohamed3on.iptv.data.GuideDb
 import com.mohamed3on.iptv.player.LiveQuality
+import com.mohamed3on.iptv.ui.theme.Badges
+import com.mohamed3on.iptv.ui.theme.Edge
+import com.mohamed3on.iptv.ui.theme.reveal
+import com.mohamed3on.iptv.ui.theme.slideFade
 import com.mohamed3on.iptv.update.updateRow
 import com.mohamed3on.iptv.data.displayName
 import com.mohamed3on.iptv.data.NowNext
@@ -77,7 +83,6 @@ import com.mohamed3on.iptv.player.ExoStreamPlayer
 import com.mohamed3on.iptv.player.Phase
 import com.mohamed3on.iptv.player.SessionState
 import com.mohamed3on.iptv.player.StreamSession
-import com.mohamed3on.iptv.ui.theme.Badge
 import com.mohamed3on.iptv.ui.theme.LiveMark
 import com.mohamed3on.iptv.ui.theme.LocalReducedMotion
 import com.mohamed3on.iptv.ui.theme.Motion
@@ -194,7 +199,7 @@ private fun PlayerChrome(feed: Feed, session: StreamSession, audio: AudioTracks?
                 val now = System.currentTimeMillis() / 1000
                 // The guide can be swapped (and the old file closed) mid-read after a download.
                 val matches = withContext(Dispatchers.IO) {
-                    runCatching { feed.liveNow(g?.airingMatches(now).orEmpty()).context.distinctBy { it.identity } }.getOrNull()
+                    runCatching { feed.liveNow(g?.airingMatches(now).orEmpty()).context }.getOrNull()
                 } ?: return@launch
                 val from = session.state.value.requested
                 val to = stepThrough(matches, from, action.down)
@@ -245,12 +250,13 @@ private fun PlayerChrome(feed: Feed, session: StreamSession, audio: AudioTracks?
 
         AnimatedVisibility(
             visible = banner && layer == Layer.None && state.requested != null && !multiView,
-            enter = fadeIn(Motion.panel()),
-            exit = fadeOut(Motion.panel()),
+            enter = EnterTransition.None,
+            exit = ExitTransition.None,
             modifier = Modifier.align(Alignment.BottomCenter),
         ) {
             // The scrim fades; the banner itself rises from the bottom and sinks back.
-            Box(Modifier.fillMaxWidth().bottomScrim().padding(top = Space.xxxl * 2)) {
+            val shown = reveal()
+            Box(Modifier.fillMaxWidth().bottomScrim { shown.value }.padding(top = Space.xxxl * 2)) {
                 AnimatedContent(
                     targetState = state.requested,
                     contentKey = { it?.identity },
@@ -261,7 +267,7 @@ private fun PlayerChrome(feed: Feed, session: StreamSession, audio: AudioTracks?
                     },
                     modifier = Modifier
                         .fillMaxWidth()
-                        .animateEnterExit(enter = Motion.fromBottom(reduced), exit = Motion.toBottom(reduced))
+                        .slideFade({ shown.value }, Edge.Bottom, reduced)
                         .padding(Space.safe),
                     label = "banner",
                 ) { channel ->
@@ -270,6 +276,7 @@ private fun PlayerChrome(feed: Feed, session: StreamSession, audio: AudioTracks?
                     if (channel != null) Banner(
                         channel, feed, guide, clock, tuning && channel.identity == state.requested?.identity, liveBadges ?: channel.badges,
                         note = note?.takeIf { it.first == channel.identity }?.second,
+                        liveNow = zapContext,
                     )
                 }
             }
@@ -289,11 +296,12 @@ private fun PlayerChrome(feed: Feed, session: StreamSession, audio: AudioTracks?
         // The scrim fades; the list itself slides in from the left and back out to it.
         AnimatedVisibility(
             visible = layer == Layer.ChannelList,
-            enter = fadeIn(Motion.panel()),
-            exit = fadeOut(Motion.panel()),
+            enter = EnterTransition.None,
+            exit = ExitTransition.None,
             modifier = Modifier.fillMaxSize(),
         ) {
-            Box(Modifier.fillMaxSize().leftScrim().onFocusChanged { layerFocused = it.hasFocus }) {
+            val shown = reveal()
+            Box(Modifier.fillMaxSize().leftScrim { shown.value }.onFocusChanged { layerFocused = it.hasFocus }) {
                 val selectedTile = grid.tiles.getOrNull(grid.selected)?.channel
                 key(opens) { ChannelOverlay(
                     updateRow = updateRow(graph.updater),
@@ -317,11 +325,13 @@ private fun PlayerChrome(feed: Feed, session: StreamSession, audio: AudioTracks?
                         pick = null
                         val onScreen = if (multiView) grid.tiles.map { it.channel.family } else listOfNotNull(state.requested?.family)
                         if (purpose == null) {
-                            zapContext = context
-                            // Picking what is already on just closes the list; it never retunes.
-                            if (channel.identity != state.requested?.identity) {
+                            // Picking the channel already on (in any group) just closes the list; it never retunes.
+                            if (channel.family != state.requested?.family) {
+                                zapContext = context
                                 down = null
                                 session.zap(channel, feed)
+                            } else {
+                                zapContext = context
                             }
                         } else if (channel.family !in onScreen) { // a channel already on screen never gets a second tile
                             when (purpose) {
@@ -331,18 +341,20 @@ private fun PlayerChrome(feed: Feed, session: StreamSession, audio: AudioTracks?
                             }
                         }
                     },
-                    modifier = Modifier.animateEnterExit(enter = Motion.fromLeft(reduced), exit = Motion.toLeft(reduced)),
+                    entrance = { shown.value },
                 ) }
             }
         }
 
         AnimatedVisibility(
             visible = layer == Layer.Recent,
-            enter = Motion.fromRight(reduced),
-            exit = Motion.toRight(reduced),
+            enter = EnterTransition.None,
+            exit = ExitTransition.None,
             modifier = Modifier.align(Alignment.CenterEnd).padding(Space.safe).onFocusChanged { layerFocused = it.hasFocus },
         ) {
+            val shown = reveal()
             RecentSheet(
+                modifier = Modifier.slideFade({ shown.value }, Edge.Right, reduced),
                 feed = feed,
                 guide = guide,
                 clock = clock,
@@ -351,7 +363,7 @@ private fun PlayerChrome(feed: Feed, session: StreamSession, audio: AudioTracks?
                 open = layer == Layer.Recent,
                 onPick = { channel ->
                     layer = Layer.None
-                    if (channel.identity != state.requested?.identity) {
+                    if (channel.family != state.requested?.family) {
                         down = null
                         zapContext = null
                         session.zap(channel, feed)
@@ -362,14 +374,17 @@ private fun PlayerChrome(feed: Feed, session: StreamSession, audio: AudioTracks?
 
         AnimatedVisibility(
             visible = layer == Layer.QuickPanel,
-            enter = Motion.fromRight(reduced),
-            exit = Motion.toRight(reduced),
+            enter = EnterTransition.None,
+            exit = ExitTransition.None,
             modifier = Modifier.align(Alignment.CenterEnd).padding(Space.safe),
         ) {
+            val shown = reveal()
             val audioState = audio?.state?.collectAsState()?.value ?: AudioState()
             val choice by graph.route.choice.collectAsState()
             val effective by graph.route.effective.collectAsState()
             QuickPanel(
+                modifier = Modifier.slideFade({ shown.value }, Edge.Right, reduced),
+                open = layer == Layer.QuickPanel,
                 // The audio tracks are the full-screen player's, which multi-view stops.
                 audio = if (multiView) AudioState() else audioState,
                 onAudio = { audio?.select(it) },
@@ -416,25 +431,29 @@ private fun PlayerChrome(feed: Feed, session: StreamSession, audio: AudioTracks?
     }
 }
 
-/** Logo, name and badges, now and next, and where the channel sits in its group; above that, a passing [note]. */
+/**
+ * Logo, name and badges, now and next, and where Up/Down move from: Live now when it was tuned from
+ * there ([liveNow], the zap context), else its group. Above that, a passing [note].
+ */
 @Composable
-private fun Banner(channel: Channel, feed: Feed, guide: GuideDb?, clock: State<Long>, tuning: Boolean, badges: List<String>, note: String?) {
-    val group = feed.channelsIn(channel.group)
-    val position = group.indexOfFirst { it.identity == channel.identity }
+private fun Banner(channel: Channel, feed: Feed, guide: GuideDb?, clock: State<Long>, tuning: Boolean, badges: List<String>, note: String?, liveNow: List<Channel>?) {
+    val inLiveNow = liveNow?.takeIf { list -> list.any { it.family == channel.family } }
+    val list = inLiveNow ?: feed.channelsIn(channel.group)
+    val position = list.indexOfFirst { it.identity == channel.identity }.takeIf { it >= 0 } ?: list.indexOfFirst { it.family == channel.family }
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(Space.xl), verticalAlignment = Alignment.CenterVertically) {
         LogoTile(channel, LOGO_SIZE)
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(Space.xs)) {
             Row(horizontalArrangement = Arrangement.spacedBy(Space.m), verticalAlignment = Alignment.CenterVertically) {
                 Text(remember(channel.name) { displayName(channel.name) }, style = Type.title, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
-                badges.forEach { Badge(it) }
+                Badges(badges)
                 if (tuning) Tuning()
             }
             Guide(channel, guide, clock)
         }
         Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(Space.xs)) {
             if (note != null) Text(note, style = Type.headline, maxLines = 1)
-            Text(channel.group, style = Type.caption, maxLines = 1)
-            if (position >= 0) Text("${position + 1} of ${group.size}", style = Type.caption)
+            Text(if (inLiveNow != null) "Live now" else channel.group, style = Type.caption, maxLines = 1)
+            if (position >= 0) Text("${position + 1} of ${list.size}", style = Type.caption)
         }
     }
 }
@@ -458,7 +477,7 @@ private fun Guide(channel: Channel, guide: GuideDb?, clock: State<Long>) {
     if (now != null) {
         Row(horizontalArrangement = Arrangement.spacedBy(Space.s), verticalAlignment = Alignment.CenterVertically) {
             if (now.match) LiveMark()
-            Text(now.title, style = Type.headline, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(remember(now) { if (now.match) fixtureOf(now.title) else cleanTitle(now.title) }, style = Type.headline, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         Row(horizontalArrangement = Arrangement.spacedBy(Space.m), verticalAlignment = Alignment.CenterVertically) {
             Text("${clockTime(now.start)} – ${clockTime(now.stop)}", style = Type.caption)
@@ -469,7 +488,7 @@ private fun Guide(channel: Channel, guide: GuideDb?, clock: State<Long>) {
         }
     }
     if (next != null && !next.synthetic) {
-        Text("Next · ${clockTime(next.start)} ${next.title}", style = Type.body, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text("Next · ${clockTime(next.start)} ${cleanTitle(next.title)}", style = Type.body, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 

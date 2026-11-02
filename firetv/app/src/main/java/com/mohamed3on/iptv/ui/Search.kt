@@ -33,8 +33,17 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.runtime.withFrameNanos
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
@@ -128,26 +137,76 @@ private val CARET = DpSize(2.dp, 22.dp)
 private val ACTIVITY_HEIGHT = 3.dp
 private const val SPACE = "Space"
 private const val DELETE = "Delete"
-/** Three rows of 13 cells: a–m, n–z, then 0–9 with Space and Delete taking a cell and a half each. */
+private const val VOICE = "Voice search"
+/**
+ * Three rows of 13 cells: a–m, n–z, then 0–9 with Space and Delete taking a cell and a half each;
+ * then Voice search across the width.
+ */
 private val KEYS: List<List<String>> =
     listOf("abcdefghijklm", "nopqrstuvwxyz", "0123456789").map { row -> row.map(Char::toString) }
-        .let { it.dropLast(1) + listOf(it.last() + listOf(SPACE, DELETE)) }
+        .let { it.dropLast(1) + listOf(it.last() + listOf(SPACE, DELETE), listOf(VOICE)) }
 
 /**
  * The query (with a caret) over a compact on-screen keyboard, so typing never covers the video with
  * the system IME. Left from the first column goes back to the groups (the overlay handles it); Down
  * from the last row calls [onDown]. [entry] focuses the key last used. [busy] shows a quiet line
  * under the query while a search runs; its height is always kept, so the keys never move.
+ *
+ * Voice search hands the query to the Fire TV keyboard: apps never get the remote's mic, but that
+ * keyboard does ("Speak to search"), and what it hears is typed into the query. Its Search action,
+ * Back or moving off the query hands focus back to the keys.
  */
 @Composable
 internal fun SearchBox(query: String, busy: Boolean, onQuery: (String) -> Unit, entry: FocusRequester, onFocused: () -> Unit, onDown: () -> Unit) {
     var at by remember { mutableStateOf(0 to 0) }
     val focusManager = LocalFocusManager.current
+    var listening by remember { mutableStateOf(false) }
+    var field by remember { mutableStateOf(TextFieldValue()) }
+    val voice = remember { FocusRequester() }
+    val keyboard = LocalSoftwareKeyboardController.current
+    // Back to the Voice search key before the field goes, so focus never drops out of the list.
+    fun stopListening() {
+        runCatching { entry.requestFocus() }
+        keyboard?.hide()
+        listening = false
+    }
+    LaunchedEffect(listening) {
+        if (!listening) return@LaunchedEffect
+        field = TextFieldValue(query, TextRange(query.length))
+        withFrameNanos {}
+        runCatching { voice.requestFocus() }
+        keyboard?.show()
+    }
     Column(Modifier.fillMaxWidth().padding(horizontal = Space.m), verticalArrangement = Arrangement.spacedBy(Space.l)) {
         Column(verticalArrangement = Arrangement.spacedBy(Space.xs)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(query, style = Type.title, maxLines = 1, overflow = TextOverflow.StartEllipsis, modifier = Modifier.weight(1f, fill = false))
-                Box(Modifier.padding(start = 2.dp).size(CARET).clip(RoundedCornerShape(1.dp)).background(Palette.accent))
+                if (listening) {
+                    var held by remember { mutableStateOf(false) }
+                    BasicTextField(
+                        field,
+                        onValueChange = {
+                            field = it
+                            onQuery(it.text)
+                        },
+                        textStyle = Type.title,
+                        singleLine = true,
+                        cursorBrush = SolidColor(Palette.accent),
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                        keyboardActions = KeyboardActions(onSearch = { stopListening() }),
+                        modifier = Modifier
+                            .weight(1f)
+                            .focusRequester(voice)
+                            .onFocusChanged { if (it.isFocused) held = true else if (held) listening = false }
+                            .onKeyEvent {
+                                if (it.nativeKeyEvent.keyCode != AndroidKeyEvent.KEYCODE_BACK) return@onKeyEvent false
+                                if (it.type == KeyEventType.KeyUp) stopListening()
+                                true
+                            },
+                    )
+                } else {
+                    Text(query, style = Type.title, maxLines = 1, overflow = TextOverflow.StartEllipsis, modifier = Modifier.weight(1f, fill = false))
+                    Box(Modifier.padding(start = 2.dp).size(CARET).clip(RoundedCornerShape(1.dp)).background(Palette.accent))
+                }
             }
             val shown by animateFloatAsState(if (busy) 1f else 0f, Motion.panel(), label = "busy")
             Box(Modifier.height(ACTIVITY_HEIGHT)) {
@@ -180,6 +239,10 @@ internal fun SearchBox(query: String, busy: Boolean, onQuery: (String) -> Unit, 
                             focus = if (at == r to c) entry else null,
                             onFocused = { at = r to c; onFocused() },
                         ) {
+                            if (key == VOICE) {
+                                listening = true
+                                return@KeyCap
+                            }
                             onQuery(
                                 when (key) {
                                     DELETE -> query.dropLast(1)

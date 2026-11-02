@@ -212,6 +212,9 @@ describe('competition groups', () => {
     ])).toEqual([])
     // Tagged live is live.
     expect(rerun([air('a', 'Liverpool v Arsenal', 10), air('b', 'Live: Liverpool v Arsenal', 13)])).toEqual([])
+    // A channel's title template is not a fixture; the same clubs in another competition are another match.
+    expect(rerun([air('pl', 'Liga włoska - mecz: US Sassuolo Calcio - ACF Fiorentina', 10), air('pl', 'Liga włoska - mecz: Atalanta BC - Parma Calcio 1913', 13)])).toEqual([])
+    expect(rerun([air('a', 'Everton vs Newcastle United - Carabao Cup', 10), air('b', 'Newcastle United vs Everton - English Premier League', 30)])).toEqual([])
   })
 
   test('Jev verdicts count only confident live men\'s matches; no key means the regexes decide', async () => {

@@ -5,6 +5,7 @@ import androidx.media3.common.MimeTypes
 import androidx.media3.exoplayer.ExoPlayer
 import com.mohamed3on.iptv.data.Channel
 import com.mohamed3on.iptv.data.Route
+import com.mohamed3on.iptv.data.RouteKind
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -102,6 +103,13 @@ class Telemetry(
             }
             prev = s
         }
+    }
+
+    /** A rebuffer while [feed] played, with the line's speed and the stream's bitrate in Mbps when measured. */
+    fun rebuffer(feed: Channel, network: Float?, stream: Float?, route: RouteKind) = record("rebuffer") {
+        put("id", feed.id); put("route", route.name.lowercase())
+        network?.let { put("netMbps", it) }
+        stream?.let { put("streamMbps", it) }
     }
 
     /** Sends [feed]'s measured quality once per app run, once its frame rate is known. */

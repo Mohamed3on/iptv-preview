@@ -37,6 +37,8 @@ data class PlayerKeys(
     val layer: Layer = Layer.None,
     val context: List<Channel>? = null,
     val multiView: Boolean = false,
+    /** The info view (banner with the stream's numbers) is up. */
+    val info: Boolean = false,
 )
 
 sealed interface KeyAction {
@@ -48,6 +50,9 @@ sealed interface KeyAction {
     data object OpenPanel : KeyAction
     /** The channels watched last, in a sheet from the right. */
     data object OpenRecent : KeyAction
+    /** The banner with the stream's numbers and health, until Back (or OK, which goes on to the list). */
+    data object ShowInfo : KeyAction
+    data object HideInfo : KeyAction
     /** The next (or previous) match in Live now, which becomes the zap context. */
     data class LiveZap(val down: Boolean) : KeyAction
     /** Multi-view: moves the selection, and the sound, toward [key]. */
@@ -87,9 +92,11 @@ fun keyAction(key: RemoteKey, screen: PlayerKeys, feed: Feed): KeyAction {
             val next = screen.context?.let { neighbour(it, current, down) } ?: feed.zapNeighbour(current, down)
             next?.let { KeyAction.Zap(it, down) } ?: KeyAction.Ignore
         }
-        RemoteKey.Ok -> KeyAction.OpenOverlay(current)
+        // OK shows more each press: the info view, then the channel list.
+        RemoteKey.Ok -> if (screen.info) KeyAction.OpenOverlay(current) else KeyAction.ShowInfo
         RemoteKey.Menu -> KeyAction.OpenPanel // handled above, with or without a channel
         RemoteKey.Back -> {
+            if (screen.info) return KeyAction.HideInfo
             // History records a channel once it plays, so until the requested one does, the last is the one before it.
             val before = screen.last?.takeIf { it.identity != current.identity } ?: screen.previous
             before?.let(feed::resolve)?.takeIf { it.identity != current.identity }?.let(KeyAction::Previous) ?: KeyAction.Ignore

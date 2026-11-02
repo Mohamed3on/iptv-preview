@@ -92,6 +92,14 @@ import com.mohamed3on.iptv.ui.theme.ProgressLine
 import com.mohamed3on.iptv.ui.theme.Scrim
 import com.mohamed3on.iptv.ui.theme.Space
 import com.mohamed3on.iptv.ui.theme.Type
+import com.mohamed3on.iptv.player.Health
+import com.mohamed3on.iptv.player.AudioOption
+import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import kotlin.math.roundToInt
+import java.util.Locale
+import androidx.compose.foundation.shape.CircleShape
+import com.mohamed3on.iptv.ui.theme.Radius
 import com.mohamed3on.iptv.ui.theme.tabular
 import com.mohamed3on.iptv.ui.theme.bottomScrim
 import com.mohamed3on.iptv.ui.theme.leftScrim
@@ -111,6 +119,12 @@ private val PROGRESS_WIDTH = 200.dp
 private val CARD_WIDTH = 560.dp
 /** After launch's banner has sunk, so building the hidden list never competes with anything on screen. */
 private const val LIST_BUILD_DELAY_MS = BANNER_MS + 2_000L
+/** How long a previewed channel plays before the list steps back from it. */
+private const val PEEK_DELAY_MS = 700L
+/** How far the list fades while it steps back. */
+private const val RECEDE = 0.85f
+/** How long the corner says why before only its dot stays. */
+private const val HEALTH_TEXT_MS = 6_000L
 
 /**
  * The full-screen player (R10, R14): the video, with chrome only when asked for. The channel
@@ -121,12 +135,12 @@ private const val LIST_BUILD_DELAY_MS = BANNER_MS + 2_000L
  * [tiles] has any, they replace the full-screen video (U11).
  */
 @Composable
-fun PlayerScreen(feed: Feed, session: StreamSession?, audio: AudioTracks?, surface: SurfaceView, tiles: MultiView<ExoStreamPlayer>, live: Pair<Int, LiveQuality>?) {
+fun PlayerScreen(feed: Feed, session: StreamSession?, audio: AudioTracks?, surface: SurfaceView, tiles: MultiView<ExoStreamPlayer>, live: Pair<Int, LiveQuality>?, health: Health?) {
     val grid by tiles.state.collectAsState()
     Box(Modifier.fillMaxSize().background(Color.Black)) {
         // Gone, not just stopped, in multi-view: its last frame would fight the tiles' surfaces.
         if (grid.tiles.isEmpty()) AndroidView(factory = { surface }, modifier = Modifier.fillMaxSize())
-        if (session != null) PlayerChrome(feed, session, audio, tiles, grid, live)
+        if (session != null) PlayerChrome(feed, session, audio, tiles, grid, live, health)
     }
 }
 
@@ -134,7 +148,7 @@ fun PlayerScreen(feed: Feed, session: StreamSession?, audio: AudioTracks?, surfa
 private enum class Pick { MultiView, AddTile, ReplaceTile }
 
 @Composable
-private fun PlayerChrome(feed: Feed, session: StreamSession, audio: AudioTracks?, tiles: MultiView<ExoStreamPlayer>, grid: MultiViewState<ExoStreamPlayer>, live: Pair<Int, LiveQuality>?) {
+private fun PlayerChrome(feed: Feed, session: StreamSession, audio: AudioTracks?, tiles: MultiView<ExoStreamPlayer>, grid: MultiViewState<ExoStreamPlayer>, live: Pair<Int, LiveQuality>?, health: Health?) {
     val graph = LocalContext.current.graph
     val reduced = LocalReducedMotion.current
     val multiView = grid.tiles.isNotEmpty()
@@ -159,6 +173,8 @@ private fun PlayerChrome(feed: Feed, session: StreamSession, audio: AudioTracks?
     // A brief line in the banner for the channel it was said on ("No matches on right now").
     var note by remember { mutableStateOf<Pair<ChannelIdentity?, String>?>(null) }
     var bannerKick by remember { mutableStateOf(0) }
+    // OK's info view: the banner stays up, with the stream's numbers, across zaps until Back.
+    var info by remember { mutableStateOf(false) }
 
     // Until the debounced tune starts, the feed playing is still the previous channel's (KTD9).
     val tuning = state.phase == Phase.Connecting || state.feed?.family != state.requested?.family
@@ -180,6 +196,7 @@ private fun PlayerChrome(feed: Feed, session: StreamSession, audio: AudioTracks?
 
     // Afresh each time, even when reopened while the list is still sliding away.
     fun openList(groups: Boolean) {
+        info = false
         opens++
         openInGroups = groups
         layer = Layer.ChannelList
@@ -196,6 +213,8 @@ private fun PlayerChrome(feed: Feed, session: StreamSession, audio: AudioTracks?
                 session.zap(action.to, feed)
             }
             is KeyAction.OpenOverlay -> openList(groups = action.groups)
+            KeyAction.ShowInfo -> info = true
+            KeyAction.HideInfo -> info = false
             KeyAction.OpenPanel -> layer = Layer.QuickPanel
             KeyAction.OpenRecent -> layer = Layer.Recent
             is KeyAction.LiveZap -> scope.launch {
@@ -242,7 +261,7 @@ private fun PlayerChrome(feed: Feed, session: StreamSession, audio: AudioTracks?
             .onKeyEvent { event ->
                 val key = remoteKey(event.nativeKeyEvent.keyCode) ?: return@onKeyEvent false
                 if ((layer == Layer.ChannelList || layer == Layer.Recent) && !layerFocused && key != RemoteKey.Back) return@onKeyEvent true
-                val action = keyAction(key, PlayerKeys(state.requested, graph.history.last, graph.history.previous, layer, zapContext, multiView), feed)
+                val action = keyAction(key, PlayerKeys(state.requested, graph.history.last, graph.history.previous, layer, zapContext, multiView, info), feed)
                 if (action == KeyAction.Pass) return@onKeyEvent false
                 if (event.type == KeyEventType.KeyDown) perform(action)
                 true // the key-up too, so Back never reaches the activity and leaves the app
@@ -252,8 +271,11 @@ private fun PlayerChrome(feed: Feed, session: StreamSession, audio: AudioTracks?
     ) {
         if (multiView) MultiViewTiles(grid, guide, clock)
 
+        val audioSelected = audio?.state?.collectAsState()?.value?.selected
+        val route by graph.route.effective.collectAsState()
+        val bannerUp = (banner || info) && layer == Layer.None && state.requested != null && !multiView
         AnimatedVisibility(
-            visible = banner && layer == Layer.None && state.requested != null && !multiView,
+            visible = bannerUp,
             enter = EnterTransition.None,
             exit = ExitTransition.None,
             modifier = Modifier.align(Alignment.BottomCenter),
@@ -276,11 +298,17 @@ private fun PlayerChrome(feed: Feed, session: StreamSession, audio: AudioTracks?
                     label = "banner",
                 ) { channel ->
                     // Live badges once the playing feed is measured; the server's probed ones until then.
-                    val liveBadges = live?.takeIf { channel?.identity == state.requested?.identity && it.first == state.feed?.id }?.second?.badges
+                    val here = channel?.identity == state.requested?.identity
+                    val quality = live?.takeIf { here && it.first == state.feed?.id }?.second
                     if (channel != null) Banner(
-                        channel, feed, guide, clock, tuning && channel.identity == state.requested?.identity, liveBadges ?: channel.badges,
+                        channel, feed, guide, clock, tuning && here, quality?.badges ?: channel.badges,
                         note = note?.takeIf { it.first == channel.identity }?.second,
                         liveNow = zapContext,
+                        health = health.takeIf { here },
+                        stats = if (info && here) {
+                            val members = feed.familyMembers(channel.family)
+                            streamStats(quality, audioSelected, health, route, members.indexOfFirst { it.id == state.feed?.id }, members.size, state.feed?.id)
+                        } else null,
                     )
                 }
             }
@@ -297,6 +325,12 @@ private fun PlayerChrome(feed: Feed, session: StreamSession, audio: AudioTracks?
             }
         }
 
+        // Trouble shows itself while nothing else is up: the dot and why, the why folding away after a moment.
+        HealthCorner(
+            health?.takeIf { it.corner && !bannerUp && layer == Layer.None && !multiView && problem == null },
+            Modifier.align(Alignment.TopEnd).padding(Space.safe),
+        )
+
         // The scrim fades; the list itself slides in from the left and back out to it. The list is built
         // once, unseen, after launch has settled (the banner gone), and stays built while hidden (drawing
         // nothing), so every opening is only the slide.
@@ -307,13 +341,31 @@ private fun PlayerChrome(feed: Feed, session: StreamSession, audio: AudioTracks?
             delay(LIST_BUILD_DELAY_MS)
             listBuilt = true
         }
+        // Once a previewed row plays, the list recedes so the picture shows; any key brings it back.
+        var previewed by remember { mutableStateOf<ChannelIdentity?>(null) }
+        var peek by remember { mutableStateOf(false) }
+        LaunchedEffect(previewed, state.phase, listOpen) {
+            peek = false
+            if (listOpen && previewed != null && state.phase == Phase.Playing && state.requested?.identity == previewed) {
+                delay(PEEK_DELAY_MS)
+                peek = true
+            }
+        }
+        val recede = animateFloatAsState(if (peek && listOpen) 1f else 0f, if (reduced) tween(Motion.FADE_MS) else Motion.panel(), label = "recede")
         if (listBuilt || opens > 0) {
             Box(
                 Modifier
                     .fillMaxSize()
-                    .graphicsLayer { alpha = if (shown.value > 0f) 1f else 0f }
+                    .graphicsLayer {
+                        alpha = if (shown.value > 0f) 1f - RECEDE * recede.value else 0f
+                        compositingStrategy = CompositingStrategy.ModulateAlpha
+                    }
                     .leftScrim { shown.value }
-                    .onFocusChanged { layerFocused = it.hasFocus },
+                    .onFocusChanged { layerFocused = it.hasFocus }
+                    .onPreviewKeyEvent {
+                        if (peek) previewed = null
+                        false
+                    },
             ) {
                 val selectedTile = grid.tiles.getOrNull(grid.selected)?.channel
                 ChannelOverlay(
@@ -329,6 +381,7 @@ private fun PlayerChrome(feed: Feed, session: StreamSession, audio: AudioTracks?
                     startInGroups = openInGroups,
                     // Watching, not picking a tile: a row tunes behind the open list first (preview).
                     onPreview = if (pick == null && !multiView) { channel, context ->
+                        previewed = channel.identity
                         zapContext = context
                         down = null
                         session.zap(channel, feed)
@@ -450,7 +503,10 @@ private fun PlayerChrome(feed: Feed, session: StreamSession, audio: AudioTracks?
  * there ([liveNow], the zap context), else its group. Above that, a passing [note].
  */
 @Composable
-private fun Banner(channel: Channel, feed: Feed, guide: GuideDb?, clock: State<Long>, tuning: Boolean, badges: List<String>, note: String?, liveNow: List<Channel>?) {
+private fun Banner(
+    channel: Channel, feed: Feed, guide: GuideDb?, clock: State<Long>, tuning: Boolean, badges: List<String>, note: String?, liveNow: List<Channel>?,
+    health: Health?, stats: List<String>?,
+) {
     val inLiveNow = liveNow?.takeIf { list -> list.any { it.family == channel.family } }
     val list = inLiveNow ?: feed.channelsIn(channel.group)
     val position = list.indexOfFirst { it.identity == channel.identity }.takeIf { it >= 0 } ?: list.indexOfFirst { it.family == channel.family }
@@ -463,9 +519,11 @@ private fun Banner(channel: Channel, feed: Feed, guide: GuideDb?, clock: State<L
                 if (tuning) Tuning()
             }
             Guide(channel, guide, clock)
+            stats?.forEach { Text(it, style = Type.caption.tabular, maxLines = 1, overflow = TextOverflow.Ellipsis) }
         }
         Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(Space.xs)) {
             if (note != null) Text(note, style = Type.headline, maxLines = 1)
+            if (health != null) HealthLine(health, explain = stats != null)
             Text(if (inLiveNow != null) "Live now" else channel.group, style = Type.caption, maxLines = 1)
             if (position >= 0) Text("${position + 1} of ${list.size}", style = Type.caption.tabular)
         }
@@ -575,3 +633,72 @@ private fun rememberMinuteClock(): State<Long> = produceState(System.currentTime
         value = System.currentTimeMillis() / 1000
     }
 }
+
+/** The stream's numbers for the info view: picture and sound, then the connection. */
+private fun streamStats(q: LiveQuality?, audio: AudioOption?, health: Health?, route: RouteKind, feedAt: Int, feeds: Int, feedId: Int?): List<String> = listOf(
+    listOfNotNull(
+        q?.let { "${it.width}×${it.height}" + (it.fps?.let { f -> " · ${f.roundToInt()} fps" } ?: "") },
+        q?.codec?.uppercase(),
+        health?.stream?.let { "${mbps(it)} Mbps" },
+        audio?.let { audioLabel(it).removePrefix("Unknown language · ") }, // Atmos is a badge above
+    ),
+    listOfNotNull(
+        health?.network?.let { "Network ${mbps(it)} Mbps" },
+        health?.let { "${mbps(it.buffered)} s buffered" },
+        if (route == RouteKind.Vpn) "VPN route" else "Plain route",
+        if (feeds > 1 && feedAt >= 0) "Feed ${feedAt + 1} of $feeds" else null,
+        feedId?.let { "#$it" },
+    ),
+).map { it.joinToString(" · ") }.filter(String::isNotEmpty)
+
+private fun mbps(value: Float) = String.format(Locale.US, "%.1f", value)
+
+/** The health dot, with why when it is not good (or "Playing smoothly" when [explain] asks). */
+@Composable
+private fun HealthLine(health: Health, explain: Boolean) {
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Space.s)) {
+        val why = health.reason ?: "Playing smoothly".takeIf { explain }
+        if (why != null) Text(why, style = Type.caption, maxLines = 1)
+        HealthDot(health.level)
+    }
+}
+
+@Composable
+private fun HealthDot(level: Health.Level) {
+    val color = when (level) {
+        Health.Level.Good -> Palette.good
+        Health.Level.Warn -> Palette.warning
+        Health.Level.Bad -> Palette.live
+    }
+    Box(Modifier.size(HEALTH_DOT).clip(CircleShape).background(color))
+}
+
+/** Unasked trouble in the corner: the dot and why, then just the dot until it clears; it fades out once fine. */
+@Composable
+private fun HealthCorner(health: Health?, modifier: Modifier) {
+    val shown = animateFloatAsState(if (health != null) 1f else 0f, Motion.panel(), label = "health")
+    val kept = remember { arrayOfNulls<Health>(1) }
+    if (health != null) kept[0] = health
+    val h = kept[0] ?: return
+    if (health == null && shown.value == 0f) return
+    var expanded by remember { mutableStateOf(true) }
+    // A new kind of trouble says why again; its numbers changing does not.
+    LaunchedEffect(h.level, h.reason?.substringBefore(" ·")?.filterNot(Char::isDigit)) {
+        expanded = true
+        delay(HEALTH_TEXT_MS)
+        expanded = false
+    }
+    Row(
+        modifier
+            .graphicsLayer { alpha = shown.value }
+            .material(Radius.panel)
+            .padding(horizontal = Space.l, vertical = Space.s),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(Space.s),
+    ) {
+        if (expanded && h.reason != null) Text(h.reason, style = Type.caption.copy(color = Palette.textPrimary), maxLines = 1)
+        HealthDot(h.level)
+    }
+}
+
+private val HEALTH_DOT = 10.dp

@@ -217,7 +217,7 @@ private fun languageName(option: AudioOption): String =
         ?: "Unknown language"
 
 /** "English · AC3 · 5.1". */
-private fun audioLabel(option: AudioOption): String {
+internal fun audioLabel(option: AudioOption): String {
     val layout = when (option.channels) {
         1 -> "Mono"
         2 -> "Stereo"

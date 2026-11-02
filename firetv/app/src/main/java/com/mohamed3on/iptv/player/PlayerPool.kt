@@ -11,6 +11,9 @@ import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.util.TimestampAdjuster
+import androidx.media3.datasource.DataSource
+import androidx.media3.datasource.DataSpec
+import androidx.media3.datasource.TransferListener
 import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
@@ -23,6 +26,7 @@ import androidx.media3.extractor.text.DefaultSubtitleParserFactory
 import androidx.media3.extractor.ts.DefaultTsPayloadReaderFactory
 import androidx.media3.extractor.ts.TsExtractor
 import okhttp3.OkHttpClient
+import java.util.concurrent.atomic.AtomicLong
 
 /** Tune-to-first-frame timings, one line per tune (no URLs). */
 private const val ZAP_TAG = "IptvZap"
@@ -33,10 +37,7 @@ private const val ZAP_TAG = "IptvZap"
  * Live streams go through one shared HTTP client (OkHttp follows the provider's cross-host,
  * https-to-http redirects; the network security config allows the cleartext).
  */
-class PlayerPool(private val context: Context, http: OkHttpClient) {
-    private val liveSources = ProgressiveMediaSource.Factory(OkHttpDataSource.Factory(http), ExtractorsFactory { arrayOf(liveTs()) })
-        // The session owns every retry (KTD8); ExoPlayer's own retries would hide a 458 for seconds.
-        .setLoadErrorHandlingPolicy(NoRetry)
+class PlayerPool(private val context: Context, private val http: OkHttpClient) {
     private val players = mutableListOf<ExoStreamPlayer>()
 
     /** A multi-view [tile] buffers less: up to three streams share the line and the stick's memory. */
@@ -53,7 +54,12 @@ class PlayerPool(private val context: Context, http: OkHttpClient) {
                     .build()
             )
             .build()
-        return ExoStreamPlayer(exo, liveSources).also { players += it }
+        // Each player counts its own bytes, so a stream's download rate is its own (stream health).
+        val bytes = ByteCounter()
+        val liveSources = ProgressiveMediaSource.Factory(OkHttpDataSource.Factory(http).setTransferListener(bytes), ExtractorsFactory { arrayOf(liveTs()) })
+            // The session owns every retry (KTD8); ExoPlayer's own retries would hide a 458 for seconds.
+            .setLoadErrorHandlingPolicy(NoRetry)
+        return ExoStreamPlayer(exo, liveSources, bytes).also { players += it }
     }
 
     fun release(player: ExoStreamPlayer) {
@@ -92,7 +98,10 @@ interface TilePlayer : StreamPlayer {
  * A pooled ExoPlayer as a [StreamPlayer]. [exo] is exposed for the surface, audio tracks (U14)
  * and, later, VOD: live specifics live in the per-item media source, not in the player (R11).
  */
-class ExoStreamPlayer internal constructor(val exo: ExoPlayer, private val liveSources: MediaSource.Factory) : TilePlayer {
+class ExoStreamPlayer internal constructor(val exo: ExoPlayer, private val liveSources: MediaSource.Factory, private val bytes: ByteCounter) : TilePlayer {
+    /** Bytes of stream received since the player was built; read from any thread. */
+    val bytesLoaded get() = bytes.total.get()
+
     private var listener: StreamPlayer.Listener? = null
     /** When the last [open] ran, for the zap timing log; 0 once its first frame is logged. */
     private var openedAt = 0L
@@ -145,4 +154,15 @@ class ExoStreamPlayer internal constructor(val exo: ExoPlayer, private val liveS
     override fun setListener(listener: StreamPlayer.Listener?) {
         this.listener = listener
     }
+}
+
+/** Counts the bytes a player's streams deliver (on the loader thread). */
+internal class ByteCounter : TransferListener {
+    val total = AtomicLong()
+    override fun onTransferInitializing(source: DataSource, dataSpec: DataSpec, isNetwork: Boolean) {}
+    override fun onTransferStart(source: DataSource, dataSpec: DataSpec, isNetwork: Boolean) {}
+    override fun onBytesTransferred(source: DataSource, dataSpec: DataSpec, isNetwork: Boolean, bytesTransferred: Int) {
+        total.addAndGet(bytesTransferred.toLong())
+    }
+    override fun onTransferEnd(source: DataSource, dataSpec: DataSpec, isNetwork: Boolean) {}
 }

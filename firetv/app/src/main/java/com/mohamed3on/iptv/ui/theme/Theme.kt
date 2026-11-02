@@ -42,6 +42,8 @@ object Palette {
     /** "Live" and errors that need attention. */
     val live = Color(0xFFFF5147)
     val warning = Color(0xFFFFB340)
+    /** A stream that is playing well (the health dot). */
+    val good = Color(0xFF3DD68C)
 
     /** Progress track behind [accent]. */
     val track = Color(0x33FFFFFF)

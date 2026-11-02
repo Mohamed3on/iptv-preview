@@ -48,6 +48,13 @@ import com.mohamed3on.iptv.data.StartAction
 import com.mohamed3on.iptv.data.SyncError
 import com.mohamed3on.iptv.data.startAction
 import com.mohamed3on.iptv.player.ExoStreamPlayer
+import com.mohamed3on.iptv.player.Health
+import com.mohamed3on.iptv.player.HealthModel
+import com.mohamed3on.iptv.player.HealthSample
+import com.mohamed3on.iptv.player.StreamPhase
+import com.mohamed3on.iptv.data.ChannelIdentity
+import com.mohamed3on.iptv.data.RouteKind
+import androidx.media3.common.Player
 import com.mohamed3on.iptv.player.AudioTracks
 import com.mohamed3on.iptv.player.FrameRate
 import com.mohamed3on.iptv.player.LiveQuality
@@ -84,6 +91,8 @@ class MainActivity : ComponentActivity() {
     private val idle = MutableStateFlow<IdleWatch?>(null)
     /** The playing feed's measured quality (feed id to reading), for the banner's live badges. */
     private val live = MutableStateFlow<Pair<Int, LiveQuality>?>(null)
+    /** How the main player's stream is doing (health dot, info view); null when there is nothing to say. */
+    private val health = MutableStateFlow<Health?>(null)
     private val telemetry by lazy { Telemetry(graph.http, BuildConfig.SERVER_URL, BuildConfig.APP_TOKEN, graph.scope) }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -98,8 +107,9 @@ class MainActivity : ComponentActivity() {
             val tracks by audio.collectAsState()
             val idleState = idle.collectAsState().value?.state?.collectAsState()?.value
             val liveQuality by live.collectAsState()
+            val streamHealth by health.collectAsState()
             IptvTheme(reducedMotion = Motion.reducedMotion(this)) {
-                Root(state, playing, tracks, surface, tiles, liveQuality, idleState, onRetry = { graph.scope.launch { sync.retry() } })
+                Root(state, playing, tracks, surface, tiles, liveQuality, streamHealth, idleState, onRetry = { graph.scope.launch { sync.retry() } })
             }
         }
         // While visible: on resume refresh anything older than 1h, then channels every 30 min, guide every 3h.
@@ -133,6 +143,7 @@ class MainActivity : ComponentActivity() {
                         if (playing != null && q != null) telemetry.reportQuality(playing, q)
                     }
                 }
+                launch { watchHealth(player, s) }
                 idle.value = IdleWatch(this) {
                     tiles.close()
                     s.stop()
@@ -160,10 +171,44 @@ class MainActivity : ComponentActivity() {
                     frameRate.detach()
                     reporting.cancel()
                     live.value = null
+                    health.value = null
                     s.stop()
                     pool.releaseAll()
                 }
             }
+        }
+    }
+
+    /** Reads the main player each second into [health]; each rebuffer goes to the session log. */
+    private suspend fun watchHealth(player: ExoStreamPlayer, s: StreamSession) {
+        var played: ChannelIdentity? = null
+        val model = HealthModel(onRebuffer = { network, stream ->
+            s.state.value.feed?.let { telemetry.rebuffer(it, network, stream, graph.route.effective.value) }
+        })
+        while (true) {
+            val st = s.state.value
+            val feed = st.feed
+            val requested = st.requested
+            if (st.phase == Phase.Playing) played = requested?.identity
+            val phase = when (st.phase) {
+                Phase.Playing -> StreamPhase.Playing
+                Phase.Connecting -> if (requested != null && requested.identity == played) StreamPhase.Reconnecting else StreamPhase.Tuning
+                else -> null // the problem card says what is wrong
+            }
+            health.value = if (phase == null || feed == null) null else model.next(
+                HealthSample(
+                    at = SystemClock.elapsedRealtime(),
+                    phase = phase,
+                    feedId = feed.id,
+                    buffering = player.exo.playbackState == Player.STATE_BUFFERING,
+                    position = player.exo.currentPosition,
+                    buffered = player.exo.totalBufferedDuration,
+                    bytes = player.bytesLoaded,
+                    spare = feed.id != requested?.id,
+                    plainRoute = graph.route.effective.value == RouteKind.Plain,
+                ),
+            )
+            delay(1_000)
         }
     }
 
@@ -213,6 +258,7 @@ private fun Root(
     surface: SurfaceView,
     tiles: MultiView<ExoStreamPlayer>,
     live: Pair<Int, LiveQuality>?,
+    health: Health?,
     idle: Idle?,
     onRetry: () -> Unit,
 ) {
@@ -220,7 +266,7 @@ private fun Root(
         FeedState.Loading -> Loading()
         is FeedState.Failed -> SyncFailed(state.error, onRetry)
         is FeedState.Ready -> Box(Modifier.fillMaxSize()) {
-            PlayerScreen(state.feed, session, audio, surface, tiles, live)
+            PlayerScreen(state.feed, session, audio, surface, tiles, live, health)
             when (idle) {
                 Idle.Asking -> StillWatching()
                 Idle.TimedOut -> IdleStopped()

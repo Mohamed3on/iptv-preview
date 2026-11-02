@@ -310,7 +310,7 @@ private fun MoviesBrowse(
             }
             when (kind) {
                 3 -> SearchGrid(library!!, query, { query = it }, results, keys, onFocused = { focused.value = it }, onPlay = onPlay)
-                2 -> Rows(rows, content, onFocused = { focused.value = it }, onPlay = onPlay)
+                2 -> Rows(rows, content, active, onFocused = { focused.value = it }, onPlay = onPlay)
                 1 -> Unavailable(content, onRetry)
                 0 -> LoadingMovies(content)
                 else -> {}
@@ -368,7 +368,7 @@ private fun leftLabel(ms: Long): String {
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun Rows(rows: List<MovieRow>, focus: FocusRequester, onFocused: (Movie) -> Unit, onPlay: (Movie) -> Unit) {
+private fun Rows(rows: List<MovieRow>, focus: FocusRequester, active: Boolean, onFocused: (Movie) -> Unit, onPlay: (Movie) -> Unit) {
     val density = LocalDensity.current
     val first = remember { FocusRequester() }
     // The card each row was left on, for a row built again after scrolling far away.
@@ -393,9 +393,29 @@ private fun Rows(rows: List<MovieRow>, focus: FocusRequester, onFocused: (Movie)
             }
         }
     }
+    // The card a movie was played from (row key, movie id). Back from the movie lands on it explicitly:
+    // Continue watching is added above meanwhile, which throws the focus restorers off.
+    val list = rememberLazyListState()
+    val back = remember { FocusRequester() }
+    var played by remember { mutableStateOf<Pair<String, Int>?>(null) }
+    val lastFocused = remember { arrayOfNulls<Pair<String, Int>>(1) }
+    LaunchedEffect(active) {
+        val target = played?.takeIf { active } ?: return@LaunchedEffect
+        val index = rows.indexOfFirst { it.key == target.first }
+        if (index >= 0) {
+            list.scrollToItem(index)
+            repeat(FOCUS_FRAMES) {
+                withFrameNanos {}
+                if (lastFocused[0] == target) return@repeat
+                runCatching { back.requestFocus() }
+            }
+        }
+        played = null
+    }
     CompositionLocalProvider(LocalBringIntoViewSpec provides pivot) {
         LazyColumn(
             Modifier.fillMaxSize().edgeFade(MoviesScrim, top = FADE).focusRequester(focus).focusRestorer(first).focusGroup(),
+            state = list,
             contentPadding = PaddingValues(top = FADE, bottom = Space.xxxl),
             verticalArrangement = Arrangement.spacedBy(Space.m),
         ) {
@@ -405,11 +425,16 @@ private fun Rows(rows: List<MovieRow>, focus: FocusRequester, onFocused: (Movie)
                         row,
                         entry = if (i == 0) first else null,
                         startAt = columns[row.key] ?: 0,
+                        back = played?.takeIf { it.first == row.key }?.let { it.second to back },
                         onFocused = { col, movie ->
                             columns[row.key] = col
+                            lastFocused[0] = row.key to movie.id
                             onFocused(movie)
                         },
-                        onPlay = onPlay,
+                        onPlay = { movie ->
+                            played = row.key to movie.id
+                            onPlay(movie)
+                        },
                     )
                 }
             }
@@ -418,7 +443,7 @@ private fun Rows(rows: List<MovieRow>, focus: FocusRequester, onFocused: (Movie)
 }
 
 @Composable
-private fun PosterRow(row: MovieRow, entry: FocusRequester?, startAt: Int, onFocused: (Int, Movie) -> Unit, onPlay: (Movie) -> Unit) {
+private fun PosterRow(row: MovieRow, entry: FocusRequester?, startAt: Int, back: Pair<Int, FocusRequester>?, onFocused: (Int, Movie) -> Unit, onPlay: (Movie) -> Unit) {
     val own = remember { FocusRequester() }
     val restore = entry ?: own
     val at = startAt.coerceIn(0, (row.movies.size - 1).coerceAtLeast(0))
@@ -458,6 +483,7 @@ private fun PosterRow(row: MovieRow, entry: FocusRequester?, startAt: Int, onFoc
                 PosterCard(
                     movie, row.progress[movie.id],
                     focus = if (col == at) restore else null,
+                    back = back?.takeIf { it.first == movie.id }?.second,
                     onFocused = {
                         focusedCol[0] = col
                         onFocused(col, movie)
@@ -474,7 +500,7 @@ private fun PosterRow(row: MovieRow, entry: FocusRequester?, startAt: Int, onFoc
  * none. Focus lifts it toward the viewer with an accent ring, on one spring read only while drawing.
  */
 @Composable
-private fun PosterCard(movie: Movie, progress: Float?, focus: FocusRequester?, onFocused: () -> Unit, onClick: () -> Unit) {
+private fun PosterCard(movie: Movie, progress: Float?, focus: FocusRequester?, back: FocusRequester? = null, onFocused: () -> Unit, onClick: () -> Unit) {
     val reduced = LocalReducedMotion.current
     val context = LocalPlatformContext.current
     val density = LocalDensity.current
@@ -491,6 +517,7 @@ private fun PosterCard(movie: Movie, progress: Float?, focus: FocusRequester?, o
         Modifier
             .size(CARD)
             .then(if (focus != null) Modifier.focusRequester(focus) else Modifier)
+            .then(if (back != null) Modifier.focusRequester(back) else Modifier)
             .onFocusChanged {
                 focused = it.isFocused
                 if (it.isFocused) onFocused()

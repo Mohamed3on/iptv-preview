@@ -4,6 +4,7 @@ plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.kotlin.serialization)
+    alias(libs.plugins.baselineprofile)
 }
 
 // Secrets come only from env vars (CI) or ~/.gradle/gradle.properties (local), never a repo file.
@@ -13,6 +14,13 @@ fun secret(name: String): String? =
 val serverUrl = secret("IPTV_SERVER_URL") ?: ""
 val appToken = secret("IPTV_APP_TOKEN") ?: ""
 val keystoreFile = secret("IPTV_KEYSTORE_FILE")
+
+// The baseline profile plugin's own build types (generation and benchmarks) talk to a local fixture
+// server (baselineprofile/fixture-server.ts) on the emulator's host instead: its feed points the
+// provider route at a dead port, so an emulator never takes the account's one stream slot, and its
+// events never reach the box's log. -Piptv.profileServer= (empty) uses the real server instead.
+val profilingBuildTypes = setOf("nonMinifiedRelease", "benchmarkRelease")
+val profilingServerUrl = providers.gradleProperty("iptv.profileServer").orElse("http://10.0.2.2:8791").get()
 
 // Same number for a local build and the CI build of one commit; later commits are always higher (KTD11).
 val commitCount = providers.exec { commandLine("git", "rev-list", "--count", "HEAD") }
@@ -94,9 +102,19 @@ abstract class NetworkSecurityConfigTask : DefaultTask() {
     }
 }
 
+// Release ships a baseline profile (src/main/generated/baselineProfiles), so the stick runs the list,
+// zaps and panels compiled from the first frame after an update. Regenerate: baselineprofile/generate.sh.
+baselineProfile {
+    mergeIntoMain = true
+    automaticGenerationDuringBuild = false
+}
+
 androidComponents {
     onVariants { variant ->
-        val url = serverUrl
+        val profiling = variant.buildType in profilingBuildTypes && profilingServerUrl.isNotEmpty()
+        if (profiling) variant.buildConfigFields?.put("SERVER_URL", com.android.build.api.variant.BuildConfigField("String", "\"$profilingServerUrl\"", null))
+        // The fixture server is plain http on a local address: no https-only rule for it.
+        val url = if (profiling) "" else serverUrl
         val task = tasks.register<NetworkSecurityConfigTask>("generate${variant.name.replaceFirstChar(Char::uppercase)}NetworkSecurityConfig") {
             serverUrl.set(url)
         }
@@ -127,6 +145,8 @@ dependencies {
     implementation(libs.okhttp)
     implementation(libs.coil.compose)
     implementation(libs.coil.network.okhttp)
+    implementation(libs.profileinstaller)
+    baselineProfile(project(":baselineprofile"))
 
     testImplementation(libs.junit)
     testImplementation(libs.coroutines.test)

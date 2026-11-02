@@ -24,18 +24,23 @@ import java.io.File
 import java.security.DigestInputStream
 import java.security.MessageDigest
 
-/** A verified newer build in the cache. [askedPermission]: Settings was opened, so the row explains why. */
-data class UpdateReady(val versionCode: Long, val versionName: String, val apk: File, val askedPermission: Boolean = false)
+/**
+ * A verified newer build in the cache. [dm] is its dex metadata (the baseline profile), when it came
+ * too. [askedPermission]: Settings was opened, so the row explains why.
+ */
+data class UpdateReady(val versionCode: Long, val versionName: String, val apk: File, val dm: File? = null, val askedPermission: Boolean = false)
 
 @Serializable
-private class Manifest(val versionCode: Long, val versionName: String, val sha256: String)
+private class Manifest(val versionCode: Long, val versionName: String, val sha256: String, val dmSha256: String? = null)
 
 private val json = Json { ignoreUnknownKeys = true }
 
 /**
  * Self-update (R15, R16). [check] fetches the version manifest and, when it is newer than [installed],
  * downloads the APK to [dir], verifies its sha256 and that it is this app's own package (KTD11), then
- * publishes [ready]. Nothing installs until [install] is called from the row. Every failure is silent:
+ * publishes [ready]. Its dex metadata (.dm, the baseline profile) comes along when the manifest names
+ * one and it verifies: installed with the APK, the platform compiles the app's hot paths at install,
+ * so the first minutes after an update run compiled. Without it the update installs just the same. Nothing installs until [install] is called from the row. Every failure is silent:
  * no row, retried on the next check. Never logs a URL (it carries the token).
  */
 class Updater(
@@ -65,10 +70,12 @@ class Updater(
 
     private fun fetch() {
         val apk = File(dir, "update.apk")
+        val dm = File(dir, DM)
         val manifest = get("version") { json.decodeFromString<Manifest>(it.string()) } ?: return
         Log.i(TAG, "server ${manifest.versionCode}, installed $installed")
         if (manifest.versionCode <= installed) {
             apk.delete() // an update that is now installed
+            dm.delete()
             return
         }
         if (_ready.value?.versionCode == manifest.versionCode) return
@@ -92,11 +99,21 @@ class Updater(
                 Log.w(TAG, "could not keep the download")
                 return
             }
-            Log.i(TAG, "update ${manifest.versionName} ready")
-            _ready.value = UpdateReady(manifest.versionCode, manifest.versionName, apk)
+            dm.delete()
+            val withDm = manifest.dmSha256?.let { runCatching { download("dm", dm, it) }.getOrDefault(false) } == true
+            Log.i(TAG, "update ${manifest.versionName} ready${if (withDm) " with its profile" else ""}")
+            _ready.value = UpdateReady(manifest.versionCode, manifest.versionName, apk, dm.takeIf { withDm })
         } finally {
             tmp.delete()
         }
+    }
+
+    /** Downloads [kind] to [to] when it matches [sha256]; false (and nothing left behind) otherwise. */
+    private fun download(kind: String, to: File, sha256: String): Boolean {
+        val digest = MessageDigest.getInstance("SHA-256")
+        get(kind) { body -> DigestInputStream(body.byteStream(), digest).use { input -> to.outputStream().use { input.copyTo(it) } } } ?: return false
+        val hex = digest.digest().joinToString("") { "%02x".format(it) }
+        return hex.equals(sha256, ignoreCase = true).also { if (!it) to.delete() }
     }
 
     /** Runs [read] on a 200 body; null on any other status. */
@@ -131,6 +148,13 @@ class Updater(
                         update.apk.inputStream().use { it.copyTo(out) }
                         session.fsync(out)
                     }
+                    // Named after the APK, so the platform pairs them; gone after a failed install (InstallReceiver).
+                    update.dm?.takeIf { it.exists() }?.let { dm ->
+                        session.openWrite("base.dm", 0, dm.length()).use { out ->
+                            dm.inputStream().use { it.copyTo(out) }
+                            session.fsync(out)
+                        }
+                    }
                     val callback = PendingIntent.getBroadcast(
                         context, id, Intent(context, InstallReceiver::class.java),
                         PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE,
@@ -152,9 +176,14 @@ class InstallReceiver : BroadcastReceiver() {
                 context.startActivity(confirm.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
             }
             PackageInstaller.STATUS_SUCCESS -> Unit
-            else -> Log.w(TAG, "install failed: $status ${intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE)}")
+            else -> {
+                Log.w(TAG, "install failed: $status ${intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE)}")
+                // The profile is never worth an update: the next try installs the APK alone.
+                File(context.cacheDir, DM).delete()
+            }
         }
     }
 }
 
 private const val TAG = "Updater"
+private const val DM = "update.dm"

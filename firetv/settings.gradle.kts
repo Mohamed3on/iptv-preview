@@ -16,3 +16,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "iptv-firetv"
 include(":app")
+include(":baselineprofile")

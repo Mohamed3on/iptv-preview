@@ -561,7 +561,7 @@ export async function jevCompetitions(titles: string[]): Promise<Map<string, str
   }))
 }
 
-async function apiGet<T>(cfg: XtreamConfig, action: string): Promise<T> {
+export async function apiGet<T>(cfg: XtreamConfig, action: string): Promise<T> {
   const url = `${cfg.host}/player_api.php?username=${cfg.user}&password=${cfg.pass}&action=${action}`
   const resp = await fetch(url, { headers: { 'User-Agent': 'VLC/3.0.18' } })
   if (!resp.ok) throw new Error(`${action} -> HTTP ${resp.status}`)
@@ -620,20 +620,24 @@ const MOVIE_4K = /⁴ᴷ|³⁸⁴⁰|\b4K\b|3840|\bUHD\b|2160|فائقة الو�
 // modifier letters: ⁴ᴷ ³⁸⁴⁰ᴾ ᴰᴼᴸᴮʸ ᴬᵁᴰᴵᴼ ⱽᴵˢᴵᴼᴺ ᴴᴰᴿ) — stripped for clean names.
 const SUPER = /[²³¹⁰-₟ᴬ-ᵪʰ-˿ᶜ-ᶿⱽ]+/g
 
-// Category name -> clean group label, e.g.
-// "NETFLIX MOVIES ⁴ᴷ ³⁸⁴⁰ᴾ ᴰᵒˡᵇʸ ⱽᶦˢᶦᵒⁿ" -> "🎬 NETFLIX MOVIES 4K".
-function movieGroup(cat: string): string {
-  const base = cat
+// Category name without its quality tags, e.g.
+// "NETFLIX MOVIES ⁴ᴷ ³⁸⁴⁰ᴾ ᴰᵒˡᵇʸ ⱽᶦˢᶦᵒⁿ" -> "NETFLIX MOVIES".
+export function plainCategory(cat: string): string {
+  return cat
     .replace(SUPER, ' ')
     .replace(/\b(3840p?|dolby|audio|visi[oó]n|hdr|multi(?:-subs)?)\b/gi, ' ')
-    .replace(/فائقة الوضوح/g, ' ')
+    .replace(/فائقة? الوضوح/g, ' ')
     .replace(/(?<=^|\s)[A-ZÀ-Þ](?=\s|$)/g, ' ') // stray leftover capital (e.g. Ó from VISIÓN)
     .replace(/\(\s*\)/g, ' ')
     .replace(/\b4k\b/gi, ' ')
     .replace(/[-–]\s*$/, ' ')
     .replace(/\s+/g, ' ')
     .trim()
-  return `🎬 ${base} 4K`
+}
+
+// "NETFLIX MOVIES ⁴ᴷ ³⁸⁴⁰ᴾ ᴰᵒˡᵇʸ ⱽᶦˢᶦᵒⁿ" -> "🎬 NETFLIX MOVIES 4K".
+function movieGroup(cat: string): string {
+  return `🎬 ${plainCategory(cat)} 4K`
 }
 
 // Strip the provider's "4K-EN - " / "4K-D+ - " title prefix for clean, sortable names.

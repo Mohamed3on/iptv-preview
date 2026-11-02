@@ -62,11 +62,18 @@ object Type {
     val title = base.copy(fontSize = 28.sp, lineHeight = 34.sp, fontWeight = FontWeight.SemiBold, letterSpacing = (-0.01).em)
     /** Channel row name, current programme in the banner. */
     val headline = base.copy(fontSize = 21.sp, lineHeight = 27.sp, fontWeight = FontWeight.Medium, letterSpacing = 0.em)
-    /** Now/next lines, schedule rows. Tabular figures, so times and counts never jiggle. */
-    val body = base.copy(fontSize = 18.sp, lineHeight = 25.sp, color = Palette.textSecondary, letterSpacing = 0.005.em, fontFeatureSettings = "tnum")
+    /** Now/next lines, schedule rows. */
+    val body = base.copy(fontSize = 18.sp, lineHeight = 25.sp, color = Palette.textSecondary, letterSpacing = 0.005.em)
     /** Times, badges, hints. */
-    val caption = base.copy(fontSize = 15.sp, lineHeight = 20.sp, fontWeight = FontWeight.Medium, color = Palette.textTertiary, letterSpacing = 0.02.em, fontFeatureSettings = "tnum")
+    val caption = base.copy(fontSize = 15.sp, lineHeight = 20.sp, fontWeight = FontWeight.Medium, color = Palette.textTertiary, letterSpacing = 0.02.em)
 }
+
+/**
+ * Tabular figures, for numbers that change in place or line up in a column, so they never jiggle.
+ * Only there: a font feature makes text layout several times slower on the stick, which a list of
+ * rows feels when it builds (measured 2026-11-02).
+ */
+val TextStyle.tabular get() = copy(fontFeatureSettings = "tnum")
 
 /** Spacing steps; pick from these, never ad-hoc values. */
 @Immutable

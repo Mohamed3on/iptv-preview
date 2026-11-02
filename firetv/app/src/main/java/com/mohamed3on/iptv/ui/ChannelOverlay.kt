@@ -36,7 +36,9 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.State
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
@@ -157,7 +159,7 @@ private fun sameMatchOnce(matches: List<LiveEntry>): List<LiveEntry> {
 }
 
 private val VERSUS = Regex("\\s(v|vs\\.?)\\s", RegexOption.IGNORE_CASE)
-private val LIVE_PREFIX = Regex("^live\\s*[:\\-]?\\s*", RegexOption.IGNORE_CASE)
+private val LIVE_PREFIX = Regex("^live\\b\\s*[:\\-]?\\s*", RegexOption.IGNORE_CASE)
 private val SUPERSCRIPT = Regex("[\\u1D2C-\\u1DBF\\u2070-\\u209F\\u00B2\\u00B3\\u00B9]+")
 
 /** A guide title without the broadcaster's superscript markers ("Eagles @ Commanders ᴸᶦᵛᵉ"). */
@@ -389,12 +391,14 @@ fun ChannelOverlay(
     // The channel column follows the groups column: a later group's rows rise from below, an earlier
     // one's come down from above. The old rows go at once; only the new ones move.
     val arrival = remember { Animatable(1f) }
+    val built = remember { BuiltRows() }
     var travel by remember { mutableStateOf(1f) }
     fun show(next: Source) {
         if (next == shown) return
         val order = { s: Source -> if (s is GroupSource) feed.groups.indexOf(s.name) else if (s == LiveSource) -1 else -2 }
         travel = if (order(next) > order(shown)) 1f else -1f
         shown = next
+        built.count.intValue = ROWS_PER_FRAME
         scope.launch(start = CoroutineStart.UNDISPATCHED) {
             arrival.snapTo(0f)
             arrival.animateTo(1f, if (reduced) tween(Motion.FADE_MS) else Motion.spring(0.28f))
@@ -403,6 +407,7 @@ fun ChannelOverlay(
     // Holding Down through the groups column builds only the group focus rests on (~120ms), like
     // TiviMate: passing groups never pay for building their rows. Right/OK applies it at once.
     val pending = remember { PendingShow() }
+    var enterShown by remember { mutableStateOf(false) }
     fun showSoon(next: Source) {
         pending.job?.cancel()
         pending.target = next
@@ -412,13 +417,14 @@ fun ChannelOverlay(
             show(next)
         }
     }
-    // A newly shown group's rows are built over two frames, names first and their guide lines on
-    // the next, so neither frame is long enough to drop; the column is still fading in meanwhile.
-    // Read only inside the rows, so the second frame recomposes the rows and nothing else.
-    val linesFor = remember { mutableStateOf(shown.key) }
+    // A newly shown group's rows are built a few per frame from the top (the rest hold their place),
+    // so no frame is long enough to drop; the column is still fading in meanwhile.
     LaunchedEffect(shown.key) {
-        withFrameNanos {}
-        linesFor.value = shown.key
+        while (built.count.intValue < ROWS_ON_SCREEN) {
+            withFrameNanos {}
+            built.count.intValue += ROWS_PER_FRAME
+        }
+        built.count.intValue = Int.MAX_VALUE
     }
     // A refresh can drop the 🏆 group on screen; fall back to the first group.
     val source = shown.takeUnless { it is GroupSource && it.name !in feed.groups } ?: GroupSource(feed.groups.first())
@@ -527,8 +533,17 @@ fun ChannelOverlay(
         val at = (source as? GroupSource)?.let { feed.groups.indexOf(it.name) + 1 } ?: 0
         LazyListState((at - 2).coerceAtLeast(0))
     }
-    val listState = remember(source.key) {
-        LazyListState(items?.let { ((if (source == SearchSource) resumeIndex(it) ?: 0 else entryIndex(it)) - 1).coerceAtLeast(0) } ?: 0)
+    fun startIndex() = items?.let { ((if (source == SearchSource) resumeIndex(it) ?: 0 else entryIndex(it)) - 1).coerceAtLeast(0) } ?: 0
+    // One list state for every source, moved in the frame its rows change: the column keeps its
+    // composed rows and reuses them for the next group's, rather than building each group afresh.
+    val listState = remember { LazyListState(startIndex()) }
+    val positionedFor = remember { arrayOf(source.key) }
+    SideEffect {
+        if (positionedFor[0] != source.key) {
+            positionedFor[0] = source.key
+            built.from = startIndex()
+            listState.requestScrollToItem(built.from)
+        }
     }
 
     /**
@@ -570,8 +585,12 @@ fun ChannelOverlay(
         pending.target = null
         if (target == null) return focusChannels()
         show(target)
-        scope.launch {
-            withFrameNanos {}
+        enterShown = true
+    }
+    // Entered from the composition that has the newly shown group's rows; this one still has the old's.
+    LaunchedEffect(source.key, enterShown) {
+        if (enterShown) {
+            enterShown = false
             focusChannels()
         }
     }
@@ -779,6 +798,8 @@ fun ChannelOverlay(
                         verticalArrangement = Arrangement.spacedBy(Space.xs),
                     ) {
                         itemsIndexed(list, key = { _, it -> it.key }, contentType = { _, it -> it::class }) { index, item ->
+                            val ready by remember(index) { derivedStateOf { index < built.from + built.count.intValue } }
+                            if (item.focusable && !ready) return@itemsIndexed Box(Modifier.fillMaxWidth().height(ROW_HEIGHT))
                             val focus = if (item.key == entryKey) rowFocus else null
                             val onFocused = {
                                 focusedKey = item.key
@@ -1015,3 +1036,13 @@ private class PendingShow {
 }
 
 private const val GROUP_REST_MS = 120L
+
+/** How far a newly shown source's rows are built: [count] rows from [from], the first on screen. */
+private class BuiltRows {
+    var from = 0
+    val count = mutableIntStateOf(Int.MAX_VALUE)
+}
+
+/** About a screenful of rows, and how many of them one frame builds. */
+private const val ROWS_ON_SCREEN = 8
+private const val ROWS_PER_FRAME = 2

@@ -43,6 +43,7 @@ import com.mohamed3on.iptv.ui.theme.LiveMark
 import com.mohamed3on.iptv.ui.theme.Palette
 import com.mohamed3on.iptv.ui.theme.Space
 import com.mohamed3on.iptv.ui.theme.Type
+import com.mohamed3on.iptv.ui.theme.tabular
 import com.mohamed3on.iptv.ui.theme.edgeFade
 import com.mohamed3on.iptv.ui.theme.focusLift
 import com.mohamed3on.iptv.ui.theme.material
@@ -150,7 +151,7 @@ private fun ScheduleRow(programme: Programme, clock: State<Long>, focus: FocusRe
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(Space.s),
     ) {
-        Text(clockTime(programme.start), style = Type.caption, modifier = Modifier.width(TIME_WIDTH))
+        Text(clockTime(programme.start), style = Type.caption.tabular, modifier = Modifier.width(TIME_WIDTH))
         if (airing && programme.match) LiveMark()
         Text(
             remember(programme) { cleanTitle(programme.title) },

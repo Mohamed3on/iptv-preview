@@ -91,6 +91,7 @@ import com.mohamed3on.iptv.ui.theme.ProgressLine
 import com.mohamed3on.iptv.ui.theme.Scrim
 import com.mohamed3on.iptv.ui.theme.Space
 import com.mohamed3on.iptv.ui.theme.Type
+import com.mohamed3on.iptv.ui.theme.tabular
 import com.mohamed3on.iptv.ui.theme.bottomScrim
 import com.mohamed3on.iptv.ui.theme.leftScrim
 import com.mohamed3on.iptv.ui.theme.material
@@ -453,7 +454,7 @@ private fun Banner(channel: Channel, feed: Feed, guide: GuideDb?, clock: State<L
         Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(Space.xs)) {
             if (note != null) Text(note, style = Type.headline, maxLines = 1)
             Text(if (inLiveNow != null) "Live now" else channel.group, style = Type.caption, maxLines = 1)
-            if (position >= 0) Text("${position + 1} of ${list.size}", style = Type.caption)
+            if (position >= 0) Text("${position + 1} of ${list.size}", style = Type.caption.tabular)
         }
     }
 }
@@ -480,7 +481,7 @@ private fun Guide(channel: Channel, guide: GuideDb?, clock: State<Long>) {
             Text(remember(now) { if (now.match) fixtureOf(now.title) else cleanTitle(now.title) }, style = Type.headline, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         Row(horizontalArrangement = Arrangement.spacedBy(Space.m), verticalAlignment = Alignment.CenterVertically) {
-            Text("${clockTime(now.start)} – ${clockTime(now.stop)}", style = Type.caption)
+            Text("${clockTime(now.start)} – ${clockTime(now.stop)}", style = Type.caption.tabular)
             ProgressLine(
                 fraction = { (clock.value - now.start).toFloat() / (now.stop - now.start).coerceAtLeast(1) },
                 modifier = Modifier.widthIn(max = PROGRESS_WIDTH),

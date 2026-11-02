@@ -109,7 +109,8 @@ internal fun Feed.prepareSearch() {
  * ones come first.
  */
 fun Feed.search(guide: GuideDb?, query: String, nowSec: Long): SearchResults {
-    val q = searchNorm(query).trim()
+    // Dictation can end with a full stop ("Liverpool."); typed queries never have one.
+    val q = searchNorm(query).trim().trimEnd('.', '!', '?').trim()
     val words = q.split(' ').filter(String::isNotEmpty)
     val index = searchIndex()
     val channels = index.names.filter { (name, _) -> words.all(name::contains) }

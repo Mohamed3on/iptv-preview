@@ -9,4 +9,6 @@ server=$!
 trap 'kill $server 2>/dev/null' EXIT
 for _ in $(seq 60); do curl -sf -o /dev/null localhost:8791/api/app/channels && break; sleep 1; done
 
-./gradlew :app:generateBaselineProfile
+# --rerun: the journeys' inputs (the live channels, guide, clip) are invisible to Gradle, so never
+# let it call the device run up to date.
+./gradlew :baselineprofile:tvApi34NonMinifiedReleaseAndroidTest --rerun :app:generateBaselineProfile

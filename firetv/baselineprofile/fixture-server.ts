@@ -1,14 +1,27 @@
 // The server the app's profiling builds talk to on an emulator (http://10.0.2.2:8791): today's real
-// channels and guide, fetched once from the real server, with the provider route pointed at a dead
-// local port. So no stream ever reaches the provider from the emulator (the account has one stream
+// channels and guide, fetched once from the real server, with the provider route pointed back here,
+// where every channel plays the same generated test clip. So the emulator plays (the health sampling,
+// info view and previews run) while no stream ever reaches the provider (the account has one stream
 // slot, and the stick may be using it), and nothing the emulator does reaches the box's event log.
-// Usage: bun firetv/baselineprofile/fixture-server.ts  (reads IPTV_SERVER_URL / IPTV_APP_TOKEN from
-// the environment or ~/.gradle/gradle.properties, like the Gradle build).
+// Usage: bun firetv/baselineprofile/fixture-server.ts  (needs ffmpeg; reads IPTV_SERVER_URL /
+// IPTV_APP_TOKEN from the environment or ~/.gradle/gradle.properties, like the Gradle build).
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
 const PORT = 8791
-const DEAD = 'http://10.0.2.2:9' // the emulator's host, a port nothing listens on: refused at once
+const SELF = `http://10.0.2.2:${PORT}` // this server, as the emulator reaches its host
+
+// A minute of 720p50 H.264 + AAC in MPEG-TS, like a provider's live feed; built once into build/.
+const clip = join(import.meta.dir, 'build', 'fixture-clip.ts')
+if (!(await Bun.file(clip).exists())) {
+  const ffmpeg = Bun.spawnSync([
+    'ffmpeg', '-loglevel', 'error', '-y',
+    '-f', 'lavfi', '-i', 'testsrc2=size=1280x720:rate=50', '-f', 'lavfi', '-i', 'sine=frequency=440',
+    '-t', '60', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '30', '-g', '50', '-pix_fmt', 'yuv420p',
+    '-c:a', 'aac', '-f', 'mpegts', clip,
+  ])
+  if (!ffmpeg.success) throw new Error(`ffmpeg failed: ${ffmpeg.stderr}`)
+}
 
 async function secret(name: string): Promise<string> {
   if (process.env[name]) return process.env[name]!
@@ -27,7 +40,7 @@ const get = async (kind: string) => {
 }
 
 const feed = (await (await get('channels')).json()) as { route: Record<string, unknown> }
-feed.route = { ...feed.route, plain: DEAD, vpn: DEAD, user: 'x', pass: 'x' }
+feed.route = { ...feed.route, plain: SELF, vpn: SELF, user: 'x', pass: 'x' }
 const channels = JSON.stringify(feed)
 const guide = new Uint8Array(await (await get('guide')).arrayBuffer())
 
@@ -39,6 +52,7 @@ Bun.serve({
     if (req.method === 'POST') return new Response(null, { status: 204 }) // events, quality readings
     if (pathname === '/api/app/channels') return new Response(channels, { headers: { 'Content-Type': 'application/json' } })
     if (pathname === '/api/app/guide') return new Response(guide, { headers: { 'Content-Type': 'application/gzip' } })
+    if (pathname.startsWith('/live/')) return new Response(Bun.file(clip), { headers: { 'Content-Type': 'video/mp2t' } })
     return new Response('Not found', { status: 404 }) // version, apk: no update
   },
 })

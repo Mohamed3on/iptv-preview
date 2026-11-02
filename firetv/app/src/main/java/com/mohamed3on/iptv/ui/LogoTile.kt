@@ -48,7 +48,7 @@ fun LogoTile(channel: Channel, size: DpSize, modifier: Modifier = Modifier) {
         }
     }
     Box(
-        modifier.size(size).clip(RoundedCornerShape(Radius.row)).background(Palette.raised),
+        modifier.size(size).clip(RoundedCornerShape(Radius.row)).background(Palette.tile),
         contentAlignment = Alignment.Center,
     ) {
         if (request == null || failed) Text(remember(channel.name) { monogram(channel.name) }, style = Type.headline.copy(color = Palette.textSecondary), maxLines = 1)

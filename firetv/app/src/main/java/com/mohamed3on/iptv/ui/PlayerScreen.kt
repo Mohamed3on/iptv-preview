@@ -524,7 +524,7 @@ private fun Banner(
         Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(Space.xs)) {
             if (note != null) Text(note, style = Type.headline, maxLines = 1)
             if (health != null) HealthLine(health, explain = stats != null)
-            Text(if (inLiveNow != null) "Live now" else channel.group, style = Type.caption, maxLines = 1)
+            Text(if (inLiveNow != null) "Live now" else groupLabel(channel.group), style = Type.caption, maxLines = 1)
             if (position >= 0) Text("${position + 1} of ${list.size}", style = Type.caption.tabular)
         }
     }

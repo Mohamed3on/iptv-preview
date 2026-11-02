@@ -192,6 +192,9 @@ private fun Feed.bestOf(channel: Channel) = familyMembers(channel.family).firstO
 
 private const val TROPHY = "🏆"
 
+/** A group's name as shown: the 🏆 marker is for sorting, not for reading. */
+internal fun groupLabel(group: String) = group.removePrefix(TROPHY).trimStart()
+
 /** What a channel row shows under its name. */
 data class RowLines(val name: String, val now: Programme?, val next: Programme?, val noGuide: Boolean)
 
@@ -894,6 +897,7 @@ private fun SectionTitle(text: String) {
 @Composable
 fun GroupRow(label: String, marked: Boolean, focus: FocusRequester?, onFocused: () -> Unit, onClick: () -> Unit) {
     var focused by remember { mutableStateOf(false) }
+    val name = remember(label) { groupLabel(label) }
     Box(
         Modifier
             .fillMaxWidth()
@@ -904,7 +908,7 @@ fun GroupRow(label: String, marked: Boolean, focus: FocusRequester?, onFocused: 
         contentAlignment = Alignment.CenterStart,
     ) {
         if (marked) Box(Modifier.size(MARKER).clip(RoundedCornerShape(MARKER.width)).background(Palette.accent))
-        Text(label, style = if (focused || marked) Type.headline else groupIdle, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(horizontal = Space.l))
+        Text(name, style = if (focused || marked) Type.headline else groupIdle, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(horizontal = Space.l))
     }
 }
 
@@ -995,7 +999,7 @@ private fun LiveRow(entry: LiveEntry, clock: State<Long>, playing: Boolean, watc
             Text(if (programme == null) "Not confirmed" else if (entry.alsoOn > 0) "$channel · +${entry.alsoOn} more" else channel, style = Type.body, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
             if (programme != null) Progress(programme, clock)
         }
-        LastLine(watchHint) { Text(entry.comp ?: entry.via.group, style = Type.caption, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+        LastLine(watchHint) { Text(entry.comp ?: groupLabel(entry.via.group), style = Type.caption, maxLines = 1, overflow = TextOverflow.Ellipsis) }
     }
 }
 

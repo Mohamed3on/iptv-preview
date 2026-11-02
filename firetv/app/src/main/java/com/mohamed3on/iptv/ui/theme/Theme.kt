@@ -7,6 +7,7 @@ import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.rememberTextMeasurer
@@ -15,6 +16,7 @@ import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.darkColorScheme
+import com.mohamed3on.iptv.R
 
 /**
  * The app's look: the video is the hero, and all chrome floats over it as a dark,
@@ -29,7 +31,11 @@ object Palette {
     /** Floating chrome over video: overlay columns, banner, quick panel. */
     val material = Color(0xEB121820)
     /** A lighter layer for the focused row: lifts toward the viewer. */
-    val raised = Color(0xFF26303C)
+    val raised = Color(0xFF2C3744)
+    /** The focused row's ring: a soft white edge, so the lift reads without a loud colour. */
+    val focusRing = Color(0xA6FFFFFF)
+    /** Behind a channel logo: a faint lift that works on the list and on the focused row alike. */
+    val tile = Color(0x14FFFFFF)
     /** Hairline highlight along a material's top/leading edge, as light catching it. */
     val edge = Color(0x1FFFFFFF)
 
@@ -37,7 +43,7 @@ object Palette {
     val textSecondary = Color(0xFFB4BCC6)
     val textTertiary = Color(0xFF8790A0)
 
-    /** Focus ring and progress: one accent, used sparingly so focus always reads first. */
+    /** The one accent: what's playing, the selected group, the caret. Used sparingly. */
     val accent = Color(0xFF3D9BFF)
     /** "Live" and errors that need attention. */
     val live = Color(0xFFFF5147)
@@ -50,25 +56,30 @@ object Palette {
 }
 
 /**
- * 10-foot type scale on the system font (it already ships optical sizing and tuned
- * tracking), sized for the 960×540 dp canvas: refined, not shouty. Tracking tightens as size
- * grows and opens slightly when small; leading is tight on large text and looser on small.
+ * 10-foot type scale in Inter (bundled, Latin only; other scripts fall back to the system font),
+ * sized for the 960×540 dp canvas: refined, not shouty. Tracking tightens as size grows and
+ * opens slightly when small; leading is tight on large text and looser on small.
  * Nothing below 13sp: it's read from a sofa.
  */
 @Immutable
 object Type {
-    private val base = TextStyle(fontFamily = FontFamily.Default, color = Palette.textPrimary)
+    private val inter = FontFamily(
+        Font(R.font.inter_regular, FontWeight.Normal),
+        Font(R.font.inter_medium, FontWeight.Medium),
+        Font(R.font.inter_semibold, FontWeight.SemiBold),
+    )
+    private val base = TextStyle(fontFamily = inter, color = Palette.textPrimary)
 
     /** Channel name in the banner. */
-    val display = base.copy(fontSize = 30.sp, lineHeight = 36.sp, fontWeight = FontWeight.SemiBold, letterSpacing = (-0.015).em)
+    val display = base.copy(fontSize = 30.sp, lineHeight = 36.sp, fontWeight = FontWeight.SemiBold, letterSpacing = (-0.02).em)
     /** Screen and section headings (details, search, error). */
-    val title = base.copy(fontSize = 22.sp, lineHeight = 28.sp, fontWeight = FontWeight.SemiBold, letterSpacing = (-0.01).em)
+    val title = base.copy(fontSize = 22.sp, lineHeight = 28.sp, fontWeight = FontWeight.SemiBold, letterSpacing = (-0.015).em)
     /** Channel row name, current programme in the banner. */
-    val headline = base.copy(fontSize = 17.sp, lineHeight = 22.sp, fontWeight = FontWeight.Medium, letterSpacing = 0.em)
+    val headline = base.copy(fontSize = 16.sp, lineHeight = 21.sp, fontWeight = FontWeight.Medium, letterSpacing = (-0.006).em)
     /** Now/next lines, schedule rows. */
-    val body = base.copy(fontSize = 15.sp, lineHeight = 20.sp, color = Palette.textSecondary, letterSpacing = 0.005.em)
+    val body = base.copy(fontSize = 15.sp, lineHeight = 20.sp, color = Palette.textSecondary, letterSpacing = 0.em)
     /** Times, badges, hints. */
-    val caption = base.copy(fontSize = 13.sp, lineHeight = 17.sp, fontWeight = FontWeight.Medium, color = Palette.textTertiary, letterSpacing = 0.015.em)
+    val caption = base.copy(fontSize = 13.sp, lineHeight = 17.sp, fontWeight = FontWeight.Medium, color = Palette.textTertiary, letterSpacing = 0.01.em)
 }
 
 /**

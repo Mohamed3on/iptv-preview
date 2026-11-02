@@ -84,7 +84,7 @@ val Scrim = Color(0x99000000)
 
 /**
  * Focus as depth: the focused item lifts toward the viewer (scale + the raised surface),
- * with an accent ring at ≥3:1 contrast. It springs on the same beat as the key press and
+ * edged by a thin soft-white ring at ≥3:1 contrast. It springs on the same beat as the key press and
  * redirects smoothly when focus moves on mid-animation. One spring drives all three, read only
  * while drawing, so a focus move repaints two rows and recomposes nothing.
  */
@@ -100,10 +100,10 @@ fun Modifier.focusLift(focused: Boolean, radius: Dp = Radius.row): Modifier {
         val p = lift.value.coerceIn(0f, 1f)
         if (p == 0f) return@drawBehind
         val r = radius.toPx()
-        val ring = 2.dp.toPx()
+        val ring = 1.5.dp.toPx()
         drawRoundRect(Palette.raised, cornerRadius = CornerRadius(r), alpha = p)
         drawRoundRect(
-            Palette.accent, topLeft = Offset(ring / 2, ring / 2), size = Size(size.width - ring, size.height - ring),
+            Palette.focusRing, topLeft = Offset(ring / 2, ring / 2), size = Size(size.width - ring, size.height - ring),
             cornerRadius = CornerRadius(r - ring / 2), style = Stroke(ring), alpha = p,
         )
     }

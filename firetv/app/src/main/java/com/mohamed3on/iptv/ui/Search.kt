@@ -245,6 +245,6 @@ internal fun HitRow(hit: SearchHit, clock: State<Long>, playing: Boolean, watchH
             if (live) Progress(p, clock)
         }
         if (hint) Hint("Starts at ${clockTime(p.start)}")
-        else LastLine(watchHint) { Text(hit.comp ?: hit.tune.group, style = Type.caption, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+        else LastLine(watchHint) { Text(hit.comp ?: groupLabel(hit.tune.group), style = Type.caption, maxLines = 1, overflow = TextOverflow.Ellipsis) }
     }
 }

@@ -2,13 +2,16 @@
 // cache miss so channel names (esp. PPV event slots) stay current.
 // Add &vpn=1 for a copy whose streams use the provider's VPN-only front, for watching with
 // a VPN on (the normal fronts block VPN IPs, and the VPN front blocks everyone else).
+// With a backup provider configured (XTREAM2_*), its feeds follow provider A's as spares.
 import {
+  backupConfigFromEnv,
   buildM3U,
   configFromEnv,
   fetchCuratedChannels,
   providerEpgUrl,
   tokenOk,
   VPN_HOST,
+  withBackupFeeds,
   withCompetitionGroups,
 } from './_lib.js'
 
@@ -16,7 +19,8 @@ export default async function handler(req: Request): Promise<Response> {
   if (!tokenOk(req.url)) return new Response('Forbidden', { status: 403 })
   try {
     const cfg = configFromEnv()
-    const channels = withCompetitionGroups(await fetchCuratedChannels(cfg))
+    const backup = backupConfigFromEnv()
+    const channels = withCompetitionGroups(await withBackupFeeds(await fetchCuratedChannels(cfg), backup))
     const proto = req.headers.get('x-forwarded-proto') ?? 'https'
     // Host, not the client-supplied X-Forwarded-Host: the cached playlist is shared by URL.
     const host = req.headers.get('host')
@@ -25,7 +29,10 @@ export default async function handler(req: Request): Promise<Response> {
     // falls back to the provider's xmltv. Own PPV epg is always appended.
     const preferred = (process.env.EPG_URLS ?? providerEpgUrl(cfg)).split(',').filter(Boolean)
     const vpn = new URL(req.url).searchParams.get('vpn') === '1'
-    return new Response(buildM3U(vpn ? { ...cfg, host: VPN_HOST } : cfg, channels, [...preferred, ownEpg]), {
+    const m3u = vpn
+      ? buildM3U({ ...cfg, host: VPN_HOST }, channels, [...preferred, ownEpg], backup && { ...backup, host: backup.vpnHost })
+      : buildM3U(cfg, channels, [...preferred, ownEpg], backup)
+    return new Response(m3u, {
       headers: {
         'Content-Type': 'audio/x-mpegurl; charset=utf-8',
         'Content-Disposition': 'inline; filename="playlist.m3u"',

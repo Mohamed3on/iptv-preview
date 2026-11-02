@@ -11,7 +11,7 @@
 import { appendFile, mkdir, rename, stat } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import { buildAppFeed, buildAppGuide } from './_app-feed.js'
-import { appTokenOk, configFromEnv, fetchCuratedChannels, saneFps, savedVodChannels, withCompetitionGroups } from './_lib.js'
+import { appTokenOk, backupConfigFromEnv, configFromEnv, fetchCuratedChannels, saneFps, savedVodChannels, withBackupFeeds, withCompetitionGroups } from './_lib.js'
 import { addBitrate, mergeAppReading, saveQuality, type Meta } from './_quality.js'
 import { QUALITY } from './quality-cache.js'
 import { curatedGuide } from './epg.js'
@@ -22,7 +22,8 @@ export async function channels(req: Request): Promise<Response> {
   if (!appTokenOk(req.url)) return forbidden()
   try {
     const cfg = configFromEnv()
-    const feed = buildAppFeed(cfg, withCompetitionGroups(await fetchCuratedChannels(cfg, false)))
+    const backup = backupConfigFromEnv()
+    const feed = buildAppFeed(cfg, withCompetitionGroups(await withBackupFeeds(await fetchCuratedChannels(cfg, false), backup)), backup)
     return Response.json(feed, {
       headers: { 'Cache-Control': 'private, s-maxage=1800, stale-while-revalidate=3600' },
     })
@@ -65,7 +66,8 @@ export async function quality(req: Request): Promise<Response> {
   if (!appTokenOk(req.url)) return forbidden()
   const r = (await req.json().catch(() => null)) as Record<string, unknown> | null
   const int = (v: unknown, max: number) => Number.isInteger(v) && (v as number) > 0 && (v as number) <= max
-  if (!r || !int(r.id, 1e9) || !int(r.w, 8192) || !int(r.h, 8192) || typeof r.fps !== 'number' ||
+  // Ids reach 2e9: provider-B feeds are BACKUP_ID (1e9) + their own id.
+  if (!r || !int(r.id, 2e9) || !int(r.w, 8192) || !int(r.h, 8192) || typeof r.fps !== 'number' ||
       typeof r.codec !== 'string' || !CODEC.test(r.codec) || typeof r.name !== 'string' || r.name.length > 200) {
     return new Response('Bad reading', { status: 400 })
   }
@@ -88,7 +90,7 @@ export async function bitrate(req: Request): Promise<Response> {
   if (!appTokenOk(req.url)) return forbidden()
   const r = (await req.json().catch(() => null)) as Record<string, unknown> | null
   const id = r?.id
-  if (!r || !Number.isInteger(id) || !((id as number) > 0 && (id as number) <= 1e9) || typeof r.mbps !== 'number' || !(r.mbps >= 0.1 && r.mbps <= 200)) {
+  if (!r || !Number.isInteger(id) || !((id as number) > 0 && (id as number) <= 2e9) || typeof r.mbps !== 'number' || !(r.mbps >= 0.1 && r.mbps <= 200)) {
     return new Response('Bad reading', { status: 400 })
   }
   const merged = addBitrate(QUALITY[String(id)], r.mbps)

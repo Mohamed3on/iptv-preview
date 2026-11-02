@@ -2,6 +2,7 @@ package com.mohamed3on.iptv.player
 
 import com.mohamed3on.iptv.data.Channel
 import com.mohamed3on.iptv.data.Feed
+import com.mohamed3on.iptv.data.isBackup
 import com.mohamed3on.iptv.data.Route
 import com.mohamed3on.iptv.data.RouteChoice
 import com.mohamed3on.iptv.data.RouteKind
@@ -162,7 +163,7 @@ class StreamSession(
         attempt = true
         attemptKind = routeKind
         _state.update { it.copy(feed = member, phase = phase) }
-        player.open(feed!!.route.streamUrl(routeKind, member.id))
+        player.open(feed!!.streamUrl(routeKind, member))
         lastPosition = player.position
         progressAt = now()
         work = scope.launch { watch() }
@@ -228,7 +229,8 @@ class StreamSession(
         cancelWork()
         player.stop()
         when (StreamErrors.recovery(failure)) {
-            Recovery.Busy -> busy()
+            // The connection limit is per account: a feed on the other provider's plays meanwhile.
+            Recovery.Busy -> members.firstOrNull { it.id !in tried && it.isBackup != current!!.isBackup }?.let { open(it) } ?: busy()
             Recovery.WrongRoute -> wrongRoute()
             Recovery.NextFeed -> nextMember()?.let { open(it) } ?: setPhase(Phase.Offline)
             Recovery.Backoff -> {

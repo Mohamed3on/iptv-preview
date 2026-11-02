@@ -792,7 +792,7 @@ fun ChannelOverlay(
                                 is ChannelItem -> {
                                     val on = item.channel.family == current?.family
                                     ChannelRow(
-                                        item.channel, nowNext[item.channel.tvgId].takeIf { linesFor.value == source.key }, clock,
+                                        item.channel, nowNext[item.channel.tvgId], clock,
                                         playing = on, watchHint = watchHint && on, focus = focus, onFocused = onFocused,
                                         onClick = { choose(item.channel, null) },
                                     )

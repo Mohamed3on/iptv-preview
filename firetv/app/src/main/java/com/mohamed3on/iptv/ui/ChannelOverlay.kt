@@ -73,7 +73,6 @@ import com.mohamed3on.iptv.data.Programme
 import com.mohamed3on.iptv.data.displayName
 import com.mohamed3on.iptv.ui.theme.Badges
 import com.mohamed3on.iptv.ui.theme.Edge
-import com.mohamed3on.iptv.ui.theme.ListScrim
 import com.mohamed3on.iptv.ui.theme.LiveMark
 import com.mohamed3on.iptv.ui.theme.LocalReducedMotion
 import com.mohamed3on.iptv.ui.theme.Motion
@@ -81,7 +80,6 @@ import com.mohamed3on.iptv.ui.theme.Palette
 import com.mohamed3on.iptv.ui.theme.ProgressLine
 import com.mohamed3on.iptv.ui.theme.Space
 import com.mohamed3on.iptv.ui.theme.Type
-import com.mohamed3on.iptv.ui.theme.edgeFade
 import com.mohamed3on.iptv.ui.theme.reveal
 import com.mohamed3on.iptv.ui.theme.slideFade
 import com.mohamed3on.iptv.ui.theme.staggered
@@ -686,7 +684,7 @@ fun ChannelOverlay(
     // Keep the focused row clear of the edge fades, with the next row in view.
     val density = LocalDensity.current
     val keepClear = remember(density) {
-        val margin = with(density) { ROW_HEIGHT.toPx() * 0.75f }
+        val margin = with(density) { (ROW_HEIGHT * 0.75f + Space.safeY).toPx() }
         object : BringIntoViewSpec {
             override fun calculateScrollDistance(offset: Float, size: Float, containerSize: Float): Float {
                 val before = offset - margin
@@ -703,7 +701,7 @@ fun ChannelOverlay(
     Row(
         modifier
             .fillMaxHeight()
-            .padding(Space.safe)
+            .padding(horizontal = Space.safeX)
             .onKeyEvent {
                 if (details == null || remoteKey(it.nativeKeyEvent.keyCode) != RemoteKey.Back) return@onKeyEvent false
                 if (it.type == KeyEventType.KeyDown) closeDetails()
@@ -735,7 +733,6 @@ fun ChannelOverlay(
                         .fillMaxHeight()
                         .slideFade({ entrance() * aside.value }, Edge.Left, reduced)
                         .graphicsLayer { translationY = groupsNudge.value * Space.s.toPx() }
-                        .edgeFade(ListScrim)
                         .onFocusChanged { inGroups = it.hasFocus }
                         .onKeyEvent {
                             when (val code = it.nativeKeyEvent.keyCode) {
@@ -754,7 +751,7 @@ fun ChannelOverlay(
                                 else -> false
                             }
                         },
-                    contentPadding = PaddingValues(vertical = Space.xl),
+                    contentPadding = PaddingValues(vertical = Space.safeY + Space.xl),
                     verticalArrangement = Arrangement.spacedBy(Space.xs),
                 ) {
                     updateRow()
@@ -843,13 +840,14 @@ fun ChannelOverlay(
             val list = items
             when {
                 list == null -> {}
-                list.isEmpty() && source == LiveSource -> Empty("No matches on right now", "Matches appear here when they kick off.")
-                list.isEmpty() -> Empty("Nothing in this group right now")
+                list.isEmpty() -> Box(Modifier.padding(top = Space.safeY)) {
+                    if (source == LiveSource) Empty("No matches on right now", "Matches appear here when they kick off.") else Empty("Nothing in this group right now")
+                }
                 else -> CompositionLocalProvider(LocalBringIntoViewSpec provides keepClear) {
                     LazyColumn(
                         state = listState,
-                        modifier = Modifier.fillMaxWidth().fillMaxHeight().edgeFade(ListScrim),
-                        contentPadding = PaddingValues(vertical = Space.xl),
+                        modifier = Modifier.fillMaxWidth().fillMaxHeight(),
+                        contentPadding = PaddingValues(vertical = Space.safeY + Space.xl),
                         verticalArrangement = Arrangement.spacedBy(Space.xs),
                     ) {
                         itemsIndexed(list, key = { _, it -> it.key }, contentType = { _, it -> it::class }) { index, item ->
@@ -918,7 +916,7 @@ fun ChannelOverlay(
             detailsShown?.let {
                 Details(
                     it, guide, clock, stay = { details != null }, onClose = ::closeDetails,
-                    modifier = Modifier.padding(start = Space.xl).slideFade({ shownNow.value * staggered(entrance()) }, Edge.Right, reduced),
+                    modifier = Modifier.padding(start = Space.xl, top = Space.safeY, bottom = Space.safeY).slideFade({ shownNow.value * staggered(entrance()) }, Edge.Right, reduced),
                 )
             }
         }

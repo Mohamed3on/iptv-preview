@@ -90,7 +90,9 @@ import com.mohamed3on.iptv.ui.theme.LocalReducedMotion
 import com.mohamed3on.iptv.ui.theme.Motion
 import com.mohamed3on.iptv.ui.theme.Palette
 import com.mohamed3on.iptv.ui.theme.ProgressLine
+import com.mohamed3on.iptv.ui.theme.ListScrim
 import com.mohamed3on.iptv.ui.theme.Scrim
+import com.mohamed3on.iptv.ui.theme.edgeFade
 import com.mohamed3on.iptv.ui.theme.Space
 import com.mohamed3on.iptv.ui.theme.Type
 import com.mohamed3on.iptv.player.Health
@@ -384,6 +386,8 @@ private fun PlayerChrome(
                         compositingStrategy = CompositingStrategy.ModulateAlpha
                     }
                     .leftScrim { shown.value }
+                    // The columns run to the screen's edges; rows fade out in the safe area, across the full width.
+                    .edgeFade(ListScrim, top = Space.safeY + Space.xl, bottom = Space.safeY + Space.xxxl) { shown.value }
                     .onFocusChanged { layerFocused = it.hasFocus }
                     .onPreviewKeyEvent {
                         if (peek) previewed = null

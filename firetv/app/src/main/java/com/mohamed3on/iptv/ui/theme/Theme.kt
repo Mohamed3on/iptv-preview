@@ -100,7 +100,9 @@ object Space {
     val xxl = 32.dp
     val xxxl = 48.dp
     /** TV overscan-safe inset (5% of 960×540dp): chrome never sits closer to the edge. */
-    val safe = PaddingValues(horizontal = 48.dp, vertical = 27.dp)
+    val safeX = 48.dp
+    val safeY = 27.dp
+    val safe = PaddingValues(horizontal = safeX, vertical = safeY)
 }
 
 /** Corner radii: larger surfaces read as rounder. Nested radius = outer − inset. */

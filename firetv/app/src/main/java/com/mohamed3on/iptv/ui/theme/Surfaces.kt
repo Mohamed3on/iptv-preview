@@ -187,16 +187,19 @@ fun ProgressLine(fraction: () -> Float, modifier: Modifier = Modifier) {
 /**
  * Scroll edge effect for lists: content fades into [color] (what the list sits on) at the top and
  * bottom edges instead of meeting a hard divider. Drawn over the content as two gradient bands, so
- * it costs two small fills rather than an offscreen copy of the whole list each frame.
+ * it costs two small fills rather than an offscreen copy of the whole list each frame. Over a
+ * see-through [color] the bands show, so they must span the screen's full width at its edges.
+ * [alpha] is read while drawing.
  */
-fun Modifier.edgeFade(color: Color, top: Dp = 24.dp, bottom: Dp = 48.dp): Modifier = drawWithCache {
+fun Modifier.edgeFade(color: Color, top: Dp = 24.dp, bottom: Dp = 48.dp, alpha: () -> Float = { 1f }): Modifier = drawWithCache {
     val t = top.toPx()
     val b = bottom.toPx()
     val topBrush = Brush.verticalGradient(0f to color, 1f to color.copy(alpha = 0f), startY = 0f, endY = t)
     val bottomBrush = Brush.verticalGradient(0f to color.copy(alpha = 0f), 1f to color, startY = size.height - b, endY = size.height)
     onDrawWithContent {
         drawContent()
-        drawRect(topBrush, size = Size(size.width, t))
-        drawRect(bottomBrush, topLeft = Offset(0f, size.height - b), size = Size(size.width, b))
+        val a = alpha().coerceIn(0f, 1f)
+        drawRect(topBrush, size = Size(size.width, t), alpha = a)
+        drawRect(bottomBrush, topLeft = Offset(0f, size.height - b), size = Size(size.width, b), alpha = a)
     }
 }

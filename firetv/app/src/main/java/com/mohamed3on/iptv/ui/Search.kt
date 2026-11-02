@@ -100,13 +100,22 @@ internal fun Feed.prepareSearch() {
     searchIndex()
 }
 
+/** Every word starts a word of [name] ("city" in "Manchester City", not in "Felicity"). */
+private fun startsWords(name: String, words: List<String>): Boolean {
+    val parts = name.split(NON_WORD)
+    return words.all { w -> parts.any { it.startsWith(w) } }
+}
+private val NON_WORD = Regex("[^\\p{L}\\p{N}]+")
+private const val SOON_SEC = 3 * 3600
+
 /**
  * Search (R7, R26): channels whose name has every typed word, one per family on its best feed
  * (names where the words start a word first, then server order), at most [CHANNEL_CAP]; then
  * programmes in the guide from now to a day ahead whose title contains the query anywhere, one row
  * per (channel family, programme), so a channel's HD, FHD and 4K feeds count as one, at most
- * [HIT_CAP]. The guide returns rows in start order, and every row still runs past now, so the live
- * ones come first.
+ * [HIT_CAP]. Programmes rank by time first: on now, then within [SOON_SEC], then later. Within each,
+ * titles where the words start a word, then 🏆 competition matches, then other live matches (the
+ * server's rules: no replays, highlights or shows), then by start.
  */
 fun Feed.search(guide: GuideDb?, query: String, nowSec: Long): SearchResults {
     // Dictation can end with a full stop ("Liverpool."); typed queries never have one.
@@ -114,10 +123,19 @@ fun Feed.search(guide: GuideDb?, query: String, nowSec: Long): SearchResults {
     val words = q.split(' ').filter(String::isNotEmpty)
     val index = searchIndex()
     val channels = index.names.filter { (name, _) -> words.all(name::contains) }
-        .sortedBy { (name, _) -> !words.all { w -> name.split(' ').any { it.startsWith(w) } } }
+        .sortedBy { (name, _) -> !startsWords(name, words) }
         .take(CHANNEL_CAP).map { it.second }
     val seen = HashSet<Triple<String, String, Long>>()
-    val hits = guide?.search(q, nowSec, ROW_CAP).orEmpty().asSequence().flatMap { a ->
+    val ranked = guide?.search(q, nowSec, ROW_CAP).orEmpty().sortedWith(
+        compareBy(
+            { a -> if (a.programme.start <= nowSec) 0 else if (a.programme.start < nowSec + SOON_SEC) 1 else 2 },
+            { a -> !startsWords(a.norm, words) },
+            { a -> a.comp == null },
+            { a -> !a.programme.match },
+            { a -> a.programme.start },
+        ),
+    )
+    val hits = ranked.asSequence().flatMap { a ->
         index.byTvgId[a.tvgId].orEmpty().map { it.family }.distinct()
             .filter { seen.add(Triple(it, a.norm, a.programme.start)) }
             .map { SearchHit(a.programme, familyMembers(it).first(), a.comp) }

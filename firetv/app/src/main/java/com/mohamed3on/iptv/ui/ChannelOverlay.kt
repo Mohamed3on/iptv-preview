@@ -658,6 +658,22 @@ fun ChannelOverlay(
         }
     }
 
+    /** The groups column's top (Search) or its last group, shown at once and focused: a wrap round, or Left's shortcut. */
+    fun jumpGroups(top: Boolean) {
+        pending.job?.cancel()
+        pending.target = null
+        val to = if (top) SearchSource else GroupSource(feed.groups.last())
+        show(to)
+        moveFocus {
+            groupsState.scrollToItem(if (top) 0 else groupsState.layoutInfo.totalItemsCount - 1)
+            repeat(FOCUS_FRAMES) {
+                withFrameNanos {}
+                runCatching { groupFocus.requestFocus() }
+                if (inGroups && groupKey == to.key) return@moveFocus
+            }
+        }
+    }
+
     fun closeDetails() {
         details = null
         focusChannels()
@@ -749,12 +765,20 @@ fun ChannelOverlay(
                                     if (it.type == KeyEventType.KeyDown) enterChannels()
                                     true
                                 }
+                                // Left: back to the top, a shortcut from deep in the groups.
+                                AndroidKeyEvent.KEYCODE_DPAD_LEFT -> {
+                                    if (it.type == KeyEventType.KeyDown && groupKey != SearchSource.key) jumpGroups(top = true)
+                                    true
+                                }
                                 AndroidKeyEvent.KEYCODE_DPAD_UP, AndroidKeyEvent.KEYCODE_DPAD_DOWN -> {
                                     val down = code == AndroidKeyEvent.KEYCODE_DPAD_DOWN
                                     val info = groupsState.layoutInfo
                                     val at = info.visibleItemsInfo.firstOrNull { v -> v.key == groupKey }?.index
                                     val edge = at != null && at == (if (down) info.totalItemsCount - 1 else 0)
-                                    if (edge && it.type == KeyEventType.KeyDown) bump(groupsNudge, down)
+                                    // A fresh press at either end wraps round; a held key stops there.
+                                    if (edge && it.type == KeyEventType.KeyDown) {
+                                        if (it.nativeKeyEvent.repeatCount == 0) jumpGroups(top = down) else bump(groupsNudge, down)
+                                    }
                                     edge
                                 }
                                 else -> false

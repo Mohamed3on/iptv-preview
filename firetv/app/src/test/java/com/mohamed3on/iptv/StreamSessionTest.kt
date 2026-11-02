@@ -278,6 +278,28 @@ class StreamSessionTest {
         assertEquals(listOf(plain(1), plain(2)), r.urls)
     }
 
+    // Seen on the stick 2026-11-02: two stalling feeds swapped ~10 times in 4 minutes.
+    @Test fun aStallNeverHandsBackToAFeedThatJustStalled() = runTest {
+        val r = rig()
+        val fhd = ch(1, family = "sky", rank = 0)
+        val hd = ch(2, family = "sky", rank = 1)
+        r.session.zap(fhd, feedOf(fhd, hd))
+        r.player.play()
+        at(60_000)
+        r.player.freeze()
+        at(70_000)
+        r.player.play()
+        at(120_000)
+        r.player.freeze()
+        at(130_000)
+        assertEquals(listOf(plain(1), plain(2), plain(2)), r.urls)
+        r.player.play()
+        at(800_000) // ten quiet minutes later the other feed is fair game again
+        r.player.freeze()
+        at(810_000)
+        assertEquals(listOf(plain(1), plain(2), plain(2), plain(1)), r.urls)
+    }
+
     @Test fun aTrickleOfDataDoesNotHoldOffFailoverForever() = runTest {
         val r = rig()
         val fhd = ch(1, family = "sky", rank = 0)

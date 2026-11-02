@@ -72,6 +72,8 @@ class StreamSession(
     private var feed: Feed? = null
     private var members: List<Channel> = emptyList()
     private val tried = mutableSetOf<Int>()
+    /** When each family member last stalled this tune, so a stall never hands back to a feed that just stalled. */
+    private val stalledAt = mutableMapOf<Int, Long>()
     private var current: Channel? = null
     /** Whether an open attempt exists whose player events still count. */
     private var attempt = false
@@ -147,6 +149,7 @@ class StreamSession(
     private fun tune(channel: Channel, feed: Feed) {
         members = feed.familyMembers(channel.family)
         tried.clear()
+        stalledAt.clear()
         busySince = null
         backoffs = 0
         open(channel)
@@ -209,8 +212,16 @@ class StreamSession(
         setPhase(Phase.Playing)
     }
 
-    /** A playing feed stalled or ended (live never ends): hand off to the next feed, or re-prepare a lone one. */
-    private fun stalled() = open(nextMember() ?: current!!)
+    /**
+     * A playing feed stalled or ended (live never ends): hand off to a feed that has not stalled in
+     * the last [FLAP_MS], else re-prepare this one, whose cushion then grows (#3). Ping-ponging
+     * between two stalling feeds reset the cushion on every hop and never settled.
+     */
+    private fun stalled() {
+        val t = now()
+        stalledAt[current!!.id] = t
+        open(members.firstOrNull { it.id !in tried && stalledAt[it.id]?.let { at -> t - at < FLAP_MS } != true } ?: current!!)
+    }
 
     private fun failed(failure: StreamFailure) {
         attempt = false
@@ -292,5 +303,6 @@ class StreamSession(
         const val BUSY_RETRY_MS = 5_000L
         const val GIVE_UP_MS = 10 * 60_000L
         const val QUIET_MS = 5_000L
+        const val FLAP_MS = 10 * 60_000L
     }
 }

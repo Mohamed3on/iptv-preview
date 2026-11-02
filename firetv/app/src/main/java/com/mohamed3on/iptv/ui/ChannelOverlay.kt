@@ -4,9 +4,8 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.expandHorizontally
-import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.focusGroup
@@ -59,6 +58,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.DpSize
@@ -97,6 +97,7 @@ import android.os.SystemClock
 import android.util.Log
 import android.view.KeyEvent as AndroidKeyEvent
 import java.text.Normalizer
+import kotlin.math.roundToInt
 
 /** A Live now row: a confirmed match ([programme] set) or an unconfirmed event slot. [via] is the 🏆 row it was found on. */
 data class LiveEntry(
@@ -340,8 +341,11 @@ private const val FOCUS_FRAMES = 30
  * Choosing a row hands [onPreview] the channel and the zap context it carries (Live now's tune list,
  * else null: its group): the player tunes it behind the still-open list, which keeps its place.
  * Choosing the row playing, or any row when there is no [onPreview] (U11's pick mode), goes to
- * [onPick], which closes the list. [open] is false while the overlay leaves, so focus may go back to
- * the player. [updateRow] (U12) is a slot at the top of the groups column, above Search; it renders
+ * [onPick], which closes the list. [open] is false while the overlay leaves and while it is hidden,
+ * so focus may go back to the player.
+ *
+ * The overlay stays composed between openings, so reopening it builds nothing: [opens] counts them,
+ * and each opening starts afresh on the rows above, as described, while the built rows are reused. [updateRow] (U12) is a slot at the top of the groups column, above Search; it renders
  * nothing until filled (use [GroupRow]).
  *
  * Search (R7, R8, R26, F3) shows a keyboard and its results in the channel column; a result tunes
@@ -356,6 +360,7 @@ fun ChannelOverlay(
     current: Channel?,
     context: List<Channel>?,
     open: Boolean,
+    opens: Int,
     memory: ListMemory,
     startInGroups: Boolean,
     onPick: (channel: Channel, context: List<Channel>?) -> Unit,
@@ -379,7 +384,7 @@ fun ChannelOverlay(
         }
     }
 
-    var shown by remember {
+    var shown by remember(opens) {
         mutableStateOf(
             when {
                 memory.inSearch && !startInGroups -> SearchSource
@@ -391,14 +396,13 @@ fun ChannelOverlay(
     // The channel column follows the groups column: a later group's rows rise from below, an earlier
     // one's come down from above. The old rows go at once; only the new ones move.
     val arrival = remember { Animatable(1f) }
-    val built = remember { BuiltRows() }
+    val built = remember { BuiltRows(perFrame = 2, onScreen = 8) }
     var travel by remember { mutableStateOf(1f) }
     fun show(next: Source) {
         if (next == shown) return
         val order = { s: Source -> if (s is GroupSource) feed.groups.indexOf(s.name) else if (s == LiveSource) -1 else -2 }
         travel = if (order(next) > order(shown)) 1f else -1f
         shown = next
-        built.count.intValue = ROWS_PER_FRAME
         scope.launch(start = CoroutineStart.UNDISPATCHED) {
             arrival.snapTo(0f)
             arrival.animateTo(1f, if (reduced) tween(Motion.FADE_MS) else Motion.spring(0.28f))
@@ -407,7 +411,14 @@ fun ChannelOverlay(
     // Holding Down through the groups column builds only the group focus rests on (~120ms), like
     // TiviMate: passing groups never pay for building their rows. Right/OK applies it at once.
     val pending = remember { PendingShow() }
-    var enterShown by remember { mutableStateOf(false) }
+    var enterShown by remember(opens) { mutableStateOf(false) }
+    // A group waiting to show when the list closes never shows behind it.
+    LaunchedEffect(open) {
+        if (!open) {
+            pending.job?.cancel()
+            pending.target = null
+        }
+    }
     fun showSoon(next: Source) {
         pending.job?.cancel()
         pending.target = next
@@ -416,15 +427,6 @@ fun ChannelOverlay(
             pending.target = null
             show(next)
         }
-    }
-    // A newly shown group's rows are built a few per frame from the top (the rest hold their place),
-    // so no frame is long enough to drop; the column is still fading in meanwhile.
-    LaunchedEffect(shown.key) {
-        while (built.count.intValue < ROWS_ON_SCREEN) {
-            withFrameNanos {}
-            built.count.intValue += ROWS_PER_FRAME
-        }
-        built.count.intValue = Int.MAX_VALUE
     }
     // A refresh can drop the 🏆 group on screen; fall back to the first group.
     val source = shown.takeUnless { it is GroupSource && it.name !in feed.groups } ?: GroupSource(feed.groups.first())
@@ -483,14 +485,14 @@ fun ChannelOverlay(
         snapshotFlow { clock.value }.collectLatest { loadNowNext(allTvgIds, it) }
     }
 
-    val lastFocused = remember { HashMap<String, String>() }
-    var focusedKey by remember { mutableStateOf<String?>(null) }
-    var focusedIndex by remember { mutableStateOf(0) }
-    var wantChannels by remember { mutableStateOf(true) }
+    val lastFocused = remember(opens) { HashMap<String, String>() }
+    var focusedKey by remember(opens) { mutableStateOf<String?>(null) }
+    var focusedIndex by remember(opens) { mutableStateOf(0) }
+    var wantChannels by remember(opens) { mutableStateOf(true) }
     var inChannels by remember { mutableStateOf(false) }
     var inGroups by remember { mutableStateOf(false) }
-    var onKeyboard by remember { mutableStateOf(false) }
-    var groupKey by remember { mutableStateOf<String?>(null) }
+    var onKeyboard by remember(opens) { mutableStateOf(false) }
+    var groupKey by remember(opens) { mutableStateOf<String?>(null) }
     // A list's end is felt, not crossed: Up on the first row or Down on the last nudges the column
     // toward the key and springs it back, where focus search would otherwise jump to the other column.
     val groupsNudge = remember { Animatable(0f) }
@@ -502,10 +504,10 @@ fun ChannelOverlay(
             column.animateTo(0f, Motion.spring(0.3f))
         }
     }
-    var entryKey by remember { mutableStateOf<String?>(null) }
-    var details by remember { mutableStateOf<Channel?>(null) }
+    var entryKey by remember(opens) { mutableStateOf<String?>(null) }
+    var details by remember(opens) { mutableStateOf<Channel?>(null) }
     // The pane keeps its channel while it slides away.
-    var detailsShown by remember { mutableStateOf<Channel?>(null) }
+    var detailsShown by remember(opens) { mutableStateOf<Channel?>(null) }
     val rowFocus = remember { FocusRequester() }
     val groupFocus = remember { FocusRequester() }
     val keyFocus = remember { FocusRequester() }
@@ -513,6 +515,7 @@ fun ChannelOverlay(
     val focusing = remember { arrayOfNulls<Job>(1) }
     fun moveFocus(block: suspend CoroutineScope.() -> Unit) {
         focusing[0]?.cancel()
+        if (!stay) return // hidden: focus stays on the player
         focusing[0] = scope.launch(block = block)
     }
 
@@ -529,21 +532,23 @@ fun ChannelOverlay(
     /** The search result focused last, if it is still in [list]. */
     fun resumeIndex(list: List<Item>): Int? = memory.searchFocus?.let { k -> list.indexOfFirst { it.key == k }.takeIf { it >= 0 } }
 
-    val groupsState = remember {
-        val at = (source as? GroupSource)?.let { feed.groups.indexOf(it.name) + 1 } ?: 0
-        LazyListState((at - 2).coerceAtLeast(0))
-    }
+    fun groupsStart() = ((source as? GroupSource)?.let { feed.groups.indexOf(it.name) + 1 } ?: 0).minus(2).coerceAtLeast(0)
+    val groupsState = remember { LazyListState(groupsStart()) }
     fun startIndex() = items?.let { ((if (source == SearchSource) resumeIndex(it) ?: 0 else entryIndex(it)) - 1).coerceAtLeast(0) } ?: 0
     // One list state for every source, moved in the frame its rows change: the column keeps its
     // composed rows and reuses them for the next group's, rather than building each group afresh.
     val listState = remember { LazyListState(startIndex()) }
-    val positionedFor = remember { arrayOf(source.key) }
+    // Each opening (and each source shown) puts the columns in place. Rows are built a few per frame
+    // from the top while the column slides or fades in (the rest hold their place), so no frame is long
+    // enough to drop; a source whose rows are already built (reopening on the same group) builds nothing.
+    val positionedFor = remember(opens) { arrayOfNulls<String>(1) }
     SideEffect {
-        if (positionedFor[0] != source.key) {
-            positionedFor[0] = source.key
-            built.from = startIndex()
-            listState.requestScrollToItem(built.from)
-        }
+        if (positionedFor[0] == source.key) return@SideEffect
+        if (positionedFor[0] == null) groupsState.requestScrollToItem(groupsStart())
+        positionedFor[0] = source.key
+        built.from = startIndex()
+        built.buildFor(source.key, scope)
+        listState.requestScrollToItem(built.from)
     }
 
     /**
@@ -633,9 +638,10 @@ fun ChannelOverlay(
 
     // Focus opens on the current channel once its list exists, and never lands nowhere: when a refresh
     // drops the focused row, the nearest row takes it; an emptied list hands focus to its group.
-    var opened by remember { mutableStateOf(false) }
-    LaunchedEffect(items) {
+    var opened by remember(opens) { mutableStateOf(false) }
+    LaunchedEffect(items, opens) {
         val list = items ?: return@LaunchedEffect
+        if (!stay) return@LaunchedEffect
         if (!opened) {
             opened = true
             if (!startInGroups && (source == SearchSource || list.any { it.focusable })) focusChannels(resume = true) else focusGroups()
@@ -672,21 +678,27 @@ fun ChannelOverlay(
                 true
             }
             // Focus stays in the list while it is open: no key lands on the video underneath.
-            .focusProperties { onExit = { if (stay) cancelFocusChange() } }
+            .focusProperties {
+                onExit = { if (stay) cancelFocusChange() }
+                onEnter = { if (!stay) cancelFocusChange() }
+            }
             .focusGroup(),
-        horizontalArrangement = Arrangement.spacedBy(Space.xl),
     ) {
-        AnimatedVisibility(
-            visible = details == null,
-            enter = expandHorizontally(Motion.panel()),
-            exit = shrinkHorizontally(Motion.panel()),
+        // In with the list, first; and out of the way of the schedule (Right on a channel), folding to
+        // nothing with the gap after it. It stays built meanwhile, so closing the schedule builds nothing.
+        val aside = animateFloatAsState(if (details == null) 1f else 0f, if (reduced) tween(Motion.FADE_MS) else Motion.panel(), label = "aside")
+        Box(
+            Modifier.layout { measurable, constraints ->
+                val placeable = measurable.measure(constraints)
+                val width = (placeable.width * aside.value).roundToInt()
+                layout(width, placeable.height) { placeable.placeRelative(width - placeable.width, 0) }
+            },
         ) {
-            // In with the list, first; and out of the way of the schedule (Right on a channel).
-            val aside = reveal()
             CompositionLocalProvider(LocalBringIntoViewSpec provides keepClear) {
                 LazyColumn(
                     state = groupsState,
                     modifier = Modifier
+                        .padding(end = Space.xl)
                         .width(GROUPS_WIDTH)
                         .fillMaxHeight()
                         .slideFade({ entrance() * aside.value }, Edge.Left, reduced)
@@ -798,7 +810,7 @@ fun ChannelOverlay(
                         verticalArrangement = Arrangement.spacedBy(Space.xs),
                     ) {
                         itemsIndexed(list, key = { _, it -> it.key }, contentType = { _, it -> it::class }) { index, item ->
-                            val ready by remember(index) { derivedStateOf { index < built.from + built.count.intValue } }
+                            val ready by remember(index) { derivedStateOf { built.ready(index) } }
                             if (item.focusable && !ready) return@itemsIndexed Box(Modifier.fillMaxWidth().height(ROW_HEIGHT))
                             val focus = if (item.key == entryKey) rowFocus else null
                             val onFocused = {
@@ -863,7 +875,7 @@ fun ChannelOverlay(
             detailsShown?.let {
                 Details(
                     it, guide, clock, stay = { details != null }, onClose = ::closeDetails,
-                    modifier = Modifier.slideFade({ shownNow.value * staggered(entrance()) }, Edge.Right, reduced),
+                    modifier = Modifier.padding(start = Space.xl).slideFade({ shownNow.value * staggered(entrance()) }, Edge.Right, reduced),
                 )
             }
         }
@@ -1037,12 +1049,30 @@ private class PendingShow {
 
 private const val GROUP_REST_MS = 120L
 
-/** How far a newly shown source's rows are built: [count] rows from [from], the first on screen. */
-private class BuiltRows {
+/**
+ * A column's rows built a few per frame: [perFrame] more each frame from [from] (the first on screen)
+ * until about a screenful ([onScreen]) is, then all. A row not yet [ready] holds its place empty.
+ */
+internal class BuiltRows(private val perFrame: Int, private val onScreen: Int) {
     var from = 0
-    val count = mutableIntStateOf(Int.MAX_VALUE)
-}
+    private var key: String? = null
+    private val count = mutableIntStateOf(Int.MAX_VALUE)
+    private var job: Job? = null
 
-/** About a screenful of rows, and how many of them one frame builds. */
-private const val ROWS_ON_SCREEN = 8
-private const val ROWS_PER_FRAME = 2
+    fun ready(index: Int) = index - from < count.intValue
+
+    /** Starts building [key]'s rows, unless they are the ones built. */
+    fun buildFor(key: String, scope: CoroutineScope) {
+        if (key == this.key) return
+        this.key = key
+        job?.cancel()
+        count.intValue = perFrame
+        job = scope.launch {
+            while (count.intValue < onScreen) {
+                withFrameNanos {}
+                count.intValue += perFrame
+            }
+            count.intValue = Int.MAX_VALUE
+        }
+    }
+}

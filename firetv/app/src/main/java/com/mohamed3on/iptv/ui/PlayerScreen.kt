@@ -8,6 +8,7 @@ import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.SizeTransform
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
@@ -34,7 +35,6 @@ import androidx.compose.runtime.State
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.key
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
@@ -43,6 +43,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -108,6 +109,8 @@ private val LOGO_SIZE = DpSize(128.dp, 72.dp)
 private val TUNING_SIZE = 16.dp
 private val PROGRESS_WIDTH = 200.dp
 private val CARD_WIDTH = 560.dp
+/** After launch's banner has sunk, so building the hidden list never competes with anything on screen. */
+private const val LIST_BUILD_DELAY_MS = BANNER_MS + 2_000L
 
 /**
  * The full-screen player (R10, R14): the video, with chrome only when asked for. The channel
@@ -146,7 +149,7 @@ private fun PlayerChrome(feed: Feed, session: StreamSession, audio: AudioTracks?
     var down by remember { mutableStateOf<Boolean?>(true) }
     val focus = remember { FocusRequester() }
     val scope = rememberCoroutineScope()
-    // The channel list's search and place, kept between openings; each opening is a fresh list.
+    // The channel list's search and place, kept between openings; each opening starts afresh (ChannelOverlay).
     val memory = remember { ListMemory() }
     var opens by remember { mutableStateOf(0) }
     var openInGroups by remember { mutableStateOf(false) }
@@ -175,7 +178,7 @@ private fun PlayerChrome(feed: Feed, session: StreamSession, audio: AudioTracks?
         if (layer == Layer.None && problem?.button == null) focus.requestFocus()
     }
 
-    // A new list each time, even when reopened while the last one is still sliding away.
+    // Afresh each time, even when reopened while the list is still sliding away.
     fun openList(groups: Boolean) {
         opens++
         openInGroups = groups
@@ -294,24 +297,34 @@ private fun PlayerChrome(feed: Feed, session: StreamSession, audio: AudioTracks?
             }
         }
 
-        // The scrim fades; the list itself slides in from the left and back out to it.
-        AnimatedVisibility(
-            visible = layer == Layer.ChannelList,
-            enter = EnterTransition.None,
-            exit = ExitTransition.None,
-            modifier = Modifier.fillMaxSize(),
-        ) {
-            val shown = reveal()
-            Box(Modifier.fillMaxSize().leftScrim { shown.value }.onFocusChanged { layerFocused = it.hasFocus }) {
+        // The scrim fades; the list itself slides in from the left and back out to it. The list is built
+        // once, unseen, after launch has settled (the banner gone), and stays built while hidden (drawing
+        // nothing), so every opening is only the slide.
+        val listOpen = layer == Layer.ChannelList
+        val shown = animateFloatAsState(if (listOpen) 1f else 0f, if (reduced) tween(Motion.FADE_MS) else Motion.panel(), label = "list")
+        var listBuilt by remember { mutableStateOf(false) }
+        LaunchedEffect(Unit) {
+            delay(LIST_BUILD_DELAY_MS)
+            listBuilt = true
+        }
+        if (listBuilt || opens > 0) {
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .graphicsLayer { alpha = if (shown.value > 0f) 1f else 0f }
+                    .leftScrim { shown.value }
+                    .onFocusChanged { layerFocused = it.hasFocus },
+            ) {
                 val selectedTile = grid.tiles.getOrNull(grid.selected)?.channel
-                key(opens) { ChannelOverlay(
+                ChannelOverlay(
                     updateRow = updateRow(graph.updater),
                     feed = feed,
                     guide = guide,
                     clock = clock,
                     current = selectedTile ?: state.requested,
                     context = zapContext.takeIf { !multiView },
-                    open = layer == Layer.ChannelList,
+                    open = listOpen,
+                    opens = opens,
                     memory = memory,
                     startInGroups = openInGroups,
                     // Watching, not picking a tile: a row tunes behind the open list first (preview).
@@ -343,7 +356,7 @@ private fun PlayerChrome(feed: Feed, session: StreamSession, audio: AudioTracks?
                         }
                     },
                     entrance = { shown.value },
-                ) }
+                )
             }
         }
 

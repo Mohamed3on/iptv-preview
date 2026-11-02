@@ -60,6 +60,7 @@ class Telemetry(
 ) {
     private val queue = ArrayList<JsonObject>()
     private val qualityReported = HashSet<Int>()
+    private val bitrateReported = HashSet<Int>()
 
     init {
         scope.launch {
@@ -124,6 +125,12 @@ class Telemetry(
             put("fps", fps); put("codec", q.codec); put("atmos", q.atmos)
         }
         post("quality", body.toString())
+    }
+
+    /** Sends [feed]'s measured bitrate (Mbps) once per app run; the server keeps a recent median per feed. */
+    fun reportBitrate(feed: Channel, mbps: Float) {
+        if (!bitrateReported.add(feed.id)) return
+        post("bitrate", buildJsonObject { put("id", feed.id); put("mbps", mbps) }.toString())
     }
 
     private fun record(type: String, fields: kotlinx.serialization.json.JsonObjectBuilder.() -> Unit) {

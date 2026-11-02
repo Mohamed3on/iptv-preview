@@ -2,6 +2,7 @@
 // channels and guide as the TiviMate feeds, so both apps always show the same thing.
 import { Database } from 'bun:sqlite'
 import { chanKey, COMPS, couldBeLiveMatch, learnedCompetitions, saneFps, unxml, VPN_HOST, type Channel, type XtreamConfig } from './_lib.js'
+import { medianMbps } from './_quality.js'
 import { QUALITY } from './quality-cache.js'
 
 export interface AppChannel {
@@ -24,6 +25,8 @@ export interface AppChannel {
   /** Event slot whose current name reads as a fixture. */
   fixture?: true
   badges: string[]
+  /** The feed's bitrate in Mbps, measured while the app played it; absent when never measured. */
+  mbps?: number
 }
 
 export interface AppFeed {
@@ -78,6 +81,7 @@ export function buildAppFeed(cfg: XtreamConfig, channels: Channel[]): AppFeed {
         q: c.q ?? 2,
         ...(c.isEventSlot && couldBeLiveMatch(c.name) ? { fixture: true as const } : {}),
         badges: badges(c.streamId),
+        mbps: medianMbps(QUALITY[String(c.streamId)]),
       }
     }),
   }

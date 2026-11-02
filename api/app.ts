@@ -6,12 +6,13 @@
 // GET /api/app/version, /api/app/apk, /api/app/dm ?t=TOKEN — the latest build and its dex metadata (the
 // baseline profile, compiled at install), copied to the box by firetv.yml.
 // POST /api/app/quality?t=TOKEN — a quality reading the app measured while playing.
+// POST /api/app/bitrate?t=TOKEN — a feed's bitrate the app measured while playing.
 // POST /api/app/events?t=TOKEN — what happened while watching, for later analysis.
 import { appendFile, mkdir, rename, stat } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import { buildAppFeed, buildAppGuide } from './_app-feed.js'
 import { appTokenOk, configFromEnv, fetchCuratedChannels, saneFps, savedVodChannels, withCompetitionGroups } from './_lib.js'
-import { mergeAppReading, saveQuality, type Meta } from './_quality.js'
+import { addBitrate, mergeAppReading, saveQuality, type Meta } from './_quality.js'
 import { QUALITY } from './quality-cache.js'
 import { curatedGuide } from './epg.js'
 
@@ -76,6 +77,23 @@ export async function quality(req: Request): Promise<Response> {
   const merged = mergeAppReading(QUALITY[id], reading, new Date().toISOString().slice(0, 10))
   if (merged) {
     QUALITY[id] = merged
+    await saveQuality()
+  }
+  return Response.json({ stored: !!merged }, { headers: { 'Cache-Control': 'no-store' } })
+}
+
+// POST /api/app/bitrate?t=TOKEN — a feed's bitrate (Mbps) measured while the app played it,
+// kept in the quality cache with the feed's recent ones for the lighter-feed downshift (#4).
+export async function bitrate(req: Request): Promise<Response> {
+  if (!appTokenOk(req.url)) return forbidden()
+  const r = (await req.json().catch(() => null)) as Record<string, unknown> | null
+  const id = r?.id
+  if (!r || !Number.isInteger(id) || !((id as number) > 0 && (id as number) <= 1e9) || typeof r.mbps !== 'number' || !(r.mbps >= 0.1 && r.mbps <= 200)) {
+    return new Response('Bad reading', { status: 400 })
+  }
+  const merged = addBitrate(QUALITY[String(id)], r.mbps)
+  if (merged) {
+    QUALITY[String(id)] = merged
     await saveQuality()
   }
   return Response.json({ stored: !!merged }, { headers: { 'Cache-Control': 'no-store' } })

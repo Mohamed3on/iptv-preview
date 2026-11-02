@@ -27,6 +27,8 @@ data class Channel(
     val q: Int = 0,
     val fixture: Boolean = false,
     val badges: List<String> = emptyList(),
+    /** The feed's bitrate in Mbps, measured while watching it; null when never measured. */
+    val mbps: Float? = null,
 ) {
     val identity get() = ChannelIdentity(id, group)
 }

@@ -45,7 +45,7 @@
 import { configFromEnv, EVENT_ONLY, fetchCuratedChannels, saneFps, withCompetitionGroups } from '../api/_lib.js'
 import { rename } from 'node:fs/promises'
 // better() keeps the cache monotonic in refresh mode; the app's readings (/api/app/quality) share these rules.
-import { better, QUALITY_HEAD, STALE_DAYS, type Meta } from '../api/_quality.ts'
+import { better, keepMbps, QUALITY_HEAD, STALE_DAYS, type Meta } from '../api/_quality.ts'
 
 const cfg = configFromEnv()
 const requestedConcurrency = Number(Bun.argv[2]) || 1
@@ -214,8 +214,8 @@ const worker = async () => {
     // stale one; no signal keeps it due, just tried (see RE-VERIFICATION).
     // Gaps: only upgrade, never downgrade a fresh peak; a missing/dead one records null again.
     if (!REFRESH || !old) cache[id] = m && { ...m, at: today }
-    else if (reverify) cache[id] = m ? { ...m, at: today } : { ...old!, tried: today }
-    else if (better(m, old)) cache[id] = { ...m!, at: today }
+    else if (reverify) cache[id] = m ? { ...m, at: today, ...keepMbps(old) } : { ...old!, tried: today }
+    else if (better(m, old)) cache[id] = { ...m!, at: today, ...keepMbps(old) }
     else continue
     dirty = true
   }

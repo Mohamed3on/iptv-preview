@@ -56,6 +56,7 @@ export async function handle(req: Request): Promise<Response> {
   if (pathname === '/api/app/apk') return app.apk(req)
   if (pathname === '/api/app/dm') return app.dm(req)
   if (pathname === '/api/app/quality' && req.method === 'POST') return app.quality(req)
+  if (pathname === '/api/app/bitrate' && req.method === 'POST') return app.bitrate(req)
   if (pathname === '/api/app/events' && req.method === 'POST') return app.events(req)
   const handler = routes[pathname]
   if (handler) return cached(req, handler)

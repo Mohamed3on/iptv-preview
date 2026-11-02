@@ -180,9 +180,13 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    /** Reads the main player each second into [health]; each rebuffer grows its cushion and goes to the session log. */
+    /**
+     * Reads the main player each second into [health]; each rebuffer grows its cushion and goes to
+     * the session log. A feed's bitrate is reported once it has played for a minute, so it is settled.
+     */
     private suspend fun watchHealth(player: ExoStreamPlayer, s: StreamSession) {
         var played: ChannelIdentity? = null
+        var playingSince: Pair<Int, Long>? = null // feed id, when it started playing
         val model = HealthModel(onRebuffer = { network, stream ->
             val cushion = player.cushion.onRebuffer(SystemClock.elapsedRealtime())
             s.state.value.feed?.let { telemetry.rebuffer(it, network, stream, graph.route.effective.value, cushion) }
@@ -198,7 +202,8 @@ class MainActivity : ComponentActivity() {
                 else -> null // the problem card says what is wrong
             }
             val now = SystemClock.elapsedRealtime()
-            health.value = if (phase == null || feed == null) null else model.next(
+            playingSince = if (st.phase != Phase.Playing || feed == null) null else playingSince?.takeIf { it.first == feed.id } ?: (feed.id to now)
+            val h = if (phase == null || feed == null) null else model.next(
                 HealthSample(
                     at = now,
                     phase = phase,
@@ -212,6 +217,9 @@ class MainActivity : ComponentActivity() {
                     cushionMs = player.cushion.resumeMs(now).takeIf { it > Cushion.BASE_MS },
                 ),
             )
+            health.value = h
+            val stream = h?.stream
+            if (stream != null && feed != null && playingSince?.let { now - it.second >= 60_000 } == true) telemetry.reportBitrate(feed, stream)
             delay(1_000)
         }
     }

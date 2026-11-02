@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { rm } from 'node:fs/promises'
-import { mergeAppReading } from './_quality.js'
-import { events as eventsRoute, quality as qualityRoute } from './app.js'
+import { addBitrate, medianMbps, mergeAppReading } from './_quality.js'
+import { bitrate as bitrateRoute, events as eventsRoute, quality as qualityRoute } from './app.js'
 import { QUALITY } from './quality-cache.js'
 
 const today = '2026-11-01'
@@ -24,6 +24,19 @@ describe('app quality readings merge like the probe', () => {
   })
   test('rendered fps never raises a same-height reading (interlaced feeds render 50 from 25)', () => {
     expect(mergeAppReading(fresh, reading({ fps: 50 }), today)).toBeNull()
+  })
+  test('a replaced reading keeps the bitrates measured on the feed', () => {
+    expect(mergeAppReading({ ...fresh, mbps: [6.1] }, reading({ w: 3840, h: 2160 }), today)?.mbps).toEqual([6.1])
+  })
+})
+
+describe('feed bitrates are the median of recent viewing', () => {
+  test('the last five readings count, so one odd reading does not move it', () => {
+    let m = addBitrate(fresh, 30)
+    for (const r of [6.04, 5.9, 6.3, 6.1, 14]) m = addBitrate(m, r)
+    expect(m?.mbps).toEqual([6, 5.9, 6.3, 6.1, 14])
+    expect(medianMbps(m)).toBe(6.1)
+    expect(medianMbps(fresh)).toBeUndefined()
   })
 })
 
@@ -57,6 +70,31 @@ describe('/api/app/quality', () => {
     expect(file).toStartWith('// Auto-generated')
     expect(file).toContain('"990001":{"w":1920,"h":1080,"fps":50')
     expect(await (await post({ id: 990001, ...reading({ h: 720, w: 1280 }) })).json()).toEqual({ stored: false })
+  })
+})
+
+describe('/api/app/bitrate', () => {
+  const env = { ...process.env }
+  const dir = `${import.meta.dir}/../.cache/test-bitrate`
+  const post = (body: unknown) =>
+    bitrateRoute(new Request('http://localhost/api/app/bitrate?t=app', { method: 'POST', body: JSON.stringify(body) }))
+  beforeEach(async () => {
+    Object.assign(process.env, { APP_TOKENS: 'app', QUALITY_CACHE_FILE: `${dir}/quality-cache.ts` })
+    await rm(dir, { recursive: true, force: true })
+  })
+  afterEach(async () => {
+    process.env = { ...env }
+    delete QUALITY['990002']
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  test('adds a measured bitrate to the feed and refuses nonsense', async () => {
+    QUALITY['990002'] = fresh
+    for (const bad of [{ id: 990002, mbps: 0.04 }, { id: 990002, mbps: 'x' }, { id: 990002, mbps: 999 }])
+      expect((await post(bad)).status).toBe(400)
+    expect(await (await post({ id: 990002, mbps: 6.2 })).json()).toEqual({ stored: true })
+    expect(QUALITY['990002']?.mbps).toEqual([6.2])
+    expect(await Bun.file(`${dir}/quality-cache.ts`).text()).toContain('"mbps":[6.2]')
   })
 })
 

@@ -159,6 +159,7 @@ class Updater(
                         context, id, Intent(context, InstallReceiver::class.java),
                         PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE,
                     )
+                    File(context.filesDir, RELAUNCH).createNewFile()
                     session.commit(callback.intentSender)
                 }
             }.onFailure { Log.w(TAG, "install session failed: ${it.javaClass.simpleName}") }
@@ -180,10 +181,25 @@ class InstallReceiver : BroadcastReceiver() {
                 Log.w(TAG, "install failed: $status ${intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE)}")
                 // The profile is never worth an update: the next try installs the APK alone.
                 File(context.cacheDir, DM).delete()
+                File(context.filesDir, RELAUNCH).delete()
             }
         }
     }
 }
 
+/**
+ * Installing an update kills the app and nothing restarts it. When the update came from the Update row,
+ * this opens the player again. Fire OS lets a background app start an activity only if it may draw
+ * over other apps, granted once over adb: `appops set com.mohamed3on.iptv SYSTEM_ALERT_WINDOW allow`.
+ */
+class UpdatedReceiver : BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent) {
+        if (!File(context.filesDir, RELAUNCH).delete()) return
+        context.packageManager.getLaunchIntentForPackage(context.packageName)
+            ?.let { context.startActivity(it.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+    }
+}
+
 private const val TAG = "Updater"
 private const val DM = "update.dm"
+private const val RELAUNCH = "relaunch-after-update"

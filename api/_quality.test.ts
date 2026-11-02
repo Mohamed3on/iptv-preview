@@ -17,13 +17,22 @@ describe('app quality readings merge like the probe', () => {
     const old = { ...fresh, h: 2160, w: 3840, at: '2026-10-01' }
     expect(mergeAppReading(old, reading({ fps: 25 }), today)).toEqual({ ...reading({ fps: 25 }), at: today })
   })
-  test('a fresh reading is only upgraded by a taller picture or newly found Atmos', () => {
+  test('a fresh reading is upgraded by a taller picture or newly found Atmos', () => {
     expect(mergeAppReading(fresh, reading({ w: 3840, h: 2160 }), today)?.h).toBe(2160)
     expect(mergeAppReading(fresh, reading({ fps: 25, atmos: true }), today)?.atmos).toBe(true)
-    expect(mergeAppReading(fresh, reading({ h: 720, w: 1280 }), today)).toBeNull()
   })
-  test('rendered fps never raises a same-height reading (interlaced feeds render 50 from 25)', () => {
+  test('rendered fps never raises a same-height reading (interlaced feeds render 50 from 25), but 25/30 lowers it', () => {
     expect(mergeAppReading(fresh, reading({ fps: 50 }), today)).toBeNull()
+    const p50 = { ...fresh, fps: 50, atmos: true as const }
+    expect(mergeAppReading(p50, reading({ fps: 25 }), today)).toMatchObject({ fps: 25, atmos: true, at: today })
+  })
+  test('a shorter picture lowers a fresh reading only when seen on two different days', () => {
+    const lower = reading({ h: 720, w: 1280 })
+    const first = mergeAppReading(fresh, lower, today)
+    expect(first).toMatchObject({ h: 1080, low: today })
+    expect(mergeAppReading(first, lower, today)).toBeNull()
+    expect(mergeAppReading(first, lower, '2026-11-02')).toMatchObject({ h: 720, at: '2026-11-02' })
+    expect(mergeAppReading(first, reading({ fps: 25 }), '2026-11-02')).toEqual(fresh)
   })
   test('a replaced reading keeps the bitrates measured on the feed', () => {
     expect(mergeAppReading({ ...fresh, mbps: [6.1] }, reading({ w: 3840, h: 2160 }), today)?.mbps).toEqual([6.1])
@@ -69,7 +78,8 @@ describe('/api/app/quality', () => {
     const file = await Bun.file(`${dir}/quality-cache.ts`).text()
     expect(file).toStartWith('// Auto-generated')
     expect(file).toContain('"990001":{"w":1920,"h":1080,"fps":50')
-    expect(await (await post({ id: 990001, ...reading({ h: 720, w: 1280 }) })).json()).toEqual({ stored: false })
+    expect(await (await post({ id: 990001, ...reading({ w: 3840, h: 2160, fps: 25 }) })).json()).toEqual({ stored: true })
+    expect(await (await post({ id: 990001, ...reading({ w: 3840, h: 2160, fps: 50 }) })).json()).toEqual({ stored: false })
   })
 })
 

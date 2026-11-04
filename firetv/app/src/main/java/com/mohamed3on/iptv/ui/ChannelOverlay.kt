@@ -728,9 +728,12 @@ fun ChannelOverlay(
         }
     }
 
-    // Back from Movies: focus returns to its row, with the list as it was left.
+    // Back from Movies: focus returns to its row, with the list as it was left. Only then: a fresh
+    // opening places focus itself, and moving it here would cancel that (Search's keyboard, say).
+    val shownFor = remember { intArrayOf(-1) }
     LaunchedEffect(open) {
-        if (open && opened && !inGroups && !inChannels) focusGroups()
+        if (open && opened && shownFor[0] == opens && !inGroups && !inChannels) focusGroups()
+        if (open) shownFor[0] = opens
     }
 
     // Keep the focused row clear of the edge fades, with the next row in view.

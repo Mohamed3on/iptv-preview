@@ -267,6 +267,9 @@ private class HitItem(val hit: SearchHit) : Item {
 private data object ChannelsHeading : Item {
     override val key = "channels"
 }
+private data object LiveHeading : Item {
+    override val key = "live"
+}
 private data object ProgrammesHeading : Item {
     override val key = "programmes"
 }
@@ -282,6 +285,16 @@ private val Item.target get() = when (this) {
     else -> null
 }
 
+/** A Live now match, then every other channel showing it: pick by language or feed. */
+private fun MutableList<Item>.addMatch(match: LiveEntry) {
+    val row = LiveItem(match)
+    add(row)
+    match.alsoOn.mapTo(this) { c -> ChannelItem(c, under = "${row.key}>") }
+}
+
+/** The typed words, as the search reads them (dictation's closing full stop dropped). */
+private fun searchWords(query: String) = searchNorm(query).trim().trimEnd('.', '!', '?').split(' ').filter(String::isNotEmpty)
+
 /**
  * Null while Live now is still loading. Search shows a hint until 2 characters are [typed], then
  * what was [found] (nothing more while the first search runs): channels by name, then programmes,
@@ -295,13 +308,25 @@ private fun itemsOf(source: Source, feed: Feed, live: LiveNow?, typed: Boolean, 
             found == null -> {}
             found.count == 0 -> add(Note("No matches for “${found.query.trim()}”", "Try part of a channel, team or player name."))
             else -> {
+                // Matches on now that the search names come first, laid out as in Live now (every channel
+                // showing each); their airings then leave Programmes.
+                val words = searchWords(found.query)
+                val onNow = live?.matches.orEmpty().filter { m ->
+                    listOf(m.title, m.programme!!.title).any { t -> searchNorm(t).let { n -> words.all(n::contains) } }
+                }
+                if (onNow.isNotEmpty()) {
+                    add(LiveHeading)
+                    onNow.forEach { addMatch(it) }
+                }
+                val airing = onNow.flatMap { m -> (listOf(m.tune) + m.alsoOn).map { it.family to m.programme!! } }.toMap()
+                val hits = found.hits.filterNot { h -> airing[h.tune.family]?.let { p -> h.programme.start < p.stop && p.start < h.programme.stop } == true }
                 if (found.channels.isNotEmpty()) {
                     add(ChannelsHeading)
                     found.channels.mapTo(this, ::ChannelItem)
                 }
-                if (found.hits.isNotEmpty()) {
+                if (hits.isNotEmpty()) {
                     add(ProgrammesHeading)
-                    found.hits.mapTo(this, ::HitItem)
+                    hits.mapTo(this, ::HitItem)
                 }
             }
         }
@@ -311,12 +336,7 @@ private fun itemsOf(source: Source, feed: Feed, live: LiveNow?, typed: Boolean, 
     ShowsSource -> listOf(Note("Series in English, Arabic, German, Spanish and Italian", "Press OK to browse"))
     LiveSource -> live?.let {
         buildList {
-            // Each match, then every other channel showing it: pick by language or feed.
-            for (match in it.matches) {
-                val row = LiveItem(match)
-                add(row)
-                match.alsoOn.mapTo(this) { c -> ChannelItem(c, under = "${row.key}>") }
-            }
+            for (match in it.matches) addMatch(match)
             if (it.slots.isNotEmpty()) {
                 if (it.matches.isEmpty()) add(NoMatches)
                 add(SlotsHeading)
@@ -489,7 +509,7 @@ fun ChannelOverlay(
         }
     }
     val found = memory.found
-    val items = remember(source, feed, live.takeIf { source == LiveSource }, typed, found.takeIf { source == SearchSource }) {
+    val items = remember(source, feed, live.takeIf { source == LiveSource || source == SearchSource }, typed, found.takeIf { source == SearchSource }) {
         itemsOf(source, feed, live, typed, found)
     }
 
@@ -928,6 +948,7 @@ fun ChannelOverlay(
                                 }
                                 NoMatches -> Text("No matches on right now", style = Type.body, modifier = Modifier.padding(horizontal = Space.m, vertical = Space.m))
                                 SlotsHeading -> SectionTitle("Event channels · not confirmed")
+                                LiveHeading -> SectionTitle("Live now")
                                 ChannelsHeading -> SectionTitle("Channels")
                                 ProgrammesHeading -> SectionTitle("Programmes")
                                 // Typing is not a row: a refresh while on the keyboard leaves focus there.

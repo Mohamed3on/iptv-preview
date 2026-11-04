@@ -280,6 +280,17 @@ private fun PlayerChrome(
         openList(groups = false)
     }
 
+    /** OK held: a fresh search, on the keyboard (which brings up the Fire TV one, mic and all). */
+    fun openSearch() {
+        memory.inSearch = true
+        memory.searchFocus = null
+        memory.query = ""
+        openList(groups = false)
+    }
+    // OK held while watching: told by the key's repeats, acted on at its release, so the repeats never
+    // reach the keyboard Search opens on. A tap keeps its steps (the info view, then the list).
+    var okHeld by remember { mutableStateOf(false) }
+
     Box(
         Modifier
             .fillMaxSize()
@@ -293,6 +304,14 @@ private fun PlayerChrome(
                 }
                 if ((layer == Layer.ChannelList || layer == Layer.Recent) && !layerFocused && key != RemoteKey.Back) return@onKeyEvent true
                 val action = keyAction(key, PlayerKeys(state.requested, graph.history.last, graph.history.previous, layer, zapContext, multiView, info), feed)
+                if (key == RemoteKey.Ok && layer == Layer.None && !multiView && state.requested != null) {
+                    if (event.type == KeyEventType.KeyDown && event.nativeKeyEvent.repeatCount > 0) okHeld = true
+                    if (event.type == KeyEventType.KeyUp) {
+                        if (okHeld) openSearch() else perform(action)
+                        okHeld = false
+                    }
+                    return@onKeyEvent true
+                }
                 if (action == KeyAction.Pass) return@onKeyEvent false
                 if (event.type == KeyEventType.KeyDown) perform(action)
                 true // the key-up too, so Back never reaches the activity and leaves the app

@@ -9,7 +9,8 @@ stick=${STICK:-192.168.178.25:5555}
 # `adb` calls can hang on the stick; cap each one.
 a() { perl -e "alarm($1); exec @ARGV" -- "${@:2}"; }
 
-a 15 "$adb" connect "$stick" >/dev/null
+# Usually connected already; a connect that hangs isn't fatal, the install below is the real check.
+a 10 "$adb" connect "$stick" >/dev/null 2>&1 || true
 ./gradlew -q assembleRelease
 out=app/build/outputs/apk/release
 baselineprofile/dex-metadata.sh "$out/app-release.apk" "$out/app-release.dm" # the .dm name must match the APK's

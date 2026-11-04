@@ -12,8 +12,6 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -129,9 +127,8 @@ fun QuickPanel(
                             PanelRow("Audio", audio.selected?.let(::languageName), focus = audioRow) { page = Page.Audio }
                         }
                         PanelRow("Connection", routeValue(choice, effective), focus = connectionRow) { page = Page.Connection }
-                        // Multi-view (U11), set apart from the settings above.
-                        Column(Modifier.padding(top = Space.l), verticalArrangement = Arrangement.spacedBy(Space.xs), content = views)
-                        Spacer(Modifier.height(Space.l))
+                        // Multi-view (U11).
+                        Column(verticalArrangement = Arrangement.spacedBy(Space.xs), content = views)
                         PanelRow("Refresh guide", refreshStatus, onClick = onRefresh)
                         PanelRow("Diagnostics", focus = diagnosticsRow, onClick = onDiagnostics)
                     }

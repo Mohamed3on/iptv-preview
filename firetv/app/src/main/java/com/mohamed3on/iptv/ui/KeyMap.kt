@@ -23,7 +23,7 @@ fun remoteKey(keyCode: Int): RemoteKey? = when (keyCode) {
 }
 
 /** What sits over the video. Back closes it before anything else. */
-enum class Layer { None, ChannelList, Recent, QuickPanel, Diagnostics }
+enum class Layer { None, ChannelList, Recent, QuickPanel }
 
 /**
  * What a key press needs to know: the requested channel, the watch history, what is open, and the

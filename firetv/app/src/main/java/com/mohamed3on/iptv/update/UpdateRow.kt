@@ -4,10 +4,10 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
-import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.tv.material3.Text
 import com.mohamed3on.iptv.ui.GroupRow
+import com.mohamed3on.iptv.ui.groupMotion
 import com.mohamed3on.iptv.ui.theme.Space
 import com.mohamed3on.iptv.ui.theme.Type
 
@@ -27,10 +27,11 @@ fun updateRow(updater: Updater): LazyListScope.() -> Unit {
                 focus = null,
                 onFocused = {},
                 onClick = { updater.install(context) },
+                modifier = groupMotion(),
             )
         }
         if (update.askedPermission) item(key = "update-hint") {
-            Text("Allow installs from this app, then pick again", style = Type.caption, modifier = Modifier.padding(horizontal = Space.l))
+            Text("Allow installs from this app, then pick again", style = Type.caption, modifier = groupMotion().padding(horizontal = Space.l))
         }
     }
 }

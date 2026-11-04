@@ -81,6 +81,7 @@ import androidx.tv.material3.Text
 import coil3.compose.AsyncImage
 import coil3.compose.LocalPlatformContext
 import coil3.request.ImageRequest
+import coil3.request.crossfade
 import com.mohamed3on.iptv.data.Episode
 import com.mohamed3on.iptv.data.Feed
 import com.mohamed3on.iptv.data.episodeUrl
@@ -118,6 +119,8 @@ import android.view.KeyEvent as AndroidKeyEvent
 
 private val CARD = DpSize(132.dp, 198.dp)
 private const val CARD_SCALE = 1.08f
+/** A poster fades in as it loads; Coil skips the fade for posters already in memory. */
+private const val POSTER_FADE_MS = 150
 private val CARD_SHAPE = RoundedCornerShape(Radius.row)
 private val RING = 3.dp
 private val EDGE = 48.dp
@@ -588,7 +591,7 @@ private fun PosterCard(movie: Movie, progress: Float?, watched: Boolean = false,
     var failed by remember(movie.poster) { mutableStateOf(false) }
     val request = remember(movie.poster) {
         movie.poster.takeIf { it.isNotEmpty() }?.let {
-            with(density) { ImageRequest.Builder(context).data(posterUrl(it)).size(CARD.width.roundToPx(), CARD.height.roundToPx()).build() }
+            with(density) { ImageRequest.Builder(context).data(posterUrl(it)).size(CARD.width.roundToPx(), CARD.height.roundToPx()).crossfade(POSTER_FADE_MS).build() }
         }
     }
     Box(
@@ -804,7 +807,7 @@ private fun ShowDetail(show: Movie, resume: Resume?, watched: Set<Int>, active: 
                 val context = LocalPlatformContext.current
                 val density = LocalDensity.current
                 val request = remember(show.poster) {
-                    with(density) { ImageRequest.Builder(context).data(posterUrl(show.poster)).size(SHOW_POSTER.width.roundToPx(), SHOW_POSTER.height.roundToPx()).build() }
+                    with(density) { ImageRequest.Builder(context).data(posterUrl(show.poster)).size(SHOW_POSTER.width.roundToPx(), SHOW_POSTER.height.roundToPx()).crossfade(POSTER_FADE_MS).build() }
                 }
                 Box(Modifier.size(SHOW_POSTER).graphicsLayer { shape = CARD_SHAPE; clip = true }.drawBehind { drawRect(Palette.raised) }) {
                     if (show.poster.isNotEmpty()) AsyncImage(model = request, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())

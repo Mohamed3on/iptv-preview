@@ -3,6 +3,7 @@ package com.mohamed3on.iptv.ui
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusGroup
@@ -52,7 +53,7 @@ private enum class Page { Main, Audio, Connection }
 
 /**
  * The Menu sheet beside the still-playing video: audio track (R13), connection route with the
- * effective route shown (R4), diagnostics. [views] is the slot for entries that open another view
+ * effective route shown (R4), guide refresh. [views] is the slot for entries that open another view
  * (multi-view, U11, fills it with [PanelRow]s).
  * Back closes a nested list here; closing the panel itself is the player's Back (KeyMap).
  */
@@ -63,7 +64,6 @@ fun QuickPanel(
     choice: RouteChoice,
     effective: RouteKind,
     onRoute: (RouteChoice) -> Unit,
-    onDiagnostics: () -> Unit,
     /** Fetches the channels and guide now; [refreshStatus] is how the last press went, null before one. */
     onRefresh: () -> Unit,
     refreshStatus: String?,
@@ -77,7 +77,6 @@ fun QuickPanel(
     var openedFrom by remember { mutableStateOf<Page?>(null) }
     val audioRow = remember { FocusRequester() }
     val connectionRow = remember { FocusRequester() }
-    val diagnosticsRow = remember { FocusRequester() }
 
     Column(
         modifier
@@ -130,7 +129,6 @@ fun QuickPanel(
                         // Multi-view (U11).
                         Column(verticalArrangement = Arrangement.spacedBy(Space.xs), content = views)
                         PanelRow("Refresh guide", refreshStatus, onClick = onRefresh)
-                        PanelRow("Diagnostics", focus = diagnosticsRow, onClick = onDiagnostics)
                     }
                     Page.Audio -> {
                         val selected = remember { FocusRequester() }
@@ -186,7 +184,12 @@ fun PanelRow(
         horizontalArrangement = Arrangement.spacedBy(Space.m),
     ) {
         Text(label, style = Type.headline, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-        if (value != null) Text(value, style = Type.body, maxLines = 1)
+        // A value that changes in place ("Refreshing…" → "Up to date") cross-fades.
+        if (value != null) AnimatedContent(
+            targetState = value,
+            transitionSpec = { fadeIn(tween(Motion.FADE_MS)) togetherWith fadeOut(tween(Motion.FADE_MS)) },
+            label = "value",
+        ) { Text(it, style = Type.body, maxLines = 1) }
         if (checked) Text("✓", style = Type.headline.copy(color = Palette.accent))
     }
 }

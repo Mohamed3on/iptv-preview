@@ -12,8 +12,10 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -77,7 +79,6 @@ import com.mohamed3on.iptv.update.updateRow
 import com.mohamed3on.iptv.data.displayName
 import com.mohamed3on.iptv.data.NowNext
 import com.mohamed3on.iptv.data.RouteKind
-import com.mohamed3on.iptv.diag.DiagnosticsScreen
 import com.mohamed3on.iptv.graph
 import com.mohamed3on.iptv.player.AudioState
 import com.mohamed3on.iptv.player.AudioTracks
@@ -132,6 +133,8 @@ private const val RECEDE = 0.85f
 /** How long the corner says why before only its dot stays. */
 private const val HEALTH_TEXT_MS = 6_000L
 private const val REFRESHING = "Refreshing…"
+/** Info view stats and badges leave a touch faster than they arrive. */
+private const val STATS_OUT_MS = 120
 
 /**
  * The full-screen player (R10, R14): the video, with chrome only when asked for. The channel
@@ -510,7 +513,6 @@ private fun PlayerChrome(
                     session.useRoute(kind)
                     grid.tiles.forEach { it.session.useRoute(kind) }
                 },
-                onDiagnostics = { layer = Layer.Diagnostics },
                 refreshStatus = refreshStatus,
                 onRefresh = {
                     if (refreshStatus != REFRESHING) {
@@ -544,15 +546,6 @@ private fun PlayerChrome(
                 },
             )
         }
-
-        if (layer == Layer.Diagnostics) {
-            val diagnostics = remember { FocusRequester() }
-            LaunchedEffect(Unit) {
-                withFrameNanos {} // its list items exist once laid out
-                runCatching { diagnostics.requestFocus() }
-            }
-            Box(Modifier.fillMaxSize().focusRequester(diagnostics).focusGroup()) { DiagnosticsScreen() }
-        }
     }
 }
 
@@ -574,11 +567,19 @@ private fun Banner(
             Row(horizontalArrangement = Arrangement.spacedBy(Space.m), verticalAlignment = Alignment.CenterVertically) {
                 // Event slots are named for the event, so a long name gets a second line rather than an ellipsis.
                 Text(remember(channel.name) { displayName(channel.name) }, style = Type.title, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
-                if (info == null) Badges(badges)
+                AnimatedVisibility(info == null, enter = fadeIn(tween(Motion.FADE_MS)), exit = fadeOut(tween(STATS_OUT_MS))) { Badges(badges) }
                 if (tuning) Tuning()
             }
             Guide(channel, guide, clock)
-            if (info != null) StreamStats(info, badges)
+            // The stats unfold under the guide and fold away, rather than the banner jumping a line.
+            val reduced = LocalReducedMotion.current
+            val kept = remember { arrayOfNulls<StreamInfo>(1) }
+            if (info != null) kept[0] = info
+            AnimatedVisibility(
+                visible = info != null,
+                enter = fadeIn(tween(Motion.FADE_MS)) + if (reduced) EnterTransition.None else expandVertically(Motion.panel()),
+                exit = fadeOut(tween(STATS_OUT_MS)) + if (reduced) ExitTransition.None else shrinkVertically(Motion.panel()),
+            ) { kept[0]?.let { StreamStats(it, badges) } }
         }
         Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(Space.xs)) {
             if (note != null) Text(note, style = Type.headline, maxLines = 1)

@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyItemScope
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
@@ -100,8 +101,8 @@ import kotlin.math.roundToInt
 /** A Live now row: a confirmed match ([programme] set) or an unconfirmed event slot. [via] is the 🏆 row it was found on. */
 data class LiveEntry(
     val title: String, val programme: Programme?, val via: Channel, val tune: Channel, val comp: String? = null,
-    /** Other channels showing the same match. */
-    val alsoOn: Int = 0,
+    /** Other channels showing the same match, one per family, best first; listed under its row. */
+    val alsoOn: List<Channel> = emptyList(),
 ) {
     val confirmed get() = programme != null
 }
@@ -153,7 +154,7 @@ private fun sameMatchOnce(matches: List<LiveEntry>): List<LiveEntry> {
     }
     return groups.map { g ->
         val title = g.map { it.title }.sortedWith(compareBy({ !VERSUS.containsMatchIn(it) }, { it.length })).first()
-        g.first().copy(title = fixtureOf(title), alsoOn = g.drop(1).map { it.tune.family }.distinct().count { it != g.first().tune.family })
+        g.first().copy(title = fixtureOf(title), alsoOn = g.drop(1).map { it.tune }.distinctBy { it.family }.filter { it.family != g.first().tune.family })
     }
 }
 
@@ -243,8 +244,9 @@ private data class GroupSource(val name: String) : Source {
 private sealed interface Item {
     val key: String
 }
-private class ChannelItem(val channel: Channel) : Item {
-    override val key = "${channel.id}|${channel.group}"
+/** [under]: the key of the Live now match it is listed under, so the row is that match's own. */
+private class ChannelItem(val channel: Channel, under: String = "") : Item {
+    override val key = "$under${channel.id}|${channel.group}"
 }
 private class LiveItem(val entry: LiveEntry) : Item {
     override val key = entry.programme?.let { "m|${it.start}|${entry.title}" } ?: "s|${entry.via.name}"
@@ -309,7 +311,12 @@ private fun itemsOf(source: Source, feed: Feed, live: LiveNow?, typed: Boolean, 
     ShowsSource -> listOf(Note("Series in English, Arabic, German, Spanish and Italian", "Press OK to browse"))
     LiveSource -> live?.let {
         buildList {
-            it.matches.mapTo(this, ::LiveItem)
+            // Each match, then every other channel showing it: pick by language or feed.
+            for (match in it.matches) {
+                val row = LiveItem(match)
+                add(row)
+                match.alsoOn.mapTo(this) { c -> ChannelItem(c, under = "${row.key}>") }
+            }
             if (it.slots.isNotEmpty()) {
                 if (it.matches.isEmpty()) add(NoMatches)
                 add(SlotsHeading)
@@ -795,6 +802,7 @@ fun ChannelOverlay(
                             focus = if (source == SearchSource) groupFocus else null,
                             onFocused = { show(SearchSource); groupKey = SearchSource.key; wantChannels = false },
                             onClick = { enterChannels() },
+                            modifier = groupMotion(),
                         )
                     }
                     item(key = LiveSource.key) {
@@ -804,6 +812,7 @@ fun ChannelOverlay(
                             focus = if (source == LiveSource) groupFocus else null,
                             onFocused = { show(LiveSource); groupKey = LiveSource.key; wantChannels = false },
                             onClick = { enterChannels() },
+                            modifier = groupMotion(),
                         )
                     }
                     if (onLibrary != null) {
@@ -814,6 +823,7 @@ fun ChannelOverlay(
                                 focus = if (source == library) groupFocus else null,
                                 onFocused = { show(library); groupKey = library.key; wantChannels = false },
                                 onClick = { onLibrary(kind) },
+                                modifier = groupMotion(),
                             )
                         }
                     }
@@ -825,6 +835,7 @@ fun ChannelOverlay(
                             focus = if (here) groupFocus else null,
                             onFocused = { showSoon(GroupSource(group)); groupKey = "g|$group"; wantChannels = false },
                             onClick = { enterChannels() },
+                            modifier = groupMotion(),
                         )
                     }
                 }
@@ -967,13 +978,26 @@ private fun SectionTitle(text: String) {
     Text(text, style = Type.caption, modifier = Modifier.padding(start = Space.m, top = Space.l, bottom = Space.xs))
 }
 
+/**
+ * A groups-column row arriving or leaving while the list is open (Update ready, a new 🏆 group) fades,
+ * and the rows below glide to their places instead of jumping. Keys are stable, so moving through the
+ * column never animates.
+ */
+@Composable
+fun LazyItemScope.groupMotion(): Modifier {
+    val reduced = LocalReducedMotion.current
+    return Modifier.animateItem(fadeInSpec = tween(Motion.FADE_MS), placementSpec = if (reduced) null else Motion.panel(), fadeOutSpec = tween(GROUP_OUT_MS))
+}
+
+private const val GROUP_OUT_MS = 120
+
 /** A groups-column entry; [marked] shows a quiet accent bar while the channel column has focus. Idle groups recede. */
 @Composable
-fun GroupRow(label: String, marked: Boolean, focus: FocusRequester?, onFocused: () -> Unit, onClick: () -> Unit) {
+fun GroupRow(label: String, marked: Boolean, focus: FocusRequester?, onFocused: () -> Unit, onClick: () -> Unit, modifier: Modifier = Modifier) {
     var focused by remember { mutableStateOf(false) }
     val name = remember(label) { groupLabel(label) }
     Box(
-        Modifier
+        modifier
             .fillMaxWidth()
             .height(GROUP_ROW_HEIGHT)
             .then(if (focus != null) Modifier.focusRequester(focus) else Modifier)
@@ -1070,7 +1094,7 @@ private fun LiveRow(entry: LiveEntry, clock: State<Long>, playing: Boolean, watc
             Text(title, style = Type.headline, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Space.s)) {
-            Text(if (programme == null) "Not confirmed" else if (entry.alsoOn > 0) "$channel · +${entry.alsoOn} more" else channel, style = Type.body, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+            Text(if (programme == null) "Not confirmed" else if (entry.alsoOn.isNotEmpty()) "$channel · +${entry.alsoOn.size} more" else channel, style = Type.body, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
             if (programme != null) Progress(programme, clock)
         }
         LastLine(watchHint) { Text(entry.comp ?: groupLabel(entry.via.group), style = Type.caption, maxLines = 1, overflow = TextOverflow.Ellipsis) }

@@ -417,6 +417,16 @@ const BEIN = /bein/i
 // idle or show low-res filler in between, so a probe below their marker is that
 // filler, not the feed — trust the marker instead (see realRes).
 export const EVENT_ONLY = /\(\s*EVENT\s*ONLY\s*\)/i
+// The provider stamps beIN MENA ids wrongly: Arabic beIN 1-9 feeds carry the English channels'
+// ids (beINSports3En.qa: there is no English beIN 3-9, so no guide has them), and a French feed
+// can carry Arabic beIN's id. Arabic feeds get beINSportsN.qa; the French one is left untagged
+// so it takes its French twin's id.
+function beinEpgId(id: string, name: string): string {
+  const en = id.match(/^beINSports(\d)En\.qa$/)
+  if (en && !/\bENG(LISH)?\b|\bEN\b/i.test(name)) return `beINSports${en[1]}.qa`
+  if (/^beINSports\d\.qa$/.test(id) && /\bFRANCE\b|\bFRENCH\b|\bFR\b/i.test(name)) return ''
+  return id
+}
 // Mixed categories we take only some channels from. Cat 662 (4K| UHD 3840P) mixes 4K
 // sport feeds (Sky/TNT/Eleven/ESPN/V Sport) with lifestyle/shopping/news 4K (Cocina,
 // QVC, Museum, Bloomberg…) — keep only sport. The SG/NZ/HK ones are there for Premier
@@ -472,7 +482,7 @@ const nameKey = (s: string): string =>
 interface Competition { key: string; group: string; re: RegExp; not?: RegExp }
 export const COMPS: Competition[] = [
   { key: 'pl', group: '🏆 Premier League', re: /premier league|\bEPL\b|\bsky sports? pl\b|hub premier|now premier sports|الدوري الإنجليزي الممتاز/i, not: /scottish|welsh|irish|premier league 2\b|\bpl2\b/i },
-  { key: 'ucl', group: '🏆 Champions League', re: /champions league|liga de campeones|ligue des champions|دوري أبطال أوروبا|دوري الأبطال|\bUCL\b/i, not: /afc champions|caf champions|concacaf|asian champions|global champions/i },
+  { key: 'ucl', group: '🏆 Champions League', re: /champions league|liga de campeones|ligue des champions|دوري أبطال أوروبا|دوري الأبطال|\bUCL\b/i, not: /afc champions|caf champions|concacaf|asian champions|global champions|gulf club champions/i },
   { key: 'laliga', group: '🏆 La Liga', re: /\bla ?liga\b|الدوري الإسباني/i, not: /hypermotion|smartbank|segunda|liga portugal|liga mx|liga f\b/i },
   { key: 'bundes', group: '🏆 Bundesliga', re: /bundesliga|الدوري الألماني/i, not: /2\.\s*bundesliga|zweite|regionalliga|3\. liga|austria|österreich|admiral/i },
   { key: 'seriea', group: '🏆 Serie A', re: /\bserie a\b|الدوري الإيطالي/i, not: /brasileir|betano|serie a2|serie [bc]\b|girone|lega pro|primavera/i },
@@ -540,7 +550,7 @@ const NOT_TEAM = new Set(('fc cf ac as sc sv ssc afc cd ud sd rc rcd vfb vfl tsg
   'athletic atletico sporting borussia inter olympique stade calcio football fussball soccer futbol ' +
   'premier league liga laliga bundesliga serie ligue cup copa coppa pokal champions europa conference uefa efl fa ' +
   'live match matchday jornada spieltag giornata journee highlights full english tv hd uhd ea sports').split(' '))
-const teamWords = (s: string): string[] =>
+export const teamWords = (s: string): string[] =>
   s.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase().split(/[^\p{L}]+/u).filter((w) => w.length > 2 && !NOT_TEAM.has(w))
 
 /** The fixture a title names, as its two teams in a fixed order ("arsenal|liverpool"), or null. */
@@ -562,7 +572,9 @@ const FULL_MATCH_SEC = 90 * 60
 // Re-runs follow within a day or two, while the same clubs can meet again days later in another competition.
 const LOOKBACK_SEC = 48 * 3600
 // The competitions a title names; two titles naming different ones are different matches (cup tie, then league game).
-const compsOf = (title: string) => COMPS.filter((c) => c.re.test(title) && !c.not?.test(title)).map((c) => c.key)
+// Youth sides play the same fixture the same day ("UEFA Youth League: AEK - Real Madrid" in the morning).
+const YOUTH = /youth league|\bU-?(?:17|19|21|23)\b|primavera|juvenil/i
+const compsOf = (title: string) => (YOUTH.test(title) ? ['youth'] : COMPS.filter((c) => c.re.test(title) && !c.not?.test(title)).map((c) => c.key))
 const sameComp = (a: string[], b: string[]) => !a.length || !b.length || a.some((k) => b.includes(k))
 
 /**
@@ -836,7 +848,7 @@ export async function fetchCuratedChannels(cfg: XtreamConfig, vod = true): Promi
       // 4K slots) keep their marker tier when probed low — that's idle filler.
       const { h: rh, fps: rf } = realRes(s.stream_id, q, isEventSlot || EVENT_ONLY.test(name), name)
       // Event slots get a synthetic id served by /api/epg; others use provider EPG ids
-      const tvgId = isEventSlot ? `ppv.${s.stream_id}` : String(s.epg_channel_id ?? '')
+      const tvgId = isEventSlot ? `ppv.${s.stream_id}` : beinEpgId(String(s.epg_channel_id ?? ''), name)
       const item: Item = {
         q,
         rh,

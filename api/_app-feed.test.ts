@@ -203,8 +203,14 @@ describe('guide', () => {
     expect(titled("Sky Sports News")?.match).toBe(0)
     expect(titled("Bayern München v Arsenal")!.start).toBe(NOW.getTime() / 1000 - 1800)
     // a live match names its competition's 🏆 group; other titles name none
-    const appGuide = Database.deserialize(Bun.gunzipSync(buildAppGuide([], `<programme start="${stamp(0)}" stop="${stamp(2)}" channel="x"><title>Live Serie A: Juventus v Napoli</title></programme>` + PROVIDER_XML)))
-    expect(appGuide.query("SELECT title, comp FROM programmes WHERE comp IS NOT NULL").all()).toEqual([{ title: "Live Serie A: Juventus v Napoli", comp: "🏆 Serie A" }])
+    // …and a fixture titled without one takes it from another channel's airing of the same match
+    const appGuide = Database.deserialize(Bun.gunzipSync(buildAppGuide([], `<programme start="${stamp(0)}" stop="${stamp(2)}" channel="x"><title>Live Serie A: Juventus v Napoli</title></programme>` +
+      `<programme start="${stamp(0)}" stop="${stamp(2)}" channel="y"><title>Juventus - SSC Napoli</title></programme>` +
+      `<programme start="${stamp(0)}" stop="${stamp(2)}" channel="z"><title>Ajax - Feyenoord</title></programme>` + PROVIDER_XML)))
+    expect(appGuide.query("SELECT title, comp FROM programmes WHERE comp IS NOT NULL ORDER BY tvg_id").all()).toEqual([
+      { title: "Live Serie A: Juventus v Napoli", comp: "🏆 Serie A" },
+      { title: "Juventus - SSC Napoli", comp: "🏆 Serie A" },
+    ])
     // ended 1h ago stays, ended 3h ago is dropped
     expect(titled("Recent News")).toBeDefined()
     expect(titled("Old News")).toBeUndefined()

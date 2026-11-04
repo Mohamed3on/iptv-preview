@@ -1,7 +1,7 @@
 // Builders for the Fire TV app's own feeds (/api/app/*). They read the same curated
 // channels and guide as the TiviMate feeds, so both apps always show the same thing.
 import { Database } from 'bun:sqlite'
-import { chanKey, COMPS, couldBeLiveMatch, learnedCompetitions, replayAirings, saneFps, unxml, VPN_HOST, type BackupConfig, type Channel, type XtreamConfig } from './_lib.js'
+import { chanKey, COMPS, couldBeLiveMatch, learnedCompetitions, replayAirings, teamWords, saneFps, unxml, VPN_HOST, type BackupConfig, type Channel, type XtreamConfig } from './_lib.js'
 import { medianMbps } from './_quality.js'
 import { QUALITY } from './quality-cache.js'
 
@@ -110,6 +110,8 @@ export const searchNorm = (s: string) => s.normalize('NFD').replace(/\p{M}/gu, '
  * belongs to (comp, by the same rules as the 🏆 groups); programmes that ended over 2h
  * ago are dropped.
  */
+// Broadcasters' superscript tags ("ᴸᶦᵛᵉ") are letters too, never a team.
+const SUPERSCRIPT = /[ᴬ-ᶿ⁰-₟]+/g
 const compGroup = new Map(COMPS.map((c) => [c.key, c.group]))
 
 export function buildAppGuide(channels: Channel[], xmltv: string, now = Date.now()): Uint8Array {
@@ -128,12 +130,27 @@ export function buildAppGuide(channels: Channel[], xmltv: string, now = Date.now
     return { tvgId, title, descr, start: xmltvSeconds(attr('start')), stop: xmltvSeconds(attr('stop')), synthetic: filler.has(`${tvgId}\n${title}\n${descr}`) }
   })
   const replays = replayAirings(rows.map((r) => (r.synthetic ? { ...r, title: '' } : r)), new Date(now))
+  // A re-run is no live match, and no 🏆 group's either (Live now lists those).
+  const comps = rows.map((r, i) => (r.synthetic || replays.has(i) ? undefined : learnedCompetitions(r.title)[0]))
+  // A match titled without its competition ("AEK Atene - Real Madrid") takes the one other channels
+  // name for it: of the tagged airings starting within 90 min, those sharing the most team words, at
+  // least two ("aek", "madrid"; a LaLiga re-run's lone "madrid" is not enough), if they agree.
+  const words = rows.map((r) => [...new Set(teamWords(r.title.replace(SUPERSCRIPT, '')))])
+  const taggedByWord = new Map<string, number[]>()
+  comps.forEach((c, j) => c && words[j].forEach((w) => (taggedByWord.get(w) ?? taggedByWord.set(w, []).get(w)!).push(j)))
+  rows.forEach((r, i) => {
+    if (comps[i] || r.synthetic || replays.has(i) || !(r.stop > cutoff) || !couldBeLiveMatch(r.title)) return
+    const shared = new Map<number, number>()
+    for (const w of words[i]) for (const j of taggedByWord.get(w) ?? []) if (Math.abs(rows[j].start - r.start) <= 5400) shared.set(j, (shared.get(j) ?? 0) + 1)
+    const most = Math.max(0, ...shared.values())
+    const found = new Set([...shared].filter(([, n]) => n === most).map(([j]) => comps[j]))
+    if (most >= 2 && found.size === 1) comps[i] = [...found][0]
+  })
   db.transaction(() => {
     rows.forEach((r, i) => {
       if (!(r.stop > cutoff)) return
-      // A re-run is no live match, and no 🏆 group's either (Live now lists those).
       const rerun = replays.has(i)
-      const comp = r.synthetic || rerun ? undefined : learnedCompetitions(r.title)[0]
+      const comp = comps[i]
       insert.run(r.tvgId, r.start, r.stop, r.title, searchNorm(r.title), r.descr,
         r.synthetic ? 1 : 0, !rerun && couldBeLiveMatch(r.title) ? 1 : 0, comp ? compGroup.get(comp)! : null)
     })

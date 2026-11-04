@@ -66,6 +66,9 @@ fun QuickPanel(
     effective: RouteKind,
     onRoute: (RouteChoice) -> Unit,
     onDiagnostics: () -> Unit,
+    /** Fetches the channels and guide now; [refreshStatus] is how the last press went, null before one. */
+    onRefresh: () -> Unit,
+    refreshStatus: String?,
     modifier: Modifier = Modifier,
     open: Boolean = true,
     views: @Composable ColumnScope.() -> Unit = {},
@@ -129,6 +132,7 @@ fun QuickPanel(
                         // Multi-view (U11), set apart from the settings above.
                         Column(Modifier.padding(top = Space.l), verticalArrangement = Arrangement.spacedBy(Space.xs), content = views)
                         Spacer(Modifier.height(Space.l))
+                        PanelRow("Refresh guide", refreshStatus, onClick = onRefresh)
                         PanelRow("Diagnostics", focus = diagnosticsRow, onClick = onDiagnostics)
                     }
                     Page.Audio -> {

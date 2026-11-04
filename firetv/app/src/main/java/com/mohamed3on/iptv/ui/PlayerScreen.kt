@@ -131,6 +131,7 @@ private const val PEEK_DELAY_MS = 700L
 private const val RECEDE = 0.85f
 /** How long the corner says why before only its dot stays. */
 private const val HEALTH_TEXT_MS = 6_000L
+private const val REFRESHING = "Refreshing…"
 
 /**
  * The full-screen player (R10, R14): the video, with chrome only when asked for. The channel
@@ -483,6 +484,8 @@ private fun PlayerChrome(
             )
         }
 
+        // Out here, so a refresh keeps its status when the panel closes before it finishes.
+        var refreshStatus by remember { mutableStateOf<String?>(null) }
         AnimatedVisibility(
             visible = layer == Layer.QuickPanel,
             enter = EnterTransition.None,
@@ -508,6 +511,17 @@ private fun PlayerChrome(
                     grid.tiles.forEach { it.session.useRoute(kind) }
                 },
                 onDiagnostics = { layer = Layer.Diagnostics },
+                refreshStatus = refreshStatus,
+                onRefresh = {
+                    if (refreshStatus != REFRESHING) {
+                        refreshStatus = REFRESHING
+                        graph.scope.launch {
+                            val channels = graph.sync.syncChannels()
+                            val guide = graph.sync.syncGuide()
+                            refreshStatus = if (channels != null || guide != null) "Failed" else "Up to date"
+                        }
+                    }
+                },
                 views = {
                     if (!multiView) {
                         if (state.requested != null) PanelRow("Multi-view") { pickTile(Pick.MultiView) }

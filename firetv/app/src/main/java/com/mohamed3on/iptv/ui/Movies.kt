@@ -59,6 +59,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -993,29 +994,29 @@ private const val NEW_EPISODE = "New episode"
 private val NEW_STYLE = Type.caption.copy(color = Palette.accent, fontWeight = FontWeight.SemiBold)
 
 /**
- * Tier (unless [tier] is off: a film's page names the copy's on its Plays line), the conviction score ("490 (70%)",
- * R24), then year, running time, genres, and Letterboxd's and IMDb's averages (the provider's rating when neither
- * is known); the group when nothing names genres.
+ * Tier (unless [tier] is off: a film's page names the copy's on its Plays line), the net share with Letterboxd's and
+ * IMDb's averages ("60% · ★ 4.5 · IMDb 8.5", R24), then year, running time and genres (the provider's rating when
+ * no average is known); the group when nothing names genres.
  */
 @Composable
 private fun MetaLine(movie: Movie, info: MovieInfo?, extra: String? = null, tier: Boolean = true) {
     val genre = info?.genre?.split(',', '/')?.map(String::trim)?.filter(String::isNotEmpty)?.take(2)?.joinToString(", ")?.ifEmpty { null }
     val runtime = info?.secs?.takeIf { it > 0 }?.let { runtimeLabel(it * 1000L) }
-    val scored: Scored? = movie.lib?.takeIf { it.s != null || it.lb != null || it.ir != null } ?: info
+    val scored: Scored? = movie.lib?.takeIf { it.sn != null || it.lb != null || it.ir != null } ?: info
     val averages = scored?.averagesLabel()
     val rating = info?.rating?.ifEmpty { null }?.takeIf { averages == null }?.let { "$it/10" }
     Row(horizontalArrangement = Arrangement.spacedBy(Space.m), verticalAlignment = Alignment.CenterVertically) {
         if (tier) (info?.tier?.ifEmpty { null } ?: movie.lib?.t?.ifEmpty { null })?.let { TierChip(it) }
-        scored?.scoreLabel()?.let { Text(it, style = SCORE_STYLE, maxLines = 1) }
+        listOfNotNull(scored?.scoreLabel(), averages).joinToString(" · ").ifEmpty { null }?.let { Text(it, style = SCORE_STYLE, maxLines = 1) }
         movie.title.badge?.let { Badges(remember(it) { listOf(it) }) }
         val group = movie.group.takeIf { movie.lib != null } ?: groupLabel(movie.group).name
-        Text(listOfNotNull(movie.title.year, extra, runtime, genre ?: group.ifEmpty { null }, averages ?: rating).joinToString(" · "), style = Type.body, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(listOfNotNull(movie.title.year, extra, runtime, genre ?: group.ifEmpty { null }, rating).joinToString(" · "), style = Type.body, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 
-/** A card's corner: tier in its colour, then the conviction score (R19, R24); null when neither is known. */
+/** A card's corner: tier in its colour, then the net share ("60%", R19, R24); null when neither is known. */
 private fun cardChip(t: LibTitle): AnnotatedString? {
-    val score = t.scoreLabel(share = false)
+    val score = t.scoreLabel()
     if (t.t.isEmpty() && score == null) return null
     return buildAnnotatedString {
         if (t.t.isNotEmpty()) withStyle(SpanStyle(color = tierColor(t.t), fontWeight = FontWeight.SemiBold)) { append(t.t) }
@@ -1590,7 +1591,11 @@ private fun FilmPage(
                         Text("No copy available", style = Type.headline.copy(color = Palette.warning), modifier = Modifier.padding(top = Space.s).focusRequester(noCopy).focusable())
                         Text("Neither IPTV nor Real-Debrid has one that plays here. It stays in the library for when one turns up.", style = Type.caption)
                     } else {
-                        PlaysLine(film.titleId, fallback = if (iptv) listOf("IPTV") + info?.quality.orEmpty() else null, Modifier.padding(top = Space.s))
+                        // The Plays line may run past the column, across the page's whole width.
+                        PlaysLine(
+                            film.titleId, fallback = if (iptv) listOf("IPTV") + info?.quality.orEmpty() else null,
+                            Modifier.padding(top = Space.s).wrapContentWidth(Alignment.Start, unbounded = true).widthIn(max = LocalConfiguration.current.screenWidthDp.dp - EDGE * 2),
+                        )
                         Row(horizontalArrangement = Arrangement.spacedBy(Space.m)) {
                             PageButton(if (started) "Resume" else "Play", { onPlay(false) }, Modifier.focusRequester(primary))
                             if (started) PageButton("Start over", { onPlay(true) })
@@ -1614,7 +1619,7 @@ private fun FilmPage(
 }
 
 /**
- * "Plays: Real-Debrid · 4K · HDR10 · E-AC3 5.1 · 14.2 GB" with its tier: the copy Play will open, in a
+ * "Plays: Real-Debrid · 4K · HDR10 · E-AC3 5.1 · 14.2 GB" (no video codec) with its tier: the copy Play will open, in a
  * one-line slot that is there from the start, so nothing moves when it fills in or changes (R29). Until
  * the ranking and Real-Debrid's check are in, it stays empty; after Play's own wait it names the best
  * IPTV copy, and the library's ([fallback] labels) when the box can't answer.
@@ -1787,6 +1792,12 @@ private fun PersonPage(person: Person, watched: Set<TitleId>, active: Boolean, h
     var opened by remember { mutableStateOf<String?>(null) }
     var hasFocus by remember { mutableStateOf(false) }
     val list = titles
+    // The cards come a frame after the page, as a title page's extras do, so its opening frame stays light.
+    var cards by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        withFrameNanos {}
+        cards = true
+    }
     LaunchedEffect(active, list != null, failed) {
         if (!active) return@LaunchedEffect
         val target = when {
@@ -1825,7 +1836,7 @@ private fun PersonPage(person: Person, watched: Set<TitleId>, active: Boolean, h
                     if (failed) ActionButton("Try again", { attempt++ }, Modifier.padding(top = Space.s))
                 }
             }
-            if (!list.isNullOrEmpty()) itemsIndexed(list, key = { _, m -> m.key }, contentType = { _, _ -> "card" }) { i, m ->
+            if (cards && !list.isNullOrEmpty()) itemsIndexed(list, key = { _, m -> m.key }, contentType = { _, _ -> "card" }) { i, m ->
                 PosterCard(
                     m, null, watched = m.titleId in watched,
                     focus = if (i == 0) first else null,

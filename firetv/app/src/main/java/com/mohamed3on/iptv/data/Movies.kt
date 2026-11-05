@@ -34,13 +34,13 @@ interface Scored {
     val ir: Double?
 }
 
-/** TrueScore's display, "490 (70%)", "~120" when estimated ([share] off on cards); null when unscored. */
-fun Scored.scoreLabel(share: Boolean = true): String? =
-    s?.let { (if (se == 1) "~" else "") + it + if (share && sn != null) " ($sn%)" else "" }
+/** The net share, "60%", "−11%", "~60%" when estimated; null without one. The conviction score only orders rows: its raw number says nothing. */
+fun Scored.scoreLabel(): String? =
+    sn?.let { (if (se == 1) "~" else "") + (if (it < 0) "−${-it}" else "$it") + "%" }
 
-/** "Letterboxd ★ 4.1 · IMDb 8.8"; null when neither is known. */
+/** "★ 4.1 · IMDb 8.8" (Letterboxd's, IMDb's); null when neither is known. */
 fun Scored.averagesLabel(): String? =
-    listOfNotNull(lb?.let { "Letterboxd ★ %.1f".format(Locale.ROOT, it) }, ir?.let { "IMDb %.1f".format(Locale.ROOT, it) }).joinToString(" · ").ifEmpty { null }
+    listOfNotNull(lb?.let { "★ %.1f".format(Locale.ROOT, it) }, ir?.let { "IMDb %.1f".format(Locale.ROOT, it) }).joinToString(" · ").ifEmpty { null }
 
 /**
  * A library title (`/api/app/library`, `/api/app/search`, More like this): its id, 'm' film or 't' show, name, year,

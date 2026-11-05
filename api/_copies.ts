@@ -76,8 +76,12 @@ function tagOf(name: string, category: string): string {
   return tags.find((t) => t === 'EN' || DUBBED[t] || SUBBED[t]) ?? ''
 }
 
-/** A probed stream's attributes, read through its labels ("4K", "Dolby Vision", "HEVC", "Atmos", "E-AC3 5.1"). */
-const probed = (s: ProbedStream): Attrs => parseRelease(streamLabels(s).filter((l) => !l.endsWith('Mbps')).join(' '))
+/** A probed stream's attributes, read through its labels ("4K", "Dolby Vision", "HEVC", "Atmos", "E-AC3 5.1"), with the probe's Dolby Vision profile. */
+function probed(s: ProbedStream): Attrs {
+  const a = parseRelease(streamLabels(s).filter((l) => !l.endsWith('Mbps')).join(' '))
+  const profile = Number(s.video?.side_data_list?.find((d) => d.dv_profile != null)?.dv_profile)
+  return a.hdr.includes('dv') && profile > 0 ? { ...a, dvProfile: profile } : a
+}
 
 /** A catalogue copy of a film: as the app measured it, else what its name and category claim. */
 export function filmCopy(e: { id: number; name: string; category: string; ext: string }, m?: Measured): IptvCopy {

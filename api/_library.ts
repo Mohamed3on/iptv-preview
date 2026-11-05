@@ -107,8 +107,9 @@ export function rowDefs(today = new Date()): RowDef[] {
   const films = (q: string): [Kind, string] => ['movie', `discover/movie?${pop}&${q}`]
   const shows = (q: string): [Kind, string] => ['tv', `discover/tv?${pop}&${q}&${NO_TALK}`]
   return [
-    // The best conviction of every scored film and show, filled by scripts/build-library.ts.
-    { id: 'top', n: 'Top TrueScore', q: [] },
+    // TrueScore's films by its recent-adjusted, then its all-time score: filled and ordered by scripts/build-library.ts.
+    { id: 'ts-recent', n: 'TrueScore · recent', q: [] },
+    { id: 'ts-all', n: 'TrueScore · all-time', q: [] },
     { id: 'trending', n: 'Trending', q: [['movie', 'trending/movie/week'], ['tv', 'trending/tv/week']] },
     // Films out on digital or disc in the last 60 days; shows with an episode out in them.
     { id: 'new', n: 'New releases', q: [films(`with_release_type=4%7C5&release_date.gte=${day(60)}&release_date.lte=${day(0)}&vote_count.gte=20`), shows(`air_date.gte=${day(60)}&air_date.lte=${day(0)}&vote_count.gte=100`)] },
@@ -144,6 +145,9 @@ function toLibrary(src: Library['src'], titles: Map<string, LibTitle>, rows: { i
   }
 }
 
+/** A row that comes in its own order (TrueScore's, by one exact score), kept as built rather than sorted by [s]. */
+export const ordered = (rowId: string) => rowId.startsWith('ts-')
+
 /** Candidates a row keeps, the most convincing first (api/_scores.ts [s]; TMDB popularity after, for titles without), before scoring cuts it to ROW_CAP. */
 export const ROW_CANDIDATES = 150
 
@@ -162,7 +166,7 @@ export function assemble(defs: RowDef[], seeds: LibTitle[][], provider: Provider
   const all = [...titles.values()]
   const s = (id: string) => scores.get(id)?.s, key = (id: string) => s(id) ?? titles.get(id)!.pp ?? -1
   const candidates = (ids: string[]) => [...new Set(ids)].sort((a, b) => Number(s(b) !== undefined) - Number(s(a) !== undefined) || key(b) - key(a)).slice(0, ROW_CANDIDATES)
-  return toLibrary('tmdb', titles, defs.map((d, i) => ({ id: d.id, n: d.n, ids: candidates([...seeds[i].map((t) => t.id), ...(d.has ? all.filter(d.has).map((t) => t.id) : [])]) })), gn)
+  return toLibrary('tmdb', titles, defs.map((d, i) => ({ id: d.id, n: d.n, ids: ordered(d.id) ? seeds[i].map((t) => t.id) : candidates([...seeds[i].map((t) => t.id), ...(d.has ? all.filter(d.has).map((t) => t.id) : [])]) })), gn)
 }
 
 /** The provider's 4K and Blu-ray films (tier measured on play, else the category's claim) and its shows. */

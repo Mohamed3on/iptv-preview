@@ -4,8 +4,8 @@
 // every TMDB list fails, nothing is written and the app keeps the last library (or the provider's rows).
 // Every row title, provider title and the owner's Watchlist and Recommended are scored first (api/_scores.ts:
 // MDBList and IMDb's histograms), then each row keeps its 150 most convincing candidates (TMDB's most popular
-// where no score is known), sorted by score and cut to 60. Top TrueScore leads the rows: the 150 best [s] of every scored
-// title, looked up on TMDB where new. Titles on show carry their runtime (TMDB's kept details, looked up where none are kept). Each key is optional: without one its source is skipped, and rows keep their order.
+// where no score is known), sorted by score and cut to 60. TrueScore's two rows lead: the films its store scores, by its
+// recent-adjusted and by its all-time score (each only by that number), looked up on TMDB where new. Titles on show carry their runtime (TMDB's kept details, looked up where none are kept). Each key is optional: without one its source is skipped, and rows keep their order.
 // First it reads the owner's Trakt and Letterboxd history into .cache/history.json (api/_history.ts), and builds
 // Recommended from the titles the owner loved (lovedPicks: TMDB's recommendations, mostly kept with their details)
 // and the Watchlist's runtimes (it is shown shortest first).
@@ -13,7 +13,7 @@
 import { readFile } from 'node:fs/promises'
 import { configFromEnv } from '../api/_lib.js'
 import { assemble, fromTmdb, LIBRARY_FILE, LIBRARY_FULL_FILE, providerTitles, ROW_CANDIDATES, rowDefs, saveLibrary, withProviderCopies, type Library, type LibTitle, type TmdbItem } from '../api/_library.js'
-import { loadScores, onScreen, ranked, refreshScores, saveScores, scoreTitles, unscored } from '../api/_scores.js'
+import { letterboxdFilms, loadScores, onScreen, ranked, refreshScores, saveScores, scoreTitles, unscored } from '../api/_scores.js'
 import { parseTitleId, runtimeOf, tmdbGet, type Kind } from '../api/_tmdb.js'
 import { historyTitles, loadHistory, lovedPicks, refreshHistory, saveHistory, watchlistRuntimes } from '../api/_history.js'
 import { readOnlyTokens } from '../api/_trakt.js'
@@ -92,10 +92,12 @@ const asked = await refreshScores([...new Set([...historyTitles(history), ...(pr
   fresh, scores, process.env.MDBLIST_KEY, { save: () => saveScores(scores) })
 await saveScores(scores)
 const scored = scoreTitles(scores)
-// Top TrueScore: the best [s] of every scored film and show TMDB knows, wherever the build met it.
-const top = [...scored].filter(([id, x]) => x.s !== undefined && parseTitleId(id) && parseTitleId(id)!.season === undefined).sort(([, a], [, b]) => b.s! - a.s!).slice(0, ROW_CANDIDATES).map(([id]) => id)
-await lookUp(top)
-seeds[defs.findIndex((d) => d.id === 'top')] = top.flatMap((id) => (known.get(id)?.p ? [known.get(id)!] : []))
+// TrueScore's rows: the films its store has that exact score for, best first (the rows keep this order).
+for (const [row, by] of [['ts-recent', 'adjusted'], ['ts-all', 'score']] as const) {
+  const ids = [...letterboxdFilms()].filter(([, f]) => f[by] !== undefined).sort(([, a], [, b]) => b[by]! - a[by]!).slice(0, ROW_CANDIDATES).map(([id]) => id)
+  await lookUp(ids)
+  seeds[defs.findIndex((d) => d.id === row)] = ids.flatMap((id) => (known.get(id)?.p ? [known.get(id)!] : []))
+}
 const full =await withProviderCopies(assemble(defs, seeds, provider.map(({ t, group }) => ({ group, t: known.has(t.id) ? { ...known.get(t.id)!, ...(t.t && { t: t.t }), ...(t.e && { e: t.e }) } : t })), prev, gn, scored), cfg)
 await saveLibrary(full, LIBRARY_FULL_FILE)
 const shown = ranked(full, scored)

@@ -10,7 +10,7 @@ import { readFileSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import { writeAtomic } from './_fs.js'
-import type { LibTitle, Library } from './_library.js'
+import { ordered, type LibTitle, type Library } from './_library.js'
 import { parseTitleId } from './_tmdb.js'
 
 /**
@@ -100,7 +100,7 @@ export function ranked(lib: Library, scores: Map<string, Score>, cap = ROW_CAP):
     const known = r.i.map((i) => all[i].s).filter((s): s is number => s !== undefined)
     const mid = known.length ? median(known) : 0, lo = Math.min(0, ...known)
     const key = (i: number) => all[i].s ?? (all[i].s10 !== undefined ? lo - 10 + all[i].s10! : mid)
-    return { ...r, i: (r.i.some((i) => all[i].s10 !== undefined || all[i].s !== undefined) ? r.i.slice().sort((a, b) => key(b) - key(a)) : r.i).slice(0, cap) }
+    return { ...r, i: (!ordered(r.id) && r.i.some((i) => all[i].s10 !== undefined || all[i].s !== undefined) ? r.i.slice().sort((a, b) => key(b) - key(a)) : r.i).slice(0, cap) }
   })
   const kept = [...new Set(rows.flatMap((r) => r.i))].sort((a, b) => a - b)
   const index = new Map(kept.map((old, i) => [old, i]))

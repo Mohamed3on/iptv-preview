@@ -15,6 +15,7 @@ import com.mohamed3on.iptv.data.ResumeStore
 import com.mohamed3on.iptv.data.VpnMonitor
 import com.mohamed3on.iptv.data.WatchedStore
 import com.mohamed3on.iptv.data.WatchHistory
+import com.mohamed3on.iptv.player.Capacity
 import com.mohamed3on.iptv.system.VoiceFix
 import com.mohamed3on.iptv.update.Updater
 import kotlinx.coroutines.CoroutineScope
@@ -69,6 +70,8 @@ class AppGraph(context: Context) {
     /** Films and episodes watched to the end. */
     val watchedMovies = WatchedStore(prefs, "movies.watched")
     val watchedEpisodes = WatchedStore(prefs, "shows.watched")
+    /** Typical film bandwidth per source and hour band. */
+    val capacity = Capacity(prefs)
     val sync = FeedSync(http, BuildConfig.SERVER_URL, BuildConfig.APP_TOKEN, context.filesDir, prefs)
     val updater = Updater(context, http, BuildConfig.SERVER_URL, BuildConfig.APP_TOKEN, scope)
 }

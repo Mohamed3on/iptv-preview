@@ -9,6 +9,8 @@ import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.Request
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonPrimitive
 import java.io.File
 import java.io.IOException
 import java.util.zip.GZIPInputStream
@@ -42,6 +44,8 @@ class FeedSync(
     private val dir: File,
     private val store: KeyValueStore,
     private val now: () -> Long = System::currentTimeMillis,
+    /** Each show's episodes as they arrive (old watched marks move to title ids then). */
+    private val onEpisodes: (List<Episode>) -> Unit = {},
 ) {
     private val feedFile = File(dir, "feed.json")
     private val guideFile = File(dir, "guide.db")
@@ -53,10 +57,14 @@ class FeedSync(
     private val _guide = MutableStateFlow<GuideDb?>(null)
     /** The open cached guide; replaced (and the old one closed) after each validated download. */
     val guide: StateFlow<GuideDb?> = _guide
-    /** The 4K films and UFC replays (v2). */
-    val movies = Library("movies")
-    /** The shows (series), in the same shape; each show's episodes come from [episodes]. */
-    val shows = Library("shows")
+    /** The Real-Debrid token from the feed, for [RealDebrid]; null until a feed is loaded or when the server has none. */
+    val realDebridToken: String? get() = (_state.value as? FeedState.Ready)?.feed?.realDebrid
+    /** The 4K films and UFC replays (v2): the IPTV copy Play falls back on when the box can't list copies. */
+    val movies = Library("movies") { text -> parseMovies(text).also { require(it.movies[0].titleId.isNotEmpty()) } }
+    /** Movies & Shows (U11): title-first rows of films and shows, revalidated by its ETag (a 304 when unchanged). */
+    val library = Library("library", ::parseCatalog)
+    /** The owner's history (U16): Trakt and Letterboxd marks, Watchlist, Recommended and followed shows' next episodes. */
+    val history = Library("history", ::parseHistory)
 
     /** Loads whatever is cached, without touching the network. */
     suspend fun loadCached() = withContext(Dispatchers.IO) {
@@ -69,36 +77,38 @@ class FeedSync(
     }
 
     /**
-     * An on-demand library (/api/app/[kind]): read from disk only once it's wanted (megabytes), and
+     * An on-demand list (/api/app/[kind]) as [parse] reads it: read from disk only once it's wanted, and
      * synced at most every [sync]'s maxAge.
      */
-    inner class Library(private val kind: String) {
+    inner class Library<T : Any>(private val kind: String, private val parse: (String) -> T) {
         private val file = File(dir, "$kind.json")
         private val lock = Mutex()
-        private val _items = MutableStateFlow<Movies?>(null)
+        private val _items = MutableStateFlow<T?>(null)
         /** Null until the cached copy is read or the first download lands. */
-        val items: StateFlow<Movies?> = _items
+        val items: StateFlow<T?> = _items
 
         /** Reads the cached copy, without touching the network. */
         suspend fun loadCached() = lock.withLock {
             withContext(Dispatchers.IO) {
                 if (_items.value == null && file.exists()) {
-                    // An unreadable copy goes, so the next sync downloads it whole instead of hearing "unchanged".
-                    runCatching { parseMovies(file.readText()) }.onSuccess { _items.value = it }.onFailure { file.delete() }
+                    // An unreadable copy goes, so the next sync downloads it whole instead of hearing "unchanged";
+                    // so does one [parse] rejects (saved before titles had ids, say: resume and watched marks are keyed by them).
+                    runCatching { parse(file.readText()) }
+                        .onSuccess { _items.value = it }.onFailure { file.delete() }
                 }
             }
         }
 
-        /** Returns null when the list is current (fetched, unchanged, or younger than [maxAge]). */
-        suspend fun sync(maxAge: Duration): SyncError? = lock.withLock {
+        /** Returns null when the list is current (fetched, unchanged, or younger than [maxAge]); [query] goes on the URL ("&shows=…"). */
+        suspend fun sync(maxAge: Duration, query: String = ""): SyncError? = lock.withLock {
             withContext(Dispatchers.IO) {
                 if (age(file) < maxAge && _items.value != null) return@withContext null
                 val tmp = File(dir, "$kind.json.tmp")
-                val error = when (val d = download(kind, file, tmp)) {
+                val error = when (val d = download(kind, file, tmp, query)) {
                     Download.Unchanged -> null.also { file.setLastModified(now()) }
                     is Download.Failed -> d.error
                     is Download.Done -> try {
-                        val items = parseMovies(tmp.readText())
+                        val items = parse(tmp.readText())
                         replace(tmp, file, kind, d.etag)
                         _items.value = items
                         null
@@ -115,26 +125,80 @@ class FeedSync(
     /** A film's plot and running time; fetched when it is first focused, then kept for the app session. */
     suspend fun movieInfo(id: Int): Result<MovieInfo> = withContext(Dispatchers.IO) {
         movieInfos[id]?.let { return@withContext Result.success(it) }
-        runCatching {
-            val request = Request.Builder().url("$baseUrl/api/app/movie?t=$token&id=$id").build()
-            client.newCall(request).execute().use { res ->
-                if (!res.isSuccessful) throw IOException("HTTP ${res.code}")
-                parseMovieInfo(res.body.string()).also { movieInfos[id] = it }
-            }
-        }
+        runCatching { parseMovieInfo(get("movie?id=$id")).also { movieInfos[id] = it } }
     }
     private val movieInfos = java.util.concurrent.ConcurrentHashMap<Int, MovieInfo>()
 
-    /** Films matching [query] across the provider's whole catalogue (not only the library's rows), best copy first. */
-    suspend fun vodSearch(query: String): Result<List<Movie>> = withContext(Dispatchers.IO) {
-        runCatching {
-            val q = java.net.URLEncoder.encode(query.trim(), "UTF-8")
-            val request = Request.Builder().url("$baseUrl/api/app/vod-search?t=$token&q=$q").build()
-            client.newCall(request).execute().use { res ->
-                if (!res.isSuccessful) throw IOException("HTTP ${res.code}")
-                parseVodResults(res.body.string())
-            }
+    private class HttpStatus(val code: Int) : IOException("HTTP $code")
+
+    /** GET /api/app/[path] (its query in it), or POST it [body] as JSON; the answer as text, [HttpStatus] when refused. */
+    private fun get(path: String, body: String? = null): String {
+        val request = Request.Builder().url("$baseUrl/api/app/$path${if ('?' in path) '&' else '?'}t=$token")
+        if (body != null) request.post(okhttp3.RequestBody.create("application/json".toMediaTypeOrNull(), body))
+        return client.newCall(request.build()).execute().use { res ->
+            if (!res.isSuccessful) throw HttpStatus(res.code)
+            res.body.string()
         }
+    }
+
+    private fun q(s: String) = java.net.URLEncoder.encode(s, "UTF-8")
+
+    /**
+     * Films and shows for a search (a title, or a genre or language word), from the box; each query's answer is
+     * kept for the app session, so typing back over it answers at once.
+     */
+    suspend fun search(query: String): Result<List<Movie>> = withContext(Dispatchers.IO) {
+        val key = query.trim().lowercase()
+        searches[key]?.let { return@withContext Result.success(it) }
+        runCatching { parseTitles(get("search?q=${q(query.trim())}")).also { searches[key] = it } }
+    }
+    private val searches = java.util.concurrent.ConcurrentHashMap<String, List<Movie>>()
+
+    /** A library title's page: TMDB's plot, people, More like this and scores (/api/app/title); kept for the app session. */
+    suspend fun title(id: TitleId): Result<MovieInfo> = withContext(Dispatchers.IO) {
+        titles[id]?.let { return@withContext Result.success(it) }
+        runCatching { parseMovieInfo(get("title?id=${q(id)}")).also { titles[id] = it } }
+    }
+    private val titles = java.util.concurrent.ConcurrentHashMap<TitleId, MovieInfo>()
+
+    /** A person's films and shows, best score first; kept for the app session. */
+    suspend fun person(id: Int): Result<List<Movie>> = withContext(Dispatchers.IO) {
+        people[id]?.let { return@withContext Result.success(it) }
+        runCatching { parseTitles(get("person?id=$id")).also { people[id] = it } }
+    }
+    fun peekPerson(id: Int): List<Movie>? = people[id]
+    private val people = java.util.concurrent.ConcurrentHashMap<Int, List<Movie>>()
+
+    /**
+     * What a title page says about [m]: TMDB's for a title it knows (the provider's when that fails), else the
+     * provider's own, a show's from its episodes call.
+     */
+    suspend fun info(m: Movie): Result<MovieInfo> {
+        if (m.titleId.isTmdb) title(m.titleId).let { if (it.isSuccess || m.id <= 0) return it }
+        if (m.id <= 0) return Result.failure(IOException("no provider id"))
+        return if (m.titleId.isShow) episodes(m.id).map { it.info } else movieInfo(m.id)
+    }
+
+    /** What [info] already holds for [m], without waiting: a screen's first frame. */
+    fun peekInfo(m: Movie): MovieInfo? =
+        (if (m.titleId.isTmdb) titles[m.titleId] else null) ?: if (m.titleId.isShow) showCache[m.id]?.second?.info else movieInfos[m.id]
+
+    /**
+     * A show's episodes: the provider's when it lists the show ([m]'s own id, or the series TMDB's answer names),
+     * else TMDB's, which only copies (Real-Debrid's, say) play.
+     */
+    suspend fun showOf(m: Movie, fresh: Boolean = false): Result<ShowEpisodes> {
+        if (m.id > 0) return episodes(m.id, fresh)
+        val info = title(m.titleId).getOrElse { return Result.failure(it) }
+        if (info.series > 0) return episodes(info.series, fresh)
+        return Result.success(ShowEpisodes(info.episodes, info.plot, info.backdrop, info.genre, info.cast, info.rating))
+    }
+
+    /** What [showOf] already holds for [m]. */
+    fun peekShowOf(m: Movie): ShowEpisodes? {
+        if (m.id > 0) return peekShow(m.id)
+        val info = titles[m.titleId] ?: return null
+        return if (info.series > 0) peekShow(info.series) else ShowEpisodes(info.episodes, info.plot, info.backdrop, info.genre, info.cast, info.rating)
     }
 
     /**
@@ -151,15 +215,13 @@ class FeedSync(
                     else -> kotlinx.serialization.json.JsonPrimitive(v.toString())
                 }
             }).toString()
-            val request = Request.Builder().url("$baseUrl/api/app/film-quality?t=$token")
-                .post(okhttp3.RequestBody.create("application/json".toMediaTypeOrNull(), body)).build()
-            client.newCall(request).execute().use { res -> if (res.isSuccessful) movieInfos.remove(id) }
+            get("film-quality", body)
+            movieInfos.remove(id)
         }
     }
     private val filmsReported = java.util.Collections.synchronizedSet(HashSet<Int>())
 
-    /** What [movieInfo] or [episodes] already holds for a title, without waiting: a screen's first frame. */
-    fun peekMovieInfo(id: Int): MovieInfo? = movieInfos[id]
+    /** What [episodes] already holds for a show, without waiting. */
     fun peekShow(id: Int): ShowEpisodes? = showCache[id]?.second
 
     /**
@@ -169,13 +231,50 @@ class FeedSync(
     suspend fun episodes(seriesId: Int, fresh: Boolean = false): Result<ShowEpisodes> = withContext(Dispatchers.IO) {
         showCache[seriesId]?.takeIf { !fresh && System.currentTimeMillis() - it.first < SHOW_KEEP_MS }?.let { return@withContext Result.success(it.second) }
         runCatching {
-            val request = Request.Builder().url("$baseUrl/api/app/episodes?t=$token&id=$seriesId").build()
-            client.newCall(request).execute().use { res ->
-                if (!res.isSuccessful) throw IOException("HTTP ${res.code}")
-                parseEpisodes(res.body.string()).also { showCache[seriesId] = System.currentTimeMillis() to it }
+            parseEpisodes(get("episodes?id=$seriesId")).also {
+                showCache[seriesId] = System.currentTimeMillis() to it
+                onEpisodes(it.episodes)
             }
         }
     }
+
+    /** Title ids for the provider ids marks were saved under (the one-time move to title ids); throws on failure. */
+    suspend fun titleIds(request: TitleIdRequest): TitleIdMap = withContext(Dispatchers.IO) {
+        json.decodeFromString(TitleIdMap.serializer(), get("title-ids", json.encodeToString(TitleIdRequest.serializer(), request)))
+    }
+
+    /** Every copy of a film or episode the box knows, IPTV's and Real-Debrid's (/api/app/copies); not kept here (FilmCopies keeps them). */
+    suspend fun copies(title: TitleId): Result<CopiesAnswer> = withContext(Dispatchers.IO) {
+        runCatching { json.decodeFromString(CopiesAnswer.serializer(), get("copies?title=${q(title)}")) }
+    }
+
+    /** English, then Arabic, subtitles for the copy playing (/api/app/subtitles): its OpenSubtitles [hash] ("" unknown) and release [name] pick the best. */
+    suspend fun subtitles(title: TitleId, hash: String, size: Long, name: String): Result<SubtitlesAnswer> = withContext(Dispatchers.IO) {
+        runCatching { json.decodeFromString(SubtitlesAnswer.serializer(), get("subtitles?title=${q(title)}&hash=$hash&size=$size&name=${q(name)}")) }
+    }
+
+    /** One subtitle file as SRT text; null when today's downloads are spent (HTTP 429). */
+    suspend fun subtitle(id: String): Result<String?> = withContext(Dispatchers.IO) {
+        runCatching {
+            try {
+                get("subtitle?id=$id")
+            } catch (e: HttpStatus) {
+                if (e.code == 429) null else throw e
+            }
+        }
+    }
+
+    /** Torrents Real-Debrid refused (infringing_file), so the box drops them from every title's copies; best effort. */
+    suspend fun rdInfringing(hashes: List<String>) = withContext(Dispatchers.IO) {
+        runCatching {
+            val body = kotlinx.serialization.json.buildJsonObject {
+                put("hashes", kotlinx.serialization.json.JsonArray(hashes.map(::JsonPrimitive)))
+            }.toString()
+            get("rd-infringing", body)
+        }
+    }
+
+    private val json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
     private val showCache = java.util.concurrent.ConcurrentHashMap<Int, Pair<Long, ShowEpisodes>>()
     private val SHOW_KEEP_MS = 30 * 60_000L
 
@@ -250,8 +349,8 @@ class FeedSync(
     }
 
     /** Fetches /api/app/[kind] into [to], sending the stored ETag when [cached] exists. */
-    private fun download(kind: String, cached: File, to: File): Download {
-        val request = Request.Builder().url("$baseUrl/api/app/$kind?t=$token").apply {
+    private fun download(kind: String, cached: File, to: File, query: String = ""): Download {
+        val request = Request.Builder().url("$baseUrl/api/app/$kind?t=$token$query").apply {
             if (cached.exists()) store.get("etag.$kind")?.let { header("If-None-Match", it) }
         }.build()
         return try {
@@ -275,3 +374,30 @@ class FeedSync(
         store.put("etag.$kind", etag)
     }
 }
+
+/** `/api/app/copies`: a title's copies, its original language (ISO 639-1, "" unknown), each source's state ("ok", "pending", "unavailable") and an episode's [intro] ([start, end] ms, empty unknown). */
+@Serializable
+data class CopiesAnswer(val titleId: String = "", val originalLanguage: String = "", val runtime: Int = 0, val sources: CopySources = CopySources(), val copies: List<ServerCopy> = emptyList(), val intro: List<Long> = emptyList())
+
+/** `/api/app/subtitles`: [status] "ok", "none" or "quota" (no subtitles today); [subs] best first, English before Arabic. */
+@Serializable
+data class SubtitlesAnswer(val status: String = "none", val subs: List<FoundSubtitle> = emptyList())
+
+/** A subtitle file the box found: [lang] "en" or "ar"; [hash] when it was made for this very file. */
+@Serializable
+data class FoundSubtitle(val id: String, val lang: String, val hash: Boolean = false, val release: String = "")
+
+@Serializable
+data class CopySources(val iptv: String = "ok", val rd: String = "ok")
+
+/**
+ * One copy as the box describes it (U3): an IPTV stream ([id], [ext]) or a Real-Debrid candidate ([hash], [file],
+ * [filename], [size], [cached] for Torrentio's [RD+]); attributes are the box's names, 0 or empty when unknown.
+ */
+@Serializable
+data class ServerCopy(
+    val src: String, val id: Int = 0, val ext: String = "mkv", val name: String = "",
+    val hash: String = "", val file: Int? = null, val filename: String? = null, val size: Long = 0, val cached: Boolean = false,
+    val res: Int = 0, val hdr: List<String> = emptyList(), val dvProfile: Int? = null, val codec: String = "", val audio: String = "",
+    val ch: Int = 0, val atmos: Boolean = false, val langs: List<String> = emptyList(), val subs: List<String> = emptyList(), val kbps: Double = 0.0,
+)

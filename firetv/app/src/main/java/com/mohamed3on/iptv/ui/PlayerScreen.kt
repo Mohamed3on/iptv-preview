@@ -67,6 +67,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.tv.material3.Text
 import com.mohamed3on.iptv.data.Channel
+import com.mohamed3on.iptv.system.Check
 import com.mohamed3on.iptv.data.ChannelIdentity
 import com.mohamed3on.iptv.data.Feed
 import com.mohamed3on.iptv.data.GuideDb
@@ -204,10 +205,14 @@ private fun PlayerChrome(
     var info by remember { mutableStateOf(false) }
     // Movies rise over the open channel list, which keeps its place underneath for Back.
     var movies by remember { mutableStateOf(false) }
-    // Which library is up (kept while it leaves, so its exit draws the right one).
-    var library by remember { mutableStateOf(LibraryKind.Movies) }
     val moviesShown = animateFloatAsState(if (movies) 1f else 0f, if (reduced) tween(Motion.FADE_MS) else Motion.panel(), label = "movies")
     val moviesComposed by remember { derivedStateOf { movies || moviesShown.value > 0f } }
+    // firetv/check.sh: every screen but live is in Movies & Shows, which takes the target from there.
+    val check by Check.open.collectAsState()
+    LaunchedEffect(check) {
+        val target = check ?: return@LaunchedEffect
+        if (target != "live") movies = true else if (!moviesComposed) Check.open.value = null
+    }
 
     // Until the debounced tune starts, the feed playing is still the previous channel's (KTD9).
     val tuning = state.phase == Phase.Connecting || state.feed?.family != state.requested?.family
@@ -470,8 +475,8 @@ private fun PlayerChrome(
                         }
                     },
                     entrance = { shown.value },
-                    // Watching, not picking a tile: Movies and Shows are among the list's groups.
-                    onLibrary = if (pick == null && !multiView) ({ library = it; movies = true }) else null,
+                    // Watching, not picking a tile: Movies & Shows is among the list's groups.
+                    onLibrary = if (pick == null && !multiView) ({ movies = true }) else null,
                     pickHint = pick?.let { purpose ->
                         val onScreen = if (multiView) grid.tiles.map { it.channel.family } else listOfNotNull(state.requested?.family)
                         val hint: (Channel) -> String? = { channel ->
@@ -488,8 +493,7 @@ private fun PlayerChrome(
             }
         }
 
-        if (moviesComposed) key(library) { MoviesLayer(
-            kind = library,
+        if (moviesComposed) MoviesLayer(
             feed = feed,
             session = session,
             tiles = tiles,
@@ -497,7 +501,7 @@ private fun PlayerChrome(
             open = movies,
             onPlaying = onMovie,
             onClose = { movies = false },
-        ) }
+        )
 
         AnimatedVisibility(
             visible = layer == Layer.Recent,

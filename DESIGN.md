@@ -151,7 +151,7 @@ Type is Inter at a refined ten-foot scale (nothing below 13sp), copy is plain se
 - Depth by tone, lift and scrim; no drop shadows anywhere.
 - One accent (#3D9BFF), used sparingly; progress in lists is neutral.
 - Focus springs (0.22s, no overshoot) with scale and ring, read only while drawing.
-- One-pass drawing on weak hardware; the backdrop is the only offscreen layer.
+- One-pass drawing on weak hardware; no offscreen layers, the backdrop included.
 - 5% overscan-safe inset (48 x 27 dp); chrome never sits closer to the edge.
 
 ## Colors
@@ -159,7 +159,7 @@ Type is Inter at a refined ten-foot scale (nothing below 13sp), copy is plain se
 A cool blue-black neutral ramp with one clear blue accent and three status hues that only ever appear as meaning.
 
 ### Primary
-- **Signal Blue** (accent): what is playing, the selected group, the text caret, the "Watched" word and the watched check disc, the player's seek bar, the indeterminate activity segment, and the focus ring on posters, wide cards and multi-view tiles. Clears 3:1 on every surface it sits on.
+- **Signal Blue** (accent): what is playing, the selected group, the text caret, the "Watched" word and the watched check disc, the "New episode" caption in Up next, the player's seek bar, the indeterminate activity segment, and the focus ring on posters, wide cards and multi-view tiles. Clears 3:1 on every surface it sits on.
 
 ### Neutral
 - **Ink** (ink): the ground behind everything when no video plays, and the colour every library scrim is mixed from.
@@ -216,7 +216,7 @@ Over live video, chrome takes the edges: the channel list slides in from the lef
 No drop shadows exist in the system. Depth comes from three things: translucent material over the picture with a 1dp lit edge; gradient and flat scrims that darken the video only where chrome sits; and focus lift, where the focused element scales toward the viewer and takes the lightest layer (raised slate) or a ring. Bigger surfaces read heavier: more opaque, rounder. API 30 has no blur and nothing can blur a video SurfaceView, so the "glass" is tint, never blur.
 
 ### Named Rules
-**The One Pass Rule.** Every surface draws in one pass: rounded fills instead of clips where possible, alpha applied per draw (ModulateAlpha) rather than through an offscreen copy, animated values read in the draw phase so focus moves repaint two items and recompose nothing. The library backdrop is the only offscreen layer, needed to composite its image crossfade under the ink scrims.
+**The One Pass Rule.** Every surface draws in one pass: rounded fills instead of clips where possible, alpha applied per draw (ModulateAlpha) rather than through an offscreen copy, animated values read in the draw phase so focus moves repaint two items and recompose nothing. The library backdrop bakes its ink scrims into the still once (on the CPU, off the main thread), so its crossfade draws one or two pictures and no layer: the layered version cost the stick ~50 ms a frame.
 
 **The No Stacked Glass Rule.** Never stack one translucent surface on another.
 
@@ -239,6 +239,7 @@ Quiet until focused; the press is felt on the same frame as the key.
 ### Chips and Badges
 - **Quality badges:** one quiet caption line joined with " · " ("4K · 50fps · Atmos"), no capsules, so they never compete with the name.
 - **Live mark and info pills:** caption text in its status colour on a 16% tint of that colour, 6dp radius, 6 x 1dp padding. Drawn in one canvas from cached text layouts because rows show them by the dozen.
+- **Picture tier:** the same pill, and the word alone on a card's corner: Reference in green, Great in text-primary, OK in text-secondary, Soft in amber. Never the accent: a tier is a quality, not a state.
 
 ### Cards / Containers
 - **Panel (material):** Night Glass, 20dp radius, 1dp lit edge, 32dp padding for dialogs; modal panels sit over the modal scrim.
@@ -274,7 +275,7 @@ Indeterminate progress as a 30%-wide accent segment gliding along a 160 x 3dp tr
 ### Don't:
 - **Don't** add eyebrow labels (a small all-caps line above a heading).
 - **Don't** use drop shadows or blur; depth is tone, lift and scrim.
-- **Don't** stack translucent surfaces, or add offscreen layers beyond the library backdrop.
+- **Don't** stack translucent surfaces, or add offscreen layers.
 - **Don't** use the accent for decoration or for list progress.
 - **Don't** set text below 13sp, or apply tabular figures to text that does not tick or align.
 - **Don't** let motion overshoot or bounce; a remote carries no momentum.

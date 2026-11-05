@@ -3,10 +3,12 @@
 // categories keeps the 4K one's copy. A category's 4K and plain versions are one group. The
 // provider's series list is ~72MB, so it is pulled at most once a day and the trimmed list kept
 // on disk (the old copy is served if a pull fails); a show's episodes are fetched when it's opened.
-import { readFile, stat, writeFile } from 'node:fs/promises'
+import { readFile, stat } from 'node:fs/promises'
+import { writeAtomic } from './_fs.js'
 import { apiGet, plainCategory, type XtreamConfig } from './_lib.js'
 import { categoryLabels, claimedPicture, measuredStream, pictureTier, probedPicture, streamLabels, type Measured, type ProbedStream } from './_quality-labels.js'
-import { vodCategoryName } from './_vod.js'
+import { episodeTitle, filmTitle, showTitle, tmdbTitle } from './_tmdb.js'
+import { filmEntries, filmTitleOf, vodCategoryName } from './_vod.js'
 
 interface Category {
   category_id: string
@@ -24,7 +26,8 @@ interface Series {
 /** The same shape as /api/app/movies, so the app reads both with one parser. */
 export interface ShowList {
   groups: string[]
-  movies: { id: number; name: string; poster: string; group: string }[]
+  /** [titleId] is the show's title id (see _tmdb.ts). */
+  movies: { id: number; titleId: string; name: string; poster: string; group: string }[]
 }
 
 export interface Episode {
@@ -53,7 +56,7 @@ const NAME_PREFIX = /^(?:4K-)?[A-Z0-9+]{1,6}(?:-SUBS)?\s+-\s+/
 /** Language order: English, Arabic, then German, Spanish, Italian. */
 const LANGS = ['en', 'ar', 'de', 'es', 'it'] as const
 
-function language(cat: string): (typeof LANGS)[number] | null {
+export function language(cat: string): (typeof LANGS)[number] | null {
   if (SKIP.test(cat)) return null
   if (cat.startsWith('GERMANY')) return 'de'
   if (cat.startsWith('ESPAÑA')) return 'es'
@@ -84,7 +87,7 @@ export function buildShowList(cats: Category[], series: Series[]): ShowList {
   const picks = [...best.values()].sort(
     (a, b) => a.lang - b.lang || rank(a) - rank(b) || catOrder.get(String(a.s.category_id))! - catOrder.get(String(b.s.category_id))!,
   )
-  const movies = picks.map(({ s, cat }) => ({ id: s.series_id, name: String(s.name).trim().replace(NAME_PREFIX, ''), poster: s.cover ?? '', group: plainCategory(cat) }))
+  const movies = picks.map(({ s, cat }) => ({ id: s.series_id, titleId: showTitle(s.tmdb, s.series_id), name: String(s.name).trim().replace(NAME_PREFIX, ''), poster: s.cover ?? '', group: plainCategory(cat) }))
   return { groups: [...new Set(movies.map((m) => m.group))], movies }
 }
 
@@ -94,7 +97,8 @@ let pulling: Promise<ShowList> | null = null
 export async function showList(cfg: XtreamConfig): Promise<ShowList> {
   const saved = await readFile(FILE, 'utf8').then((t) => JSON.parse(t) as ShowList).catch(() => null)
   const age = Date.now() - ((await stat(FILE).catch(() => null))?.mtimeMs ?? 0)
-  if (saved && age < MAX_AGE_MS) return saved
+  // A list saved before title ids existed is pulled again (and still served if that pull fails).
+  if (saved && age < MAX_AGE_MS && saved.movies[0]?.titleId) return saved
   pulling ??= (async () => {
     const [cats, series] = await Promise.all([
       apiGet<Category[]>(cfg, 'get_series_categories'),
@@ -102,7 +106,7 @@ export async function showList(cfg: XtreamConfig): Promise<ShowList> {
     ])
     const list = buildShowList(cats, series)
     if (!list.movies.length) throw new Error('no shows')
-    await writeFile(FILE, JSON.stringify(list))
+    await writeAtomic(FILE, list)
     return list
   })().finally(() => (pulling = null))
   return pulling.catch((e) => {
@@ -116,19 +120,43 @@ interface SeriesInfo {
   episodes?: Record<string, { id: string; episode_num: number | string; title?: string; container_extension?: string; season?: number; info?: { duration_secs?: number | string; movie_image?: string } & ProbedStream }[]>
 }
 
+/** Each series' info, kept in-process: episode copies ask once per language listing, so every episode after a show's first answers at once. */
+const seriesInfos = new Map<number, { at: number; info: Promise<SeriesInfo> }>()
+const SERIES_KEEP_MS = 6 * 3600_000
+
+/** The provider's `get_series_info`, shared by showEpisodes and episodeEntries; a failure is not kept. */
+function seriesInfo(cfg: XtreamConfig, id: number): Promise<SeriesInfo> {
+  const now = Date.now()
+  const hit = seriesInfos.get(id)
+  if (hit && now - hit.at < SERIES_KEEP_MS) return hit.info
+  for (const [k, v] of seriesInfos) if (now - v.at >= SERIES_KEEP_MS) seriesInfos.delete(k)
+  const info = apiGet<SeriesInfo>(cfg, `get_series_info&series_id=${id}`)
+  seriesInfos.set(id, { at: now, info })
+  info.catch(() => seriesInfos.get(id)?.info === info && seriesInfos.delete(id))
+  return info
+}
+
 /** The first of the provider's backdrops (a list, sometimes one string); "" when none. */
 const firstBackdrop = (b: string[] | string | undefined) => String((Array.isArray(b) ? b[0] : b) ?? '').trim()
 /** The first few names of a cast list. */
 const castOf = (c: string | undefined) => String(c ?? '').split(',').map((s) => s.trim()).filter(Boolean).slice(0, 4).join(', ')
 const ratingOf = (r: string | number | undefined) => (Number(r) > 0 ? Number(r).toFixed(1) : '')
 
-/** A show's plot, backdrop, genres, cast and rating, and its episodes in season and episode order. */
-export async function showEpisodes(cfg: XtreamConfig, seriesId: number) {
-  const info = await apiGet<SeriesInfo>(cfg, `get_series_info&series_id=${seriesId}`)
+/** A show's title id by series id, from the show list (`iptv:tv:<id>` for one it lacks). */
+async function showTitleOf(cfg: XtreamConfig): Promise<(id: number) => string> {
+  const byId = new Map((await showList(cfg).catch(() => null))?.movies.map((m) => [m.id, m.titleId]))
+  return (id) => byId.get(id) ?? showTitle('', id)
+}
+
+/** A show's title id, plot, backdrop, genres, cast and rating, and its episodes (each with its title id) in season and episode order. */
+export async function showEpisodes(cfg: XtreamConfig, seriesId: number, show?: string) {
+  const info = await seriesInfo(cfg, seriesId)
+  const titleId = show ?? (await showTitleOf(cfg))(seriesId)
   const episodes = Object.entries(info.episodes ?? {})
     .flatMap(([season, eps]) =>
       eps.map((e) => ({
         id: Number(e.id),
+        titleId: episodeTitle(titleId, Number(e.season ?? season), Number(e.episode_num)),
         season: Number(e.season ?? season),
         episode: Number(e.episode_num),
         // "A+ - Severance (2022) (US) - S01E01 - Good News About Hell" → "Good News About Hell"; empty when untitled.
@@ -143,12 +171,47 @@ export async function showEpisodes(cfg: XtreamConfig, seriesId: number) {
     .filter((e) => e.id > 0)
     .sort((a, b) => a.season - b.season || a.episode - b.episode)
   const i = info.info ?? {}
-  return { plot: String(i.plot ?? '').trim(), backdrop: firstBackdrop(i.backdrop_path), genre: String(i.genre ?? '').trim(), cast: castOf(i.cast), rating: ratingOf(i.rating), episodes }
+  return { titleId, plot: String(i.plot ?? '').trim(), backdrop: firstBackdrop(i.backdrop_path), genre: String(i.genre ?? '').trim(), cast: castOf(i.cast), rating: ratingOf(i.rating), episodes }
+}
+
+/**
+ * Every copy of an episode the provider has, one per language the show is listed in: stream id,
+ * container, its probe, its category and the language that category is in.
+ */
+export async function episodeEntries(cfg: XtreamConfig, show: string, season: number, episode: number) {
+  const lists = (await showList(cfg)).movies.filter((m) => m.titleId === show)
+  const found = await Promise.all(lists.map(async (m) => {
+    const info = await seriesInfo(cfg, m.id).catch(() => null)
+    const e = Object.entries(info?.episodes ?? {}).flatMap(([s, eps]) => eps.filter((e) => Number(e.season ?? s) === season && Number(e.episode_num) === episode))[0]
+    return e && Number(e.id) > 0 ? { id: Number(e.id), ext: e.container_extension || 'mkv', probe: e.info, category: m.group, lang: language(m.group) ?? '' } : null
+  }))
+  return found.filter((e) => e !== null)
 }
 
 interface VodInfo {
   info?: { plot?: string; description?: string; genre?: string; duration_secs?: number | string; rating?: string | number; backdrop_path?: string[] | string; cast?: string; actors?: string; director?: string } & ProbedStream
   movie_data?: { category_id?: string | number }
+}
+
+/**
+ * Title ids for provider ids the app saved before it keyed marks by title (POST /api/app/title-ids):
+ * every film and show maps (an `iptv:` id when it has no TMDB id); an episode maps only when its show's
+ * episode list could be read, so the app retries the rest later. An unreadable catalogue fails the call
+ * (the app retries) rather than mapping films to `iptv:` ids the app would keep for good.
+ */
+export async function titleIds(cfg: XtreamConfig, req: { movies?: number[]; shows?: number[]; episodes?: { series: number; id: number }[] }) {
+  const [film, show] = await Promise.all([filmTitleOf(cfg), showTitleOf(cfg)])
+  const episodes: Record<string, string> = {}
+  for (const series of new Set(req.episodes?.map((e) => e.series))) {
+    const wanted = new Set(req.episodes!.filter((e) => e.series === series).map((e) => e.id))
+    const eps = (await showEpisodes(cfg, series, show(series)).catch(() => null))?.episodes ?? []
+    for (const e of eps) if (wanted.has(e.id)) episodes[e.id] = e.titleId
+  }
+  return {
+    movies: Object.fromEntries((req.movies ?? []).map((id) => [id, film(id)])),
+    shows: Object.fromEntries((req.shows ?? []).map((id) => [id, show(id)])),
+    episodes,
+  }
 }
 
 /** A film's plot, running time (seconds, 0 when unknown), genres, rating, backdrop, cast, director ("" when unknown) and quality labels. */
@@ -162,19 +225,48 @@ export async function movieInfo(cfg: XtreamConfig, vodId: number) {
   const category = stream ? '' : await vodCategoryName(cfg, Number(res.movie_data?.category_id)).catch(() => '')
   const quality = stream ? streamLabels(stream) : categoryLabels(category, info.bitrate)
   const tier = pictureTier((stream ? probedPicture(stream) : claimedPicture(category, info.bitrate)) ?? { width: 0, height: 0 }) ?? ''
+  const titleId = (await filmTitleOf(cfg).catch(() => null))?.(vodId) ?? filmTitle('', vodId)
   return {
+    titleId,
     quality,
     tier,
     /** The tier comes from the category's claim, not the stream: the app measures it on first play. */
     estimated: !stream && tier !== '',
-    plot: String(info.plot || info.description || '').trim(),
     secs: Number(info.duration_secs) || 0,
-    genre: String(info.genre ?? '').trim(),
     rating: ratingOf(info.rating),
     backdrop: firstBackdrop(info.backdrop_path),
-    cast: castOf(info.cast || info.actors),
-    director: String(info.director ?? '').trim(),
+    ...(await filmText(cfg, vodId, titleId, info)),
   }
+}
+
+const textOf = (info: NonNullable<VodInfo['info']>) => ({
+  plot: String(info.plot || info.description || '').trim(),
+  genre: String(info.genre ?? '').trim(),
+  cast: castOf(info.cast || info.actors),
+  director: String(info.director ?? '').trim(),
+})
+
+/**
+ * A film's plot, genres, cast and director in English: TMDB's when it knows the film (the provider's
+ * director is often a studio, its plot in the listing's language), else an English listing's, else this one's.
+ */
+async function filmText(cfg: XtreamConfig, vodId: number, titleId: string, info: NonNullable<VodInfo['info']>) {
+  const own = textOf(info)
+  const tmdb = titleId.match(/^movie:(\d+)$/)?.[1]
+  const t = tmdb ? await tmdbTitle('movie', tmdb).catch(() => null) : null
+  if (t) {
+    return {
+      plot: t.plot || own.plot,
+      genre: t.genres.slice(0, 2).join(', ') || own.genre,
+      cast: t.cast.slice(0, 4).map((c) => c.name).join(', ') || own.cast,
+      director: t.directors.map((d) => d.name).join(', ') || own.director,
+    }
+  }
+  const entries = await filmEntries(cfg, titleId).catch(() => [])
+  const english = (e: { category: string }) => /^EN\b/.test(e.category)
+  const en = !entries.some((e) => e.id === vodId && english(e)) && entries.find(english)
+  const other = en ? (await apiGet<VodInfo>(cfg, `get_vod_info&vod_id=${en.id}`).catch(() => null))?.info : null
+  return other ? textOf(other) : own
 }
 
 // Films the app measured while they played (resolution, codec, HDR, frame rate, audio), by VOD id:
@@ -191,6 +283,6 @@ export async function saveMeasuredFilm(id: number, m: Measured): Promise<boolean
   const all = await measuredFilms()
   if (JSON.stringify(all[String(id)]) === JSON.stringify(m)) return false
   all[String(id)] = m
-  await writeFile(MEASURED, JSON.stringify(all))
+  await writeAtomic(MEASURED, all)
   return true
 }

@@ -7,13 +7,17 @@ import * as app from './api/app'
 import epg from './api/epg'
 import playlist from './api/playlist'
 import proxy from './api/proxy'
+import { accessToken } from './api/_trakt'
 
 type Handler = (req: Request) => Promise<Response>
 type Entry = { body: Blob; init: ResponseInit; fresh: number; stale: number }
 
-const routes: Record<string, Handler> = { '/api/epg': epg, '/api/playlist': playlist, '/api/app/channels': app.channels, '/api/app/guide': app.guide, '/api/app/movies': app.movies, '/api/app/shows': app.shows, '/api/app/episodes': app.episodes, '/api/app/movie': app.movie, '/api/app/vod-search': app.vodSearch }
+const routes: Record<string, Handler> = { '/api/epg': epg, '/api/playlist': playlist, '/api/app/channels': app.channels, '/api/app/guide': app.guide, '/api/app/movies': app.movies, '/api/app/shows': app.shows, '/api/app/episodes': app.episodes, '/api/app/movie': app.movie, '/api/app/vod-search': app.vodSearch, '/api/app/copies': app.copies, '/api/app/title': app.title, '/api/app/search': app.search, '/api/app/person': app.person, '/api/app/subtitles': app.subtitles, '/api/app/subtitle': app.subtitle }
 const cache = new Map<string, Entry>()
 const building = new Map<string, Promise<Entry>>()
+
+/** Forgets the kept answers whose URL [drop] matches. */
+const forget = (drop: (u: URL) => boolean) => { for (const url of cache.keys()) if (drop(new URL(url))) cache.delete(url) }
 
 const ms = (cacheControl: string, directive: string) =>
   Number(cacheControl.match(new RegExp(`\\b${directive}=(\\d+)`))?.[1] ?? 0) * 1000
@@ -55,6 +59,9 @@ export async function handle(req: Request): Promise<Response> {
   if (pathname === '/api/app/version') return app.version(req)
   if (pathname === '/api/app/apk') return app.apk(req)
   if (pathname === '/api/app/dm') return app.dm(req)
+  // Answers from its own memory, with ETag/304.
+  if (pathname === '/api/app/library') return app.library(req)
+  if (pathname === '/api/app/history') return app.history(req)
   if (pathname === '/api/app/quality' && req.method === 'POST') {
     const res = await app.quality(req)
     // A stored reading can reorder feeds, so the channel lists rebuild on their next request.
@@ -65,12 +72,21 @@ export async function handle(req: Request): Promise<Response> {
   if (pathname === '/api/app/bitrate' && req.method === 'POST') return app.bitrate(req)
   if (pathname === '/api/app/film-quality' && req.method === 'POST') {
     const res = await app.filmQuality(req)
-    // A new reading changes that film's info: its cached copy goes.
+    // A new reading changes that film's info and copies: their cached answers go.
     const body = res.ok ? await res.clone().json() : null
-    if (body?.stored) for (const url of cache.keys()) { const u = new URL(url); if (u.pathname === '/api/app/movie' && u.searchParams.get('id') === String(body.id)) cache.delete(url) }
+    if (body?.stored) forget((u) => (u.pathname === '/api/app/movie' && u.searchParams.get('id') === String(body.id)) || u.pathname === '/api/app/copies')
     return res
   }
   if (pathname === '/api/app/events' && req.method === 'POST') return app.events(req)
+  if (pathname === '/api/app/trakt') return app.traktSignIn(req)
+  if (pathname === '/api/app/trakt-history' && req.method === 'POST') return app.traktHistory(req)
+  if (pathname === '/api/app/title-ids' && req.method === 'POST') return app.titleIds(req)
+  if (pathname === '/api/app/rd-infringing' && req.method === 'POST') {
+    const res = await app.rdInfringing(req)
+    // A refused torrent leaves every title's copies at once.
+    if (res.ok && (await res.clone().json()).stored) forget((u) => u.pathname === '/api/app/copies')
+    return res
+  }
   const handler = routes[pathname]
   if (handler) return cached(req, handler)
   const file = Bun.file(dist + (pathname === '/' ? '/index.html' : pathname))
@@ -78,6 +94,8 @@ export async function handle(req: Request): Promise<Response> {
 }
 
 if (import.meta.main) {
+  // Keeps a Trakt sign-in alive across restarts: reading the token schedules its refresh.
+  accessToken().catch(() => {})
   Bun.serve({
     hostname: '127.0.0.1',
     port: Number(process.env.PORT ?? 8790),

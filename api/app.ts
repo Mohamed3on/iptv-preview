@@ -9,24 +9,49 @@
 // POST /api/app/quality?t=TOKEN — a quality reading the app measured while playing.
 // POST /api/app/bitrate?t=TOKEN — a feed's bitrate the app measured while playing.
 // POST /api/app/events?t=TOKEN — what happened while watching, for later analysis.
+// POST /api/app/title-ids?t=TOKEN — title ids for the provider ids the app saved marks under.
+// GET /api/app/library?t=TOKEN — Movies & Shows: titles and rows (see _library.ts).
+// GET /api/app/history?t=TOKEN — Trakt and Letterboxd marks, Watchlist, Recommended, followed shows' next episodes.
+// GET /api/app/copies?t=TOKEN&title=… — every copy of a film or episode, for the stick to rank.
+// POST /api/app/rd-infringing?t=TOKEN — torrents Real-Debrid refused, left out of copies from then on.
+// GET /api/app/subtitles?t=TOKEN&title=…&hash=…&size=…&name=… — English and Arabic subtitles for the copy playing.
+// GET /api/app/subtitle?t=TOKEN&id=… — one of them as SRT.
+// GET /api/app/title, /api/app/search, /api/app/person ?t=TOKEN — title pages, search and person pages (see _browse.ts).
+// GET /api/app/trakt?t=TOKEN — the Trakt sign-in; POST it { action: connect | cancel | disconnect } to change it.
+// POST /api/app/trakt-history?t=TOKEN — { title, at } a film or episode finished on the stick, for Trakt history.
 import { appendFile, mkdir, rename, stat } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import { buildAppFeed, buildAppGuide } from './_app-feed.js'
+import { iptvCopies, markInfringing, titleCopies } from './_copies.js'
 import { appTokenOk, backupConfigFromEnv, configFromEnv, fetchCuratedChannels, saneFps, savedVodChannels, withBackupFeeds, withCompetitionGroups } from './_lib.js'
+import { currentHistory, historyAnswer } from './_history.js'
+import { providerLibrary, servedLibrary } from './_library.js'
 import { addBitrate, mergeAppReading, saveQuality, type Meta } from './_quality.js'
 import { QUALITY } from './quality-cache.js'
 import { curatedGuide } from './epg.js'
-import { movieInfo, saveMeasuredFilm, showEpisodes, showList } from './_shows.js'
-import { blurayMovies, searchVod } from './_vod.js'
+import { movieInfo, saveMeasuredFilm, showEpisodes, showList, titleIds as mapTitleIds } from './_shows.js'
+import { subtitleFile, subtitlesFor } from './_subtitles.js'
+import { knownTitles, personTitles, searchTitles, titleDetails } from './_browse.js'
+import { loadScores, ranked, scoreTitles } from './_scores.js'
+import { parseTitleId, tmdbFacts, tmdbGet } from './_tmdb.js'
+import * as trakt from './_trakt.js'
+import { blurayMovies, filmTitleOf, searchVod } from './_vod.js'
 
 const forbidden = () => new Response('Forbidden', { status: 403 })
+
+/** [body] as JSON with its ETag, or an empty 304 when If-None-Match names it (Cloudflare weakens it, W/, when it compresses). */
+function etagged(req: Request, body: string, etag = `"${Bun.hash(body).toString(36)}"`): Response {
+  const headers = { ETag: etag, 'Cache-Control': 'private, no-cache' }
+  if (req.headers.get('if-none-match')?.replace(/^W\//, '') === etag) return new Response(null, { status: 304, headers })
+  return new Response(body, { headers: { ...headers, 'Content-Type': 'application/json' } })
+}
 
 export async function channels(req: Request): Promise<Response> {
   if (!appTokenOk(req.url)) return forbidden()
   try {
     const cfg = configFromEnv()
     const backup = backupConfigFromEnv()
-    const feed = buildAppFeed(cfg, withCompetitionGroups(await withBackupFeeds(await fetchCuratedChannels(cfg, false), backup)), backup)
+    const feed = buildAppFeed(cfg, withCompetitionGroups(await withBackupFeeds(await fetchCuratedChannels(cfg, false), backup)), backup, process.env.REAL_DEBRID_TOKEN)
     return Response.json(feed, {
       headers: { 'Cache-Control': 'private, s-maxage=1800, stale-while-revalidate=3600' },
     })
@@ -131,9 +156,9 @@ export async function bitrate(req: Request): Promise<Response> {
 }
 
 // POST /api/app/events?t=TOKEN — a batch of what happened while watching (tunes and their time to
-// picture, stalls, rebuffers, feed switches, busy/wrong-route/offline). Appended to a capped log on
+// picture, stalls, rebuffers, feed switches, busy/wrong-route/offline; a film's copy failovers, step-downs, offers and trials). Appended to a capped log on
 // the box for later analysis: which feeds actually hold up, and real zap times.
-const EVENT_TYPES = new Set(['tune', 'stall', 'rebuffer', 'failover', 'problem'])
+const EVENT_TYPES = new Set(['tune', 'stall', 'rebuffer', 'failover', 'problem', 'stepdown', 'offer', 'trial'])
 const EVENTS_MAX_BYTES = 20 * 1024 * 1024
 export async function events(req: Request): Promise<Response> {
   if (!appTokenOk(req.url)) return forbidden()
@@ -156,9 +181,9 @@ export async function movies(req: Request): Promise<Response> {
   if (!appTokenOk(req.url)) return forbidden()
   try {
     const cfg = configFromEnv()
-    const vod = await savedVodChannels(cfg)
+    const [vod, titleOf] = await Promise.all([savedVodChannels(cfg), filmTitleOf(cfg).catch(() => null)])
     // The 1080p Blu-ray row follows the 4K groups: films with no 4K copy.
-    const movies = [...vod.map((m) => ({ id: m.streamId, name: m.name, poster: m.logo, group: m.group, ext: m.vodExt ?? 'mp4' })), ...(await blurayMovies(cfg).catch(() => []))]
+    const movies = [...vod.map((m) => ({ id: m.streamId, titleId: titleOf?.(m.streamId) ?? `iptv:${m.streamId}`, name: m.name, poster: m.logo, group: m.group, ext: m.vodExt ?? 'mp4' })), ...(await blurayMovies(cfg).catch(() => []))]
     return Response.json(
       {
         groups: [...new Set(movies.map((m) => m.group))],
@@ -206,7 +231,8 @@ export async function movie(req: Request): Promise<Response> {
   const id = Number(new URL(req.url).searchParams.get('id'))
   if (!Number.isInteger(id) || id <= 0) return new Response('Bad id', { status: 400 })
   try {
-    return Response.json(await movieInfo(configFromEnv(), id), {
+    const info = await movieInfo(configFromEnv(), id)
+    return Response.json({ ...info, ...(await tmdbFacts(info.titleId)) }, {
       headers: { 'Cache-Control': 'private, s-maxage=604800, stale-while-revalidate=604800' },
     })
   } catch (e) {
@@ -220,10 +246,193 @@ export async function episodes(req: Request): Promise<Response> {
   const id = Number(new URL(req.url).searchParams.get('id'))
   if (!Number.isInteger(id) || id <= 0) return new Response('Bad id', { status: 400 })
   try {
-    return Response.json(await showEpisodes(configFromEnv(), id), {
+    const show = await showEpisodes(configFromEnv(), id)
+    return Response.json({ ...show, ...(await tmdbFacts(show.titleId)) }, {
       headers: { 'Cache-Control': 'private, s-maxage=21600, stale-while-revalidate=86400' },
     })
   } catch (e) {
     return new Response(e instanceof Error ? e.message : 'upstream error', { status: 502 })
   }
+}
+
+// GET /api/app/library?t=TOKEN — the Movies & Shows library the nightly job builds (see _library.ts), held in
+// memory; a request whose If-None-Match names the current ETag gets an empty 304.
+export async function library(req: Request): Promise<Response> {
+  if (!appTokenOk(req.url)) return forbidden()
+  try {
+    // The provider's rows are cut and sorted like the built library's, so the fallback stays small.
+    const { body, etag } = await servedLibrary(async () => ranked(await providerLibrary(configFromEnv()), scoreTitles(await loadScores())))
+    return etagged(req, body, etag)
+  } catch (e) {
+    return new Response(e instanceof Error ? e.message : 'upstream error', { status: 502 })
+  }
+}
+
+// GET /api/app/history?t=TOKEN&shows=tv:N:sSeE@ms,… — the owner's history (see _history.ts): marks from Trakt and
+// Letterboxd, the Watchlist and Recommended rows, and the next episode of each followed show ([shows]: the stick's
+// own, the episode each last finished and when). Read again when over 10 minutes old; ETag/304 like the library.
+export async function history(req: Request): Promise<Response> {
+  if (!appTokenOk(req.url)) return forbidden()
+  try {
+    const local = new URL(req.url).searchParams.get('shows')?.split(',').filter(Boolean) ?? []
+    return etagged(req, JSON.stringify(await historyAnswer(await currentHistory(), local, await knownTitles())))
+  } catch (e) {
+    return new Response(e instanceof Error ? e.message : 'upstream error', { status: 502 })
+  }
+}
+
+// POST /api/app/title-ids?t=TOKEN — { movies?: [vodId], shows?: [seriesId], episodes?: [{ series, id }] } to
+// { movies: { vodId: titleId }, shows: { seriesId: titleId }, episodes: { episodeId: titleId } }: the one-time
+// move of the app's resume and watched marks from provider ids to title ids (see _shows.ts titleIds).
+export async function titleIds(req: Request): Promise<Response> {
+  if (!appTokenOk(req.url)) return forbidden()
+  const r = (await req.json().catch(() => null)) as { movies?: unknown; shows?: unknown; episodes?: unknown } | null
+  const id = (v: unknown) => Number.isInteger(v) && (v as number) > 0 && (v as number) <= 2e9
+  const list = (v: unknown, ok: (x: any) => boolean) => v === undefined || (Array.isArray(v) && v.length <= 5000 && v.every(ok))
+  const eps = r?.episodes as { series: number; id: number }[] | undefined
+  if (!r || !list(r.movies, id) || !list(r.shows, id) || !list(eps, (e) => e && id(e.series) && id(e.id)) || new Set(eps?.map((e) => e.series)).size > 100) {
+    return new Response('Bad ids', { status: 400 })
+  }
+  try {
+    return Response.json(await mapTitleIds(configFromEnv(), { movies: r.movies as number[], shows: r.shows as number[], episodes: eps }), {
+      headers: { 'Cache-Control': 'no-store' },
+    })
+  } catch (e) {
+    return new Response(e instanceof Error ? e.message : 'upstream error', { status: 502 })
+  }
+}
+
+// GET /api/app/copies?t=TOKEN&title=TITLE_ID — every copy of a film or episode, IPTV copies and Real-Debrid
+// candidates, with what each is (see _copies.ts); the stick ranks them. Kept an hour once both sources
+// answered (Torrentio's cached flags change).
+const COPY_TITLE = /^(?:movie:\d+|iptv:\d+|(?:tv|iptv:tv):\d+:s\d+e\d+)$/
+export async function copies(req: Request): Promise<Response> {
+  if (!appTokenOk(req.url)) return forbidden()
+  const title = new URL(req.url).searchParams.get('title') ?? ''
+  if (!COPY_TITLE.test(title)) return new Response('Bad title', { status: 400 })
+  try {
+    const c = await titleCopies(title, iptvCopies(configFromEnv(), title))
+    const settled = c.sources.iptv === 'ok' && c.sources.rd === 'ok'
+    return Response.json(c, { headers: { 'Cache-Control': settled ? 'private, s-maxage=3600, stale-while-revalidate=86400' : 'no-store' } })
+  } catch (e) {
+    return new Response(e instanceof Error ? e.message : 'upstream error', { status: 502 })
+  }
+}
+
+// POST /api/app/rd-infringing?t=TOKEN — { hashes: [infoHash] } Real-Debrid refused here (451): no title
+// offers them again for 60 days.
+export async function rdInfringing(req: Request): Promise<Response> {
+  if (!appTokenOk(req.url)) return forbidden()
+  const hashes = ((await req.json().catch(() => null)) as { hashes?: unknown } | null)?.hashes
+  if (!Array.isArray(hashes) || !hashes.length || hashes.length > 200 || !hashes.every((h) => typeof h === 'string' && /^[0-9a-f]{40}$/i.test(h))) {
+    return new Response('Bad hashes', { status: 400 })
+  }
+  return Response.json({ stored: await markInfringing(hashes) }, { headers: { 'Cache-Control': 'no-store' } })
+}
+
+// GET /api/app/subtitles?t=TOKEN&title=TITLE_ID&hash=OSHASH&size=BYTES&name=RELEASE — English, then Arabic, subtitles for a
+// film or episode, best first for the copy playing (its OpenSubtitles hash and release name; see _subtitles.ts).
+export async function subtitles(req: Request): Promise<Response> {
+  if (!appTokenOk(req.url)) return forbidden()
+  const q = new URL(req.url).searchParams
+  const title = q.get('title') ?? ''
+  const hash = q.get('hash') ?? ''
+  const size = Number(q.get('size') ?? 0)
+  if (!COPY_TITLE.test(title)) return new Response('Bad title', { status: 400 })
+  if (!/^(?:[0-9a-f]{16})?$/.test(hash) || !Number.isSafeInteger(size) || size < 0) return new Response('Bad hash or size', { status: 400 })
+  const { imdb } = await tmdbFacts(title)
+  const ep = parseTitleId(title)
+  const answer = imdb ? await subtitlesFor(ep?.season != null ? `${imdb}:${ep.season}:${ep.episode}` : imdb, hash, size, (q.get('name') ?? '').slice(0, 300)) : { status: 'none', subs: [] }
+  return Response.json(answer, { headers: { 'Cache-Control': 'no-store' } })
+}
+
+// GET /api/app/subtitle?t=TOKEN&id=ID — a subtitle file from /api/app/subtitles, as UTF-8 SRT; 429 when today's downloads are spent.
+export async function subtitle(req: Request): Promise<Response> {
+  if (!appTokenOk(req.url)) return forbidden()
+  const id = new URL(req.url).searchParams.get('id') ?? ''
+  if (!/^(?:os)?\d{1,12}$/.test(id)) return new Response('Bad id', { status: 400 })
+  try {
+    const srt = await subtitleFile(id)
+    if (srt === 'quota') return new Response('No subtitles today', { status: 429 })
+    return new Response(srt, { headers: { 'Content-Type': 'application/x-subrip; charset=utf-8', 'Cache-Control': 'no-store' } })
+  } catch (e) {
+    return new Response(e instanceof Error ? e.message : 'upstream error', { status: 502 })
+  }
+}
+
+// GET /api/app/title?t=TOKEN&id=movie:27205|tv:1396 — a title page's TMDB details: plot, backdrop, cast and
+// director, More like this, its score, and a show's episodes when the provider lacks it (see _browse.ts).
+export async function title(req: Request): Promise<Response> {
+  if (!appTokenOk(req.url)) return forbidden()
+  const id = new URL(req.url).searchParams.get('id') ?? ''
+  if (!/^(movie|tv):\d+$/.test(id)) return new Response('Bad id', { status: 400 })
+  try {
+    const t = await titleDetails(configFromEnv(), id)
+    if (!t) return new Response('Unknown title', { status: 404 })
+    return Response.json(t, { headers: { 'Cache-Control': 'private, s-maxage=21600, stale-while-revalidate=86400' } })
+  } catch (e) {
+    return new Response(e instanceof Error ? e.message : 'upstream error', { status: 502 })
+  }
+}
+
+// GET /api/app/search?t=TOKEN&q=… — films and shows for a search: a category word's row or TMDB discover,
+// else TMDB's title search plus the provider's catalogue (see _browse.ts searchTitles).
+export async function search(req: Request): Promise<Response> {
+  if (!appTokenOk(req.url)) return forbidden()
+  const q = (new URL(req.url).searchParams.get('q') ?? '').trim().slice(0, 100)
+  if (!q) return Response.json({ titles: [] })
+  const cfg = configFromEnv()
+  const titles = await searchTitles(q, {
+    known: await knownTitles(),
+    tmdb: process.env.TMDB_TOKEN ? (path) => tmdbGet(path) : undefined,
+    vod: (q) => searchVod(cfg, q, 20),
+  })
+  return Response.json({ titles }, { headers: { 'Cache-Control': 'private, s-maxage=1800, stale-while-revalidate=3600' } })
+}
+
+// GET /api/app/person?t=TOKEN&id=TMDB_PERSON_ID — a person's films and shows, best score first.
+export async function person(req: Request): Promise<Response> {
+  if (!appTokenOk(req.url)) return forbidden()
+  const id = new URL(req.url).searchParams.get('id') ?? ''
+  if (!/^[1-9]\d{0,9}$/.test(id)) return new Response('Bad id', { status: 400 })
+  if (!process.env.TMDB_TOKEN) return new Response('No TMDB', { status: 404 })
+  try {
+    const p = await tmdbGet<{ name?: string; combined_credits?: Parameters<typeof personTitles>[0] }>(`person/${id}?append_to_response=combined_credits`)
+    return Response.json({ name: p.name ?? '', titles: personTitles(p.combined_credits ?? {}, await knownTitles()) }, {
+      headers: { 'Cache-Control': 'private, s-maxage=86400, stale-while-revalidate=604800' },
+    })
+  } catch (e) {
+    return new Response(e instanceof Error ? e.message : 'upstream error', { status: 502 })
+  }
+}
+
+// GET /api/app/trakt?t=TOKEN — the Trakt sign-in as Options show it (see _trakt.ts); POST { action } connects
+// (a new device code), cancels a code or disconnects, and answers the new state.
+export async function traktSignIn(req: Request): Promise<Response> {
+  if (!appTokenOk(req.url)) return forbidden()
+  const headers = { 'Cache-Control': 'no-store' }
+  if (req.method !== 'POST') return Response.json(await trakt.status(), { headers })
+  const action = ((await req.json().catch(() => null)) as { action?: unknown } | null)?.action
+  try {
+    if (action === 'connect') return Response.json(await trakt.connect(), { headers })
+    if (action === 'cancel') trakt.cancel()
+    else if (action === 'disconnect') await trakt.disconnect()
+    else return new Response('Bad action', { status: 400 })
+    return Response.json(await trakt.status(), { headers })
+  } catch (e) {
+    return new Response(e instanceof Error ? e.message : 'upstream error', { status: 502 })
+  }
+}
+
+// POST /api/app/trakt-history?t=TOKEN — { title: movie:N | tv:N:sNeM, at: epoch ms } a play the stick finished: 204 once
+// Trakt has it (a duplicate too), 503 while Trakt isn't signed in and 502 when it fails, so the stick keeps it for later.
+export async function traktHistory(req: Request): Promise<Response> {
+  if (!appTokenOk(req.url)) return forbidden()
+  const r = (await req.json().catch(() => null)) as { title?: unknown; at?: unknown } | null
+  if (!r || typeof r.title !== 'string' || !COPY_TITLE.test(r.title) || !Number.isSafeInteger(r.at) || (r.at as number) < 1.5e12 || (r.at as number) > Date.now() + 864e5) {
+    return new Response('Bad play', { status: 400 })
+  }
+  const result = await trakt.logPlay(r.title, r.at as number)
+  if (result === 'ok') return new Response(null, { status: 204 })
+  return new Response(result === 'off' ? 'Trakt not connected' : 'Trakt failed', { status: result === 'off' ? 503 : 502 })
 }

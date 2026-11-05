@@ -1,0 +1,54 @@
+{
+  "streams": [
+    {
+      "name": "Torrentio\n4k HDR",
+      "title": "Inception 2010 PROPER Bluray 2160p AV1 HDR10 EN/ITA/FR/ES/DE OPUS 5.1-UH [UserHEVC]\n👤 296 💾 8.91 GB ⚙️ 1337x\n🇬🇧 / 🇮🇹 / 🇪🇸 / 🇫🇷 / 🇩🇪",
+      "infoHash": "2849211f150e966ef7924f43aec22727a644e10d",
+      "fileIdx": 0,
+      "behaviorHints": {
+        "bingeGroup": "torrentio|4k|BluRay|av1|10bit|HDR",
+        "filename": "Inception.2010.PROPER.Bluray.2160p.AV1.HDR10.OPUS.5.1-UH.mkv"
+      }
+    },
+    {
+      "name": "Torrentio\n4k DV",
+      "title": "Inception 2010 UHD BluRay 2160p DTS-HD MA 5 1 DV HEVC HYBRID REMUX-FraMeSToR\n👤 40 💾 66.25 GB ⚙️ 1337x",
+      "infoHash": "11f7c6833b905c21985a4ba0912d72a175f505b1",
+      "fileIdx": 0,
+      "behaviorHints": {
+        "bingeGroup": "torrentio|4k|BluRay REMUX|hevc|DV",
+        "filename": "Inception.2010.UHD.BluRay.2160p.DTS-HD.MA.5.1.DV.HEVC.HYBRID.REMUX-FraMeSToR.mkv"
+      }
+    },
+    {
+      "name": "Torrentio\n4k DV | HDR",
+      "title": "Inception 2010 UHD BluRay 2160p HDR10 DV HEVC DTS-HD MA 5.1 x265-E\n👤 40 💾 25.23 GB ⚙️ 1337x",
+      "infoHash": "fa4a45aa220a6b0343817965a47d85f2d192e9b4",
+      "fileIdx": 0,
+      "behaviorHints": {
+        "bingeGroup": "torrentio|4k|BluRay|hevc|10bit|DV|HDR",
+        "filename": "Inception (2010).mkv"
+      }
+    },
+    {
+      "name": "Torrentio\n1080p",
+      "title": "Inception (2010) 1080p BrRip x264 - 1.85GB - YIFY\n👤 41 💾 1.85 GB ⚙️ ThePirateBay",
+      "infoHash": "224bf45881252643dfc2e71abc7b2660a21c68c4",
+      "fileIdx": 3,
+      "behaviorHints": {
+        "bingeGroup": "torrentio|1080p|BRRip|x264",
+        "filename": "Inception.2010.1080p.BrRip.x264.YIFY.mp4"
+      }
+    },
+    {
+      "name": "Torrentio\nTeleSync",
+      "title": "Sinners.2025.1080p.TeleSync.X264.COLLECTiVE\n👤 57 💾 4 GB ⚙️ 1337x",
+      "infoHash": "2dcaeac11e1f78bb162f90104aee7010003f0e3d",
+      "fileIdx": 0,
+      "behaviorHints": {
+        "bingeGroup": "torrentio|TeleSync|x264",
+        "filename": "Sinners.2025.1080p.TeleSync.X264.COLLECTiVE.mp4"
+      }
+    }
+  ]
+}

@@ -11,10 +11,19 @@ import com.mohamed3on.iptv.data.FeedSync
 import com.mohamed3on.iptv.data.Lineup
 import com.mohamed3on.iptv.data.PrefsStore
 import com.mohamed3on.iptv.data.Route
+import com.mohamed3on.iptv.data.LIBRARY_CHECK
 import com.mohamed3on.iptv.data.ResumeStore
+import com.mohamed3on.iptv.data.TitleMigration
+import com.mohamed3on.iptv.data.TraktSync
 import com.mohamed3on.iptv.data.VpnMonitor
 import com.mohamed3on.iptv.data.WatchedStore
 import com.mohamed3on.iptv.data.WatchHistory
+import com.mohamed3on.iptv.player.Capacity
+import com.mohamed3on.iptv.player.CopyChoices
+import com.mohamed3on.iptv.player.FilmCopies
+import com.mohamed3on.iptv.player.Telemetry
+import com.mohamed3on.iptv.data.RealDebrid
+import com.mohamed3on.iptv.player.Setup
 import com.mohamed3on.iptv.system.VoiceFix
 import com.mohamed3on.iptv.update.Updater
 import kotlinx.coroutines.CoroutineScope
@@ -22,8 +31,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import kotlin.time.Duration
+import kotlin.time.Duration.Companion.days
 import kotlin.time.Duration.Companion.seconds
 
 class App : Application(), SingletonImageLoader.Factory {
@@ -38,7 +49,14 @@ class App : Application(), SingletonImageLoader.Factory {
             graph.sync.refresh(Duration.ZERO, Duration.ZERO) // launch refresh; playback never waits on it (R25)
             // The movie library is read once the first tune has had the stick to itself, so Movies opens at once.
             delay(5.seconds)
+            launch { graph.trakt.flush() } // plays finished while the box was out of reach
+            graph.sync.library.loadCached()
+            graph.sync.library.sync(LIBRARY_CHECK)
+            graph.sync.history.loadCached()
+            graph.syncHistory()
             graph.sync.movies.loadCached()
+            withContext(Dispatchers.Main) { graph.setup } // its callbacks land on the main thread too
+            graph.migration.run(graph.sync::titleIds)
         }
         graph.scope.launch { VoiceFix.onceThisBoot(this@App) }
     }
@@ -58,17 +76,55 @@ class AppGraph(context: Context) {
     /** The one HTTP client: feed sync now, Media3's OkHttp data source later. */
     val http = OkHttpClient()
     val prefs = PrefsStore(context.getSharedPreferences("iptv", Context.MODE_PRIVATE))
-    val route = Route(prefs, VpnMonitor(context).active, scope)
+    private val vpnActive = VpnMonitor(context).active
+    val route = Route(prefs, vpnActive, scope)
     val history = WatchHistory(prefs)
     /** Favourites and each group's own channel order. */
     val lineup = Lineup(prefs)
-    /** Where each movie was left (v2). */
-    val resume = ResumeStore(prefs)
+    /** Where each film was left, by title id (the provider-id keys before them, "movies.resume" and co, are left alone). */
+    val resume = ResumeStore(prefs, "titles.movies.resume")
     /** Where each show was left: its episode and place. */
-    val showResume = ResumeStore(prefs, "shows.resume")
+    val showResume = ResumeStore(prefs, "titles.shows.resume")
     /** Films and episodes watched to the end. */
-    val watchedMovies = WatchedStore(prefs, "movies.watched")
-    val watchedEpisodes = WatchedStore(prefs, "shows.watched")
-    val sync = FeedSync(http, BuildConfig.SERVER_URL, BuildConfig.APP_TOKEN, context.filesDir, prefs)
+    val watchedMovies = WatchedStore(prefs, "titles.movies.watched")
+    val watchedEpisodes = WatchedStore(prefs, "titles.shows.watched")
+    /** Each show's episode last finished here, and when: the box follows the shows watched in the last 6 months (U16). */
+    val followed = ResumeStore(prefs, "titles.shows.followed")
+    /** Next episodes taken out of Up next with Menu, by episode title id. */
+    val dismissed = WatchedStore(prefs, "titles.upnext.dismissed")
+    /** Carries the marks saved under provider ids over to title ids, once. */
+    val migration = TitleMigration(prefs, resume, showResume, watchedMovies, watchedEpisodes)
+    /** Typical film bandwidth per source, hour band and route (VPN on or off). */
+    val capacity = Capacity(prefs, vpn = { vpnActive.value })
+    /** Marks, corrections and pins the copy ranker reads. */
+    val copyChoices = CopyChoices(prefs)
+    val sync = FeedSync(http, BuildConfig.SERVER_URL, BuildConfig.APP_TOKEN, context.filesDir, prefs, onEpisodes = migration::adoptEpisodes)
+    /** What the TV, stick and soundbar can show and play; built off the launch path. */
+    val setup by lazy { Setup(context) }
+    /** Events the server keeps for the stick (/api/app/events). */
+    val telemetry by lazy { Telemetry(http, BuildConfig.SERVER_URL, BuildConfig.APP_TOKEN, scope) }
+    /** Trakt through the box: the Options sign-in and finished plays, queued until logged. */
+    val trakt by lazy { TraktSync(http, BuildConfig.SERVER_URL, BuildConfig.APP_TOKEN, prefs, scope) }
+    /** Real-Debrid from the stick's own IP; one instance, so its account list and answers are shared. */
+    val debrid by lazy { RealDebrid(http, { sync.realDebridToken }, onInfringing = ::refused).also { scope.launch { it.readAccount() } } }
+    /** "Real-Debrid premium has ended" shows once an app session. */
+    val premiumEndedShown = java.util.concurrent.atomic.AtomicBoolean()
+    /** Each title's copies, ranked and checked ahead of Play. Touch [setup] on the main thread first. */
+    val films by lazy { FilmCopies(sync::copies, debrid, copyChoices, capacity, { setup.profile.value }, scope) }
+
+    /** The owner's history from the box, telling it the shows finished here in the last 6 months ("tv:N:sSeE@ms"). */
+    suspend fun syncHistory() = sync.history.sync(LIBRARY_CHECK, followed.entries.value
+        .filter { it.episode != null && System.currentTimeMillis() - it.at < 183.days.inWholeMilliseconds }
+        .joinToString(",") { "${it.episode}@${it.at}" }.let { if (it.isEmpty()) "" else "&shows=$it" })
+    private val refusedHashes = mutableSetOf<String>()
+
+    /** A torrent Real-Debrid refused goes to the box (one post for a burst), which drops it from every title's copies. */
+    private fun refused(hash: String) {
+        if (synchronized(refusedHashes) { !refusedHashes.add(hash) || refusedHashes.size > 1 }) return
+        scope.launch {
+            delay(2_000)
+            sync.rdInfringing(synchronized(refusedHashes) { refusedHashes.toList().also { refusedHashes.clear() } })
+        }
+    }
     val updater = Updater(context, http, BuildConfig.SERVER_URL, BuildConfig.APP_TOKEN, scope)
 }

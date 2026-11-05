@@ -1,8 +1,21 @@
 package com.mohamed3on.iptv.ui
 
 import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.Crossfade
+import android.graphics.Bitmap
+import android.graphics.LinearGradient
+import android.graphics.Paint
+import android.graphics.Rect
+import android.graphics.Shader
+import android.util.LruCache
 import androidx.compose.animation.core.tween
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.unit.IntSize
+import coil3.PlatformContext
+import coil3.request.allowHardware
+import coil3.toBitmap
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.BoxScope
@@ -11,7 +24,6 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
-import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.sp
@@ -47,6 +59,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -109,14 +122,40 @@ import com.mohamed3on.iptv.data.MovieInfo
 import androidx.compose.runtime.produceState
 import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.platform.LocalFocusManager
-import com.mohamed3on.iptv.data.Movies
+import com.mohamed3on.iptv.data.Catalog
+import com.mohamed3on.iptv.data.History
+import com.mohamed3on.iptv.data.NextEpisode
+import com.mohamed3on.iptv.data.resume
+import com.mohamed3on.iptv.data.LIBRARY_CHECK
+import com.mohamed3on.iptv.data.LibTitle
+import com.mohamed3on.iptv.data.Person
+import com.mohamed3on.iptv.data.Scored
+import com.mohamed3on.iptv.data.averagesLabel
+import com.mohamed3on.iptv.data.isShow
+import com.mohamed3on.iptv.data.scoreLabel
+import com.mohamed3on.iptv.data.tmdbImage
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.withStyle
 import com.mohamed3on.iptv.data.Resume
+import com.mohamed3on.iptv.data.TitleId
 import com.mohamed3on.iptv.data.SyncError
 import com.mohamed3on.iptv.data.groupLabel
 import com.mohamed3on.iptv.data.movieUrl
 import com.mohamed3on.iptv.data.posterUrl
 import com.mohamed3on.iptv.graph
+import com.mohamed3on.iptv.player.Capacity
+import com.mohamed3on.iptv.system.Check
+import com.mohamed3on.iptv.player.Copy
 import com.mohamed3on.iptv.player.ExoStreamPlayer
+import com.mohamed3on.iptv.player.FilmSession
+import com.mohamed3on.iptv.player.Prepared
+import com.mohamed3on.iptv.player.Support
 import com.mohamed3on.iptv.player.Phase
 import com.mohamed3on.iptv.player.StreamSession
 import com.mohamed3on.iptv.ui.theme.ActionButton
@@ -182,34 +221,56 @@ private val TOP_SCRIM = 120.dp
 /** How far the backdrop sits back behind the rows page's hero. */
 private const val HERO_DIM = 0.35f
 
-/** Which library a screen browses; both share it, a show opening its episodes where a movie plays. */
+/** What plays: a film, or a show's episode (Movies & Shows browses both). */
 enum class LibraryKind(val title: String, val noun: String) {
-    Movies("Movies", "movies"),
+    Movies("Movies & Shows", "films and shows"),
     Shows("Shows", "shows"),
 }
 
-/** The library on screen, for the wording of its search, loading and error states. */
+/** What is on screen: Movies & Shows while browsing; a film or an episode while one plays. */
 internal val LocalLibrary = staticCompositionLocalOf { LibraryKind.Movies }
+
+/** A page over the browsing screen: a title's, or a person's titles. Back takes the top one off. */
+private sealed interface LibraryPage {
+    data class Title(val movie: Movie, val versions: Boolean = false) : LibraryPage
+    data class Cast(val person: Person) : LibraryPage
+}
+
+/** Pages kept under the top one, so Back lands where each was left; past this the oldest goes. */
+private const val MAX_PAGES = 6
 
 /** A show's episode on screen: the show, its episodes, and which one plays. */
 private data class ShowPlay(val show: Movie, val episodes: List<Episode>, val index: Int) {
     val episode get() = episodes[index]
 }
 
-/** What plays: the movie (for a show, the episode as one) and where it starts (ms), from [url]. */
-private data class Playing(val movie: Movie, val from: Long, val url: String, val show: ShowPlay? = null)
+/**
+ * What plays: the movie (for a show, the episode as one), its [title] id and where it starts (ms);
+ * [fallback] is the library's IPTV copy, for when the box can't say what else there is.
+ */
+private data class Playing(val movie: Movie, val from: Long, val title: TitleId, val fallback: Copy?, val show: ShowPlay? = null)
+
+/** The library's own copy of a film or episode (provider stream [id]); none for a title the provider lacks. */
+private fun libraryCopy(id: Int) = if (id > 0) Copy("iptv:$id", Capacity.Source.Iptv) else null
+
+/** How long focus rests on an Up next card or an episode row before its title is prepared, so passing over one costs nothing. */
+private const val WARM_REST_MS = 400L
+/** Search asks once typing pauses this long. */
+private const val SEARCH_DEBOUNCE_MS = 250L
+/** The next episode is prepared this long after one starts, so its start has the line to itself. */
+private const val NEXT_WARM_MS = 15_000L
 
 /**
- * Movies and Shows: a library over the still-playing live channel, which stops only once something
- * plays (the account allows one stream) and resumes when the screen is left with Back. It opens on
- * Up next (what you were watching, Resume focused) when there is any, else on the library's rows.
- * Any title opens its title page (a film's, or a show's with its episodes); the next episode plays
- * when one ends. [shown] is its entrance (0 → 1); [open] is false while it leaves. [onPlaying] says
- * whether a film or episode is on screen, so the live picture steps aside for it.
+ * Movies & Shows: one title-first library of films and shows over the still-playing live channel, which
+ * stops only once something plays (the account allows one stream) and resumes when the screen is left with
+ * Back. It opens on Up next (what you were watching, Resume focused) when there is any, else on the
+ * library's rows. Any title opens its title page (a film's, or a show's with its episodes), whose cast and
+ * More like this open further pages; the next episode plays when one ends. [shown] is its entrance (0 → 1);
+ * [open] is false while it leaves. [onPlaying] says whether a film or episode is on screen, so the live
+ * picture steps aside for it.
  */
 @Composable
 fun MoviesLayer(
-    kind: LibraryKind,
     feed: Feed,
     session: StreamSession,
     tiles: MultiView<ExoStreamPlayer>,
@@ -219,25 +280,62 @@ fun MoviesLayer(
     onClose: () -> Unit,
 ) {
     val graph = LocalContext.current.graph
-    val sync = if (kind == LibraryKind.Movies) graph.sync.movies else graph.sync.shows
-    val store = if (kind == LibraryKind.Movies) graph.resume else graph.showResume
-    val watchedStore = if (kind == LibraryKind.Movies) graph.watchedMovies else graph.watchedEpisodes
-    val watched by watchedStore.ids.collectAsState()
+    val sync = graph.sync.library
+    /** Where a title was left: films and shows keep separate places (a show's names its episode). */
+    fun storeOf(title: TitleId) = if (title.isShow) graph.showResume else graph.resume
+    val history by graph.sync.history.items.collectAsState()
+    val watchedHere by graph.watchedMovies.ids.collectAsState()
+    // Watched marks: the stick's own, Trakt's and Letterboxd's together (U16).
+    val watched = remember(watchedHere, history) { history?.let { watchedHere + it.watched } ?: watchedHere }
     val library by sync.items.collectAsState()
-    val resume by store.entries.collectAsState()
+    val filmPlaces by graph.resume.entries.collectAsState()
+    val showPlaces by graph.showResume.entries.collectAsState()
+    val resume = remember(filmPlaces, showPlaces) { (filmPlaces + showPlaces).sortedByDescending { it.at } }
+    val episodesHere by graph.watchedEpisodes.ids.collectAsState()
+    val dismissed by graph.dismissed.ids.collectAsState()
+    // Followed shows' next episodes (R31): none for a show part-way through (that episode shows instead), nor one watched here or taken out.
+    val nextUp = remember(history, showPlaces, episodesHere, dismissed) {
+        history?.next.orEmpty().filter { n -> showPlaces.none { it.title == n.show.titleId } && n.episode !in episodesHere && n.episode !in dismissed }
+    }
     val live by rememberUpdatedState(session)
     val scope = rememberCoroutineScope()
     var playing by remember { mutableStateOf<Playing?>(null) }
-    // The title page on screen (a film's or a show's), over the browsing screen.
-    var detail by remember { mutableStateOf<Movie?>(null) }
+    // The pages on screen over the browsing screen, the top one last.
+    val pages = remember { mutableStateListOf<LibraryPage>() }
     var stoppedLive by remember { mutableStateOf(false) }
     var failed by remember { mutableStateOf<SyncError?>(null) }
     var attempt by remember { mutableStateOf(0) }
+    val refreshed = remember { booleanArrayOf(false) }
     LaunchedEffect(attempt) {
         failed = null
+        // The history too: from disk at once, then asked again beside the library.
+        launch {
+            graph.sync.history.loadCached()
+            graph.syncHistory()
+        }
+        // The copy on disk shows at once; the box is asked whether it changed (a 304 when not).
         sync.loadCached()
-        val error = sync.sync(12.hours)
+        val error = sync.sync(LIBRARY_CHECK)
+        refreshed[0] = true
+        Check.log("movies_refreshed", "ok" to (error == null))
         if (sync.items.value == null) failed = error ?: SyncError.Malformed
+        // The provider's films: Play's IPTV copy when the box can't list a film's copies (KTD13).
+        graph.sync.movies.loadCached()
+        graph.sync.movies.sync(12.hours)
+    }
+    fun push(page: LibraryPage) {
+        if (pages.size >= MAX_PAGES) pages.removeAt(0)
+        pages.add(page)
+    }
+    // Old marks move to title ids at launch; if that failed (offline), opening Movies tries again.
+    LaunchedEffect(Unit) { graph.migration.run(graph.sync::titleIds) }
+    // The setup reader is built on the main thread (its callbacks land there) before copies are ranked off it.
+    remember { graph.setup }
+    // While an episode plays, the next one is prepared, so Next episode and the end of this one start at once (KTD13).
+    LaunchedEffect(playing) {
+        val s = playing?.show ?: return@LaunchedEffect
+        delay(NEXT_WARM_MS)
+        s.episodes.getOrNull(s.index + 1)?.titleId?.ifEmpty { null }?.let(graph.films::warm)
     }
 
     // However the layer goes, the live picture comes back.
@@ -261,23 +359,35 @@ fun MoviesLayer(
         val e = episodes[index]
         val name = listOf(show.title.title, e.code, e.title).filter(String::isNotEmpty).joinToString(" · ")
         val movie = Movie(id = e.id, name = name, poster = show.poster, group = show.group, ext = e.ext)
-        return Playing(movie, from, feed.route.episodeUrl(graph.route.effective.value, e.id, e.ext), ShowPlay(show, episodes, index))
+        return Playing(movie, from, e.titleId, libraryCopy(e.id), ShowPlay(show, episodes, index))
     }
+
+    /** An IPTV copy's stream: the container the box named, else the library's. */
+    fun iptvUrl(p: Playing): (Copy) -> String = { c ->
+        val id = c.id.removePrefix("iptv:").toInt()
+        val ext = graph.films.state(p.title).value.answer?.ext(c.id) ?: p.movie.ext
+        if (p.show != null) feed.route.episodeUrl(graph.route.effective.value, id, ext) else feed.route.movieUrl(graph.route.effective.value, id, ext)
+    }
+
+    /** The library's IPTV copy of a film: its own provider id, else the provider's film list's (none for a title it lacks). */
+    fun fallbackOf(movie: Movie) = libraryCopy(movie.id.takeIf { it > 0 } ?: graph.sync.movies.items.value?.findTitle(movie.titleId)?.id ?: 0)
 
     /** A film from its saved place, or from the start. */
     fun playFilm(movie: Movie, fromStart: Boolean) =
-        play(Playing(movie, if (fromStart) 0 else store.startAt(movie), feed.route.movieUrl(graph.route.effective.value, movie.id, movie.ext)))
+        play(Playing(movie, if (fromStart) 0 else graph.resume.startAt(movie.titleId), movie.titleId, fallbackOf(movie)))
 
     /** A show's episode [index], from its saved place or the start. */
     fun playEpisode(show: Movie, episodes: List<Episode>, index: Int, fromStart: Boolean) =
-        play(episode(show, episodes, index, if (fromStart) 0 else store.startAt(show, episodes[index].id)))
+        play(episode(show, episodes, index, if (fromStart) 0 else graph.showResume.startAt(show.titleId, episodes[index].titleId)))
 
     /** Up next's buttons: a film at its place; a show's episode up next (its episodes are kept a while, so this is quick). */
     fun resumeTitle(movie: Movie, fromStart: Boolean) {
-        if (kind == LibraryKind.Movies) return playFilm(movie, fromStart)
+        if (!movie.titleId.isShow) return playFilm(movie, fromStart)
         scope.launch {
-            val eps = graph.sync.episodes(movie.id).getOrNull()?.episodes?.takeIf { it.isNotEmpty() }
-            if (eps == null) detail = movie else playEpisode(movie, eps, upNextIndex(eps, store.find(movie), watched), fromStart)
+            val eps = graph.sync.showOf(movie).getOrNull()?.episodes?.takeIf { it.isNotEmpty() }
+            val seen = graph.watchedEpisodes.ids.value + history?.watched.orEmpty()
+            val place = graph.showResume.find(movie.titleId) ?: nextUp.firstOrNull { it.show.titleId == movie.titleId }?.place()
+            if (eps == null) push(LibraryPage.Title(movie)) else playEpisode(movie, eps, upNextIndex(eps, place, seen), fromStart)
         }
     }
 
@@ -285,7 +395,7 @@ fun MoviesLayer(
     fun nextEpisode(s: ShowPlay?): Boolean {
         val next = s?.takeIf { it.index < it.episodes.lastIndex } ?: return false
         // Continue watching moves on to the next episode even if it is left in its first minute.
-        store.save(next.show, 0, 0, next.episodes[next.index + 1].id, next.episodes[next.index + 1].code)
+        graph.showResume.save(next.show, 0, 0, next.episodes[next.index + 1].titleId, next.episodes[next.index + 1].code)
         playing = episode(next.show, next.episodes, next.index + 1, 0)
         return true
     }
@@ -295,81 +405,157 @@ fun MoviesLayer(
         onPlaying(false)
     }
 
-    CompositionLocalProvider(LocalLibrary provides kind) {
+    // firetv/check.sh (system/Check): the browsing screen is shown (two frames: its rows build a frame late), the
+    // Real-Debrid account's state, and the screen an open target names, once the library is in.
+    LaunchedEffect(library != null) {
+        if (library == null) return@LaunchedEffect
+        repeat(2) { withFrameNanos {} }
+        Check.log("movies_shown", "from" to if (refreshed[0]) "box" else "disk")
+    }
+    LaunchedEffect(Unit) { graph.debrid.status.collect { Check.log("rd", "status" to it) } }
+    val check by Check.open.collectAsState()
+    LaunchedEffect(check, library) {
+        val target = check ?: return@LaunchedEffect
+        val verb = target.substringBefore(':')
+        if (verb == "live") return@LaunchedEffect leave().also { Check.open.value = null }
+        val lib = library ?: return@LaunchedEffect
+        if (verb != "search") Check.open.value = null // MoviesBrowse takes a search
+        if (verb != "play" && playing != null) stopped()
+        pages.clear()
+        val id = target.substringAfter(':')
+        val title = lib.find(id) ?: Movie(id = -1, name = id, group = "", titleId = id)
+        when (verb) {
+            "title", "versions" -> push(LibraryPage.Title(title, versions = verb == "versions"))
+            "play" -> playFilm(title, fromStart = false)
+        }
+    }
+
+    CompositionLocalProvider(LocalLibrary provides LibraryKind.Movies) {
         Box(Modifier.fillMaxSize()) {
             MoviesBrowse(
                 library = library,
                 resume = resume,
-                watched = if (kind == LibraryKind.Movies) watched else emptySet(),
+                history = history,
+                nextUp = nextUp,
+                watched = watched,
                 failed = failed,
                 onRetry = { attempt++ },
-                onRemove = store::remove,
-                active = open && playing == null && detail == null,
-                hidden = playing != null || detail != null,
+                onRemove = {
+                    storeOf(it.titleId).remove(it.titleId)
+                    // Its next episode stays out too, until a later one airs.
+                    history?.next?.firstOrNull { n -> n.show.titleId == it.titleId }?.let { n -> graph.dismissed.mark(n.episode) }
+                },
+                active = open && playing == null && pages.isEmpty(),
+                hidden = playing != null || pages.isNotEmpty(),
                 shown = shown,
-                onOpen = { detail = it },
+                onOpen = { push(LibraryPage.Title(it)) },
                 onResume = { resumeTitle(it, fromStart = false) },
                 onStartOver = { resumeTitle(it, fromStart = true) },
                 onBack = ::leave,
             )
-            detail?.let { title ->
-                key(title) {
-                    val saved = resume.firstOrNull { it.movie.id == title.id }
-                    if (kind == LibraryKind.Movies) FilmPage(
-                        film = title,
-                        resume = saved,
-                        active = open && playing == null,
-                        hidden = playing != null,
-                        onPlay = { fromStart -> playFilm(title, fromStart) },
-                        onBack = { detail = null },
-                    ) else ShowPage(
-                        show = title,
-                        resume = saved,
-                        watched = watched,
-                        active = open && playing == null,
-                        hidden = playing != null,
-                        onPlay = { episodes, i, fromStart -> playEpisode(title, episodes, i, fromStart) },
-                        onBack = { detail = null },
-                    )
+            pages.forEachIndexed { i, page ->
+                key(i, page) {
+                    val top = i == pages.lastIndex
+                    val active = open && playing == null && top
+                    val hidden = playing != null || !top
+                    val back = { pages.removeAt(pages.lastIndex) }
+                    when (page) {
+                        is LibraryPage.Cast -> PersonPage(page.person, watched, active, hidden, onOpen = { push(LibraryPage.Title(it)) }, onBack = { back() })
+                        is LibraryPage.Title -> {
+                            val title = page.movie
+                            val saved = resume.firstOrNull { it.title == title.titleId } ?: nextUp.firstOrNull { it.show.titleId == title.titleId }?.place()
+                            if (!title.titleId.isShow) FilmPage(
+                                film = title,
+                                openVersions = page.versions,
+                                resume = saved,
+                                watched = watched,
+                                active = active,
+                                hidden = hidden,
+                                onPlay = { fromStart -> playFilm(title, fromStart) },
+                                onOpen = { push(LibraryPage.Title(it)) },
+                                onPerson = { push(LibraryPage.Cast(it)) },
+                                onBack = { back() },
+                            ) else ShowPage(
+                                show = title,
+                                resume = saved,
+                                watched = watched,
+                                active = active,
+                                hidden = hidden,
+                                onPlay = { episodes, e, fromStart -> playEpisode(title, episodes, e, fromStart) },
+                                onOpen = { push(LibraryPage.Title(it)) },
+                                onPerson = { push(LibraryPage.Cast(it)) },
+                                onBack = { back() },
+                            )
+                        }
+                    }
                 }
             }
             playing?.let { p ->
                 key(p) {
                     val s = p.show
-                    MoviePlayback(
-                        movie = p.movie,
-                        from = p.from,
-                        url = p.url,
-                        onSave = { pos, dur ->
-                            if (dur > 0 && pos >= dur * 0.95) watchedStore.mark(p.movie.id)
-                            if (s == null) store.save(p.movie, pos, dur) else store.save(s.show, pos, dur, s.episode.id, s.episode.code)
-                        },
-                        onEnded = { if (!nextEpisode(s)) stopped() },
-                        onClose = ::stopped,
-                        onNext = s?.takeIf { it.index < it.episodes.lastIndex }?.let { { nextEpisode(it) } },
-                    )
+                    // Past 90% the play is logged to Trakt, once this play.
+                    val trakt = remember { graph.trakt.play(s?.episode?.titleId ?: p.movie.titleId) }
+                    // The player words its states for a film or an episode.
+                    CompositionLocalProvider(LocalLibrary provides if (s != null) LibraryKind.Shows else LibraryKind.Movies) {
+                        MoviePlayback(
+                            movie = p.movie,
+                            title = p.title,
+                            from = p.from,
+                            fallback = p.fallback,
+                            iptvUrl = iptvUrl(p),
+                            onSave = { pos, dur ->
+                                trakt(pos, dur)
+                                if (dur > 0 && pos >= dur * 0.95) {
+                                    (if (s != null) graph.watchedEpisodes else graph.watchedMovies).mark(s?.episode?.titleId ?: p.movie.titleId)
+                                    // The show is followed from here: its next or newly aired episode comes to Up next (R31).
+                                    if (s != null && graph.followed.find(s.show.titleId)?.episode != s.episode.titleId)
+                                        graph.followed.merge(listOf(s.show.resume(pos, dur, s.episode.titleId, s.episode.code, System.currentTimeMillis())))
+                                }
+                                if (s == null) graph.resume.save(p.movie, pos, dur) else graph.showResume.save(s.show, pos, dur, s.episode.titleId, s.episode.code)
+                            },
+                            onEnded = { if (!nextEpisode(s)) stopped() },
+                            onClose = ::stopped,
+                            onNext = s?.takeIf { it.index < it.episodes.lastIndex }?.let { { nextEpisode(it) } },
+                        )
+                    }
                 }
             }
         }
     }
 }
 
+/** A title the provider doesn't carry, as its saved place names it: no provider id (negative, never asked about), so only its copies play it. */
+private fun placeTitle(r: Resume) =
+    Movie(id = -1 - (r.title.hashCode() and Int.MAX_VALUE), name = listOfNotNull(r.name, r.year?.let { "($it)" }).joinToString(" "), poster = r.poster, group = "", titleId = r.title)
+
 /** A show's episode up next: the one in progress, else the first not yet watched, else the first. */
-private fun upNextIndex(episodes: List<Episode>, resume: Resume?, watched: Set<Int>): Int =
-    episodes.indexOfFirst { it.id == resume?.episode }.takeIf { it >= 0 }
-        ?: episodes.indexOfFirst { it.id !in watched }.takeIf { it >= 0 }
+private fun upNextIndex(episodes: List<Episode>, resume: Resume?, watched: Set<TitleId>): Int =
+    episodes.indexOfFirst { it.titleId == resume?.episode }.takeIf { it >= 0 }
+        ?: episodes.indexOfFirst { it.titleId !in watched }.takeIf { it >= 0 }
         ?: 0
 
-/** A row of the library: one group's titles. [progress] is every saved place, by movie id. */
-private class MovieRow(val key: String, val title: String, val badge: String?, val movies: List<Movie>, val progress: Map<Int, Float>)
+/** A next episode as Up next's place: the show and its episode, nothing played yet ([Resume.at] 0). */
+private fun NextEpisode.place() = Resume(show.titleId, show.title.title, show.poster, show.title.year, 0, 0, 0, episode, label)
 
-/** The library's groups as rows; what is part-way through lives in Up next, not here. */
-private fun rowsOf(library: Movies?, resume: List<Resume>): List<MovieRow> {
+/** A row of the library: one group's titles. [progress] is every saved place, by title id. */
+private class MovieRow(val key: String, val title: String, val badge: String?, val movies: List<Movie>, val progress: Map<TitleId, Float>)
+
+/**
+ * The owner's Watchlist and Recommended (watched titles left out), each only when it has titles (R26), then the library's rows
+ * (trending, new, genres, languages; the provider's groups when TMDB's are missing); what is part-way through lives in Up next, not here.
+ */
+private fun rowsOf(library: Catalog?, resume: List<Resume>, history: History?, watched: Set<TitleId>): List<MovieRow> {
     library ?: return emptyList()
-    val progress = resume.filter { it.dur > 0 }.associate { it.movie.id to it.pos.toFloat() / it.dur }
-    return library.rows.map { (group, movies) ->
-        val label = groupLabel(group)
-        MovieRow("g|$group", label.name, label.badge, movies, progress)
+    val progress = resume.filter { it.dur > 0 }.associate { it.title to it.pos.toFloat() / it.dur }
+    // The library's own card for a title it has (its genres), else the history's.
+    fun own(movies: List<Movie>) = movies.map { library.find(it.titleId) ?: it }
+    val mine = listOfNotNull(
+        history?.watchlist?.takeIf { it.isNotEmpty() }?.let { MovieRow("h|watchlist", "Watchlist", null, own(it), progress) },
+        history?.recommended?.filter { it.titleId !in watched }?.takeIf { it.isNotEmpty() }?.let { MovieRow("h|recommended", "Recommended", null, own(it), progress) },
+    )
+    return mine + library.rows.map { row ->
+        val label = groupLabel(row.name)
+        MovieRow("r|${row.id}", label.name, label.badge, row.movies, progress)
     }
 }
 
@@ -386,9 +572,11 @@ private enum class FocusAt { UpNext, Rows, Search, SearchButton, Other }
  */
 @Composable
 private fun MoviesBrowse(
-    library: Movies?,
+    library: Catalog?,
     resume: List<Resume>,
-    watched: Set<Int>,
+    history: History?,
+    nextUp: List<NextEpisode>,
+    watched: Set<TitleId>,
     failed: SyncError?,
     onRetry: () -> Unit,
     onRemove: (Movie) -> Unit,
@@ -401,9 +589,17 @@ private fun MoviesBrowse(
     onBack: () -> Unit,
 ) {
     val reduced = LocalReducedMotion.current
-    val rows = remember(library, resume) { rowsOf(library, resume) }
-    // Each saved place with its title as the library has it now, newest first.
-    val upNext = remember(library, resume) { if (library == null) emptyList() else resume.map { (library.find(it.movie.id) ?: it.movie) to it } }
+    val rows = remember(library, resume, history, watched) { rowsOf(library, resume, history, watched) }
+    // Each saved place with its title as last played (its provider id, for its episodes and IPTV copy) and as the
+    // library has it now (tier and score), newest first; one played only from Real-Debrid from its own name and poster (R21).
+    // Then followed shows' next episodes, latest aired first: one takes the hero only when nothing is part-way through.
+    val upNext = remember(library, resume, nextUp) {
+        if (library == null) emptyList() else resume.map { r ->
+            val now = library.find(r.title)
+            (r.iptv?.let { if (now != null) it.copy(lib = now.lib, group = now.group) else it } ?: now ?: placeTitle(r)) to r
+        } + nextUp.map { n -> (library.find(n.show.titleId) ?: n.show) to n.place() }
+    }
+    val newShows = remember(nextUp) { nextUp.filter { it.new }.mapTo(HashSet()) { it.show.titleId } }
     var page by remember { mutableStateOf(BrowsePage.UpNext) }
     var beforeSearch by remember { mutableStateOf(BrowsePage.UpNext) }
     // Up next only while there is something to resume.
@@ -469,6 +665,14 @@ private fun MoviesBrowse(
         focused.value = null
         page = beforeSearch
     }
+    // firetv/check.sh's `search:<query>` (system/Check), once the rows are built.
+    val check by Check.open.collectAsState()
+    LaunchedEffect(check, kind) {
+        val q = check?.takeIf { it.startsWith("search:") && kind == 2 }?.removePrefix("search:") ?: return@LaunchedEffect
+        Check.open.value = null
+        if (page != BrowsePage.Search) openSearch()
+        query = q
+    }
 
     val rested = rememberRested(focused)
     val heroInfo = rememberInfo(rested)
@@ -489,7 +693,7 @@ private fun MoviesBrowse(
             }
             .focusGroup(),
     ) {
-        Backdrop(heroInfo?.backdrop, solidFrom = if (shownPage == BrowsePage.UpNext) null else Space.safeY + HERO_HEIGHT, modifier = Modifier.graphicsLayer { alpha = shown().coerceIn(0f, 1f) })
+        Backdrop(backdropOf(rested, heroInfo), solidFrom = if (shownPage == BrowsePage.UpNext) null else Space.safeY + HERO_HEIGHT, modifier = Modifier.graphicsLayer { alpha = shown().coerceIn(0f, 1f) })
         Box(Modifier.fillMaxSize().slideFade(shown, Edge.Bottom, reduced)) {
             when {
                 kind == 1 -> Box(Modifier.padding(top = Space.xxxl)) { Unavailable(content, onRetry) }
@@ -497,6 +701,7 @@ private fun MoviesBrowse(
                 kind != 2 -> {}
                 shownPage == BrowsePage.UpNext -> UpNextPage(
                     entries = upNext,
+                    newShows = newShows,
                     resumeButton = resumeButton,
                     onFocused = { focused.value = it },
                     onResume = onResume,
@@ -563,73 +768,122 @@ private fun rememberRested(focused: State<Movie?>): Movie? {
 }
 
 /**
- * A title's plot, backdrop, runtime, genres and cast: a film's from /api/app/movie, a show's from its
- * episodes call. Both are kept for the app session, so a title seen before answers on its first frame.
+ * A title's plot, backdrop, runtime, genres and cast: TMDB's for a title it knows (/api/app/title, with its
+ * people and More like this), else the provider's (a film's /api/app/movie, a show's episodes call). All are
+ * kept for the app session, so a title seen before answers on its first frame.
  */
 @Composable
 private fun rememberInfo(movie: Movie?): MovieInfo? {
     val sync = LocalContext.current.graph.sync
-    val films = LocalLibrary.current == LibraryKind.Movies
-    val peek = movie?.let { if (films) sync.peekMovieInfo(it.id) else sync.peekShow(it.id)?.info }
-    return produceState(peek, movie?.id, films) {
+    val peek = movie?.let(sync::peekInfo)
+    return produceState(peek, movie?.titleId, movie?.id) {
         val m = movie ?: return@produceState
-        value = (if (films) sync.movieInfo(m.id).getOrNull() else sync.episodes(m.id).getOrNull()?.info) ?: value
+        value = sync.info(m).getOrNull() ?: value
     }.value
 }
+
+/** A title's backdrop: its page's, else the library's (known before the page answers). */
+private fun backdropOf(movie: Movie?, info: MovieInfo?): String? =
+    info?.backdrop?.ifEmpty { null } ?: movie?.lib?.b?.ifEmpty { null }?.let { tmdbImage(it, "w1280") }
 
 /**
  * The focused title's backdrop over the whole screen, darkened from the left and the bottom where text
  * sits; with [solidFrom], it fades to the plain ground there, so rows below sit on ink (and their edge
  * fades, drawn in ink, match it). A new backdrop is loaded before it cross-fades in,
  * so the screen never flashes to ink between titles; a title with none fades to the plain ground.
- * Drawn in its own layer: rows moving over it never repaint the picture.
+ * The scrims are baked into the still ([bakedBackdrop]), so a frame draws one or two pictures and no
+ * offscreen layer: compositing the layered crossfade cost the stick's GPU ~50 ms a frame.
  */
 @Composable
 private fun Backdrop(url: String?, solidFrom: Dp?, modifier: Modifier = Modifier) {
     val context = LocalPlatformContext.current
-    var shownUrl by remember { mutableStateOf<String?>(null) }
+    val topShare = TOP_SCRIM.value / LocalConfiguration.current.screenHeightDp
+    // [shown] fades in over [under] (drawn whole), or, when null, [under] fades out to ink.
+    var shown by remember { mutableStateOf<ImageBitmap?>(null) }
+    var under by remember { mutableStateOf<ImageBitmap?>(null) }
+    val fade = remember { Animatable(1f) }
     val lastSolid = remember { arrayOf(0.dp) }
-    fun request(u: String) = ImageRequest.Builder(context).data(tmdbAt(u, "w1280")).size(BACKDROP_PX.first, BACKDROP_PX.second).build()
     LaunchedEffect(url) {
-        if (url.isNullOrEmpty()) {
-            shownUrl = null
-            return@LaunchedEffect
-        }
-        if (SingletonImageLoader.get(context).execute(request(url)) is SuccessResult) shownUrl = url
+        val next = if (url.isNullOrEmpty()) null else bakedBackdrop(context, url, topShare) ?: return@LaunchedEffect
+        if (next == shown) return@LaunchedEffect
+        under = shown
+        shown = next
+        fade.snapTo(0f)
+        fade.animateTo(1f, tween(BACKDROP_FADE_MS))
+        under = null
     }
     // Up next to the rows: the ground rises from the bottom to [solidFrom].
     val cover = animateFloatAsState(if (solidFrom != null) 1f else 0f, Motion.panel(), label = "cover")
     val solid = solidFrom ?: lastSolid[0]
     if (solidFrom != null) lastSolid[0] = solidFrom
-    Box(modifier.fillMaxSize().graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }.drawBehind { drawRect(Palette.ink) }) {
-        Crossfade(shownUrl, animationSpec = tween(BACKDROP_FADE_MS), label = "backdrop") { u ->
-            if (u != null) AsyncImage(model = request(u), contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
-        }
-        Box(
-            Modifier.fillMaxSize().drawWithCache {
-                val ink = Palette.ink
-                // Dense across the text column (to ~60% of the width), so plot text clears 4.5:1 over a white sky, then off.
-                val left = Brush.horizontalGradient(0f to ink.copy(alpha = 0.94f), 0.6f to ink.copy(alpha = 0.86f), 0.88f to ink.copy(alpha = 0f))
-                val bottom = Brush.verticalGradient(0.4f to ink.copy(alpha = 0f), 1f to ink.copy(alpha = 0.96f))
-                val band = SOLID_BAND.toPx()
-                val topBand = TOP_SCRIM.toPx()
-                val top = Brush.verticalGradient(0f to ink.copy(alpha = 0.7f), 1f to ink.copy(alpha = 0f), startY = 0f, endY = topBand)
-                onDrawBehind {
-                    drawRect(left)
-                    drawRect(bottom)
-                    drawRect(top, size = Size(size.width, topBand))
-                    val c = cover.value.coerceIn(0f, 1f)
-                    // The rows page sets a wider hero over the picture: it sits back further.
-                    if (c > 0f) drawRect(ink, alpha = HERO_DIM * c)
-                    if (c > 0f) {
-                        val y = size.height - (size.height - solid.toPx()) * c
-                        drawRect(Brush.verticalGradient(listOf(ink.copy(alpha = 0f), ink), startY = y - band, endY = y), topLeft = Offset(0f, y - band), size = Size(size.width, band))
-                        drawRect(ink, topLeft = Offset(0f, y), size = Size(size.width, size.height - y))
-                    }
+    Box(
+        modifier.fillMaxSize().drawWithCache {
+            val ink = Palette.ink
+            val band = SOLID_BAND.toPx()
+            val whole = IntSize(size.width.toInt(), size.height.toInt())
+            onDrawBehind {
+                val p = fade.value
+                val top = shown
+                val base = under
+                if (top == null || (base == null && p < 1f)) drawRect(ink)
+                if (top == null) {
+                    base?.let { drawImage(it, dstSize = whole, alpha = 1f - p) }
+                } else {
+                    base?.let { drawImage(it, dstSize = whole) }
+                    drawImage(top, dstSize = whole, alpha = p)
                 }
-            },
-        )
+                val c = cover.value.coerceIn(0f, 1f)
+                // The rows page sets a wider hero over the picture: it sits back further.
+                if (c > 0f) {
+                    drawRect(ink, alpha = HERO_DIM * c)
+                    val y = size.height - (size.height - solid.toPx()) * c
+                    drawRect(Brush.verticalGradient(listOf(ink.copy(alpha = 0f), ink), startY = y - band, endY = y), topLeft = Offset(0f, y - band), size = Size(size.width, band))
+                    drawRect(ink, topLeft = Offset(0f, y), size = Size(size.width, size.height - y))
+                }
+            }
+        },
+    )
+}
+
+/** The last few baked backdrops, so a title page opened from its hero, or Back to the hero, starts at once. */
+private val baked = LruCache<String, ImageBitmap>(3)
+
+/**
+ * [url]'s still at 720p with the scrims drawn in, on the CPU off the main thread, and handed to the GPU
+ * early: ink across the text column, dense enough to the left (~60% of the width) that plot text clears
+ * 4.5:1 over a white sky, then off by 88%; a bottom scrim; a top band ([topShare] of the height) so Search
+ * reads. Null when it doesn't load.
+ */
+private suspend fun bakedBackdrop(context: PlatformContext, url: String, topShare: Float): ImageBitmap? {
+    baked.get(url)?.let { return it }
+    val request = ImageRequest.Builder(context).data(tmdbAt(url, "w1280")).size(BACKDROP_PX.first, BACKDROP_PX.second).allowHardware(false).build()
+    val src = (SingletonImageLoader.get(context).execute(request) as? SuccessResult)?.image?.toBitmap() ?: return null
+    val out = withContext(Dispatchers.Default) {
+        val (w, h) = BACKDROP_PX
+        val bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        val canvas = android.graphics.Canvas(bitmap)
+        // Centre-cropped to the screen's 16:9.
+        val scale = maxOf(w.toFloat() / src.width, h.toFloat() / src.height)
+        val cw = w / scale
+        val ch = h / scale
+        val from = Rect(((src.width - cw) / 2).toInt(), ((src.height - ch) / 2).toInt(), ((src.width + cw) / 2).toInt(), ((src.height + ch) / 2).toInt())
+        canvas.drawColor(Palette.ink.toArgb())
+        canvas.drawBitmap(src, from, Rect(0, 0, w, h), Paint(Paint.FILTER_BITMAP_FLAG))
+        fun ink(alpha: Float) = Palette.ink.copy(alpha = alpha).toArgb()
+        val paint = Paint()
+        fun scrim(x1: Float, y1: Float, colors: IntArray, stops: FloatArray, bottom: Float = h.toFloat()) {
+            paint.shader = LinearGradient(0f, 0f, x1, y1, colors, stops, Shader.TileMode.CLAMP)
+            canvas.drawRect(0f, 0f, w.toFloat(), bottom, paint)
+        }
+        scrim(w.toFloat(), 0f, intArrayOf(ink(0.94f), ink(0.86f), ink(0f)), floatArrayOf(0f, 0.6f, 0.88f))
+        scrim(0f, h.toFloat(), intArrayOf(ink(0f), ink(0.96f)), floatArrayOf(0.4f, 1f))
+        scrim(0f, h * topShare, intArrayOf(ink(0.7f), ink(0f)), floatArrayOf(0f, 1f), bottom = h * topShare)
+        bitmap.setHasAlpha(false)
+        bitmap.prepareToDraw()
+        bitmap.asImageBitmap()
     }
+    baked.put(url, out)
+    return out
 }
 
 /**
@@ -640,6 +894,7 @@ private fun Backdrop(url: String?, solidFrom: Dp?, modifier: Modifier = Modifier
 @Composable
 private fun UpNextPage(
     entries: List<Pair<Movie, Resume>>,
+    newShows: Set<TitleId>,
     resumeButton: FocusRequester,
     onFocused: (Movie) -> Unit,
     onResume: (Movie) -> Unit,
@@ -649,18 +904,24 @@ private fun UpNextPage(
     onDown: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val shows = LocalLibrary.current == LibraryKind.Shows
     // The hero's title: the card focused last in the strip, else the newest.
-    var currentId by remember { mutableStateOf<Int?>(null) }
-    val (movie, saved) = entries.firstOrNull { it.first.id == currentId } ?: entries.first()
-    LaunchedEffect(movie.id) { onFocused(movie) }
+    var currentId by remember { mutableStateOf<String?>(null) }
+    val (movie, saved) = entries.firstOrNull { it.first.key == currentId } ?: entries.first()
+    val shows = movie.titleId.isShow
+    val films = LocalContext.current.graph.films
+    LaunchedEffect(movie.key) {
+        onFocused(movie)
+        // Resume here skips the title page, so the copies are prepared once focus rests on a title (KTD13).
+        delay(WARM_REST_MS)
+        (if (shows) saved.episode else saved.title)?.ifEmpty { null }?.let(films::warm)
+    }
     val info = rememberInfo(movie)
     val focusManager = LocalFocusManager.current
     Column(modifier.fillMaxSize().padding(bottom = Space.safeY), verticalArrangement = Arrangement.Bottom) {
         // A fixed set of lines, so the buttons never move as the hero changes title.
         AnimatedContent(
             targetState = Triple(movie, saved, info),
-            contentKey = { it.first.id to (it.third != null) },
+            contentKey = { it.first.key to (it.third != null) },
             transitionSpec = { fadeIn(Motion.spring(0.3f)) togetherWith fadeOut(Motion.spring(0.2f)) },
             label = "upnext",
         ) { (m, r, i) ->
@@ -670,6 +931,7 @@ private fun UpNextPage(
                 Row(Modifier.padding(top = Space.xs), horizontalArrangement = Arrangement.spacedBy(Space.m), verticalAlignment = Alignment.CenterVertically) {
                     Text(listOfNotNull(r.label, r.takeIf { it.dur > 0 && it.pos > 0 }?.let { leftLabel(it.dur - it.pos) }).joinToString(" · "), style = Type.headline, maxLines = 1)
                     if (r.dur > 0) ProgressLine({ r.pos.toFloat() / r.dur }, Modifier.width(PROGRESS_WIDTH))
+                    if (r.at == 0L && m.titleId in newShows) Text(NEW_EPISODE, style = NEW_STYLE, maxLines = 1)
                 }
                 Text(i?.plot.orEmpty(), style = Type.body, minLines = 3, maxLines = 3, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = Space.xs))
             }
@@ -690,7 +952,8 @@ private fun UpNextPage(
                 },
             horizontalArrangement = Arrangement.spacedBy(Space.m),
         ) {
-            PageButton(if (shows) "Resume ${saved.label.orEmpty()}".trim() else "Resume", { onResume(movie) }, Modifier.focusRequester(resumeButton))
+            // A next episode (no place saved) plays from its start.
+            PageButton(if (shows) "${if (saved.at == 0L) "Play" else "Resume"} ${saved.label.orEmpty()}".trim() else "Resume", { onResume(movie) }, Modifier.focusRequester(resumeButton))
             if (shows) PageButton("Episodes", { onOpen(movie) }) else {
                 PageButton("Start over", { onStartOver(movie) })
                 PageButton("Details", { onOpen(movie) })
@@ -718,7 +981,7 @@ private fun UpNextPage(
                         // The focused title leaves Up next; focus steps to a neighbour first (or up to Resume).
                         AndroidKeyEvent.KEYCODE_MENU -> {
                             if (down && it.nativeKeyEvent.repeatCount == 0) {
-                                val i = entries.indexOfFirst { e -> e.first.id == movie.id }
+                                val i = entries.indexOfFirst { e -> e.first.key == movie.key }
                                 val side = if (i < entries.lastIndex) FocusDirection.Right else FocusDirection.Left
                                 if (entries.size == 1 || !focusManager.moveFocus(side)) runCatching { resumeButton.requestFocus() }
                                 onRemove(movie)
@@ -732,8 +995,8 @@ private fun UpNextPage(
             contentPadding = PaddingValues(start = EDGE, top = Space.m, bottom = Space.s, end = EDGE),
             horizontalArrangement = Arrangement.spacedBy(Space.l),
         ) {
-            items(entries, key = { it.first.id }) { (m, r) ->
-                WideCard(m, r, onFocused = { currentId = m.id }, onClick = { onOpen(m) })
+            items(entries, key = { it.first.key }) { (m, r) ->
+                WideCard(m, r, new = r.at == 0L && m.titleId in newShows, onFocused = { currentId = m.key }, onClick = { onOpen(m) })
             }
         }
     }
@@ -744,13 +1007,8 @@ private fun UpNextPage(
  * From resolution and codec-adjusted bits per pixel (server, api/_quality-labels.ts).
  */
 @Composable
-private fun TierChip(tier: String) {
-    val color = when (tier) {
-        "Reference" -> Palette.good
-        "Great" -> Palette.accent
-        "Soft" -> Palette.warning
-        else -> Palette.textSecondary
-    }
+internal fun TierChip(tier: String) {
+    val color = tierColor(tier)
     Text(
         tier,
         style = Type.caption.copy(color = color, fontWeight = FontWeight.SemiBold),
@@ -759,29 +1017,56 @@ private fun TierChip(tier: String) {
     )
 }
 
-/** A title page's stream line: the tier (when not already in the meta line), the labels, and whether it is only claimed so far. */
+
+private fun tierColor(tier: String) = when (tier) {
+    "Reference" -> Palette.good
+    "Great" -> Palette.textPrimary
+    "Soft" -> Palette.warning
+    else -> Palette.textSecondary
+}
+
+private val SCORE_STYLE = Type.body.copy(color = Palette.textPrimary, fontWeight = FontWeight.SemiBold)
+
+/** A followed show's episode that aired after it was last watched (R31): state, so in the accent, like "Watched". */
+private const val NEW_EPISODE = "New episode"
+private val NEW_STYLE = Type.caption.copy(color = Palette.accent, fontWeight = FontWeight.SemiBold)
+
+/**
+ * Tier (unless [tier] is off: a film's page names the copy's on its Plays line), the net share with Letterboxd's and
+ * IMDb's averages ("60% · ★ 4.5 · IMDb 8.5", R24), then year, running time and genres (the provider's rating when
+ * no average is known); the group when nothing names genres.
+ */
 @Composable
-private fun QualityLine(tier: String?, labels: List<String>, estimated: Boolean) {
-    if (tier == null && labels.isEmpty()) return
+private fun MetaLine(movie: Movie, info: MovieInfo?, extra: String? = null, tier: Boolean = true) {
+    val genre = info?.genre?.split(',', '/')?.map(String::trim)?.filter(String::isNotEmpty)?.take(2)?.joinToString(", ")?.ifEmpty { null }
+    val runtime = info?.secs?.takeIf { it > 0 }?.let { runtimeLabel(it * 1000L) }
+    val scored: Scored? = movie.lib?.takeIf { it.sn != null || it.lb != null || it.ir != null } ?: info
+    val averages = scored?.averagesLabel()
+    val rating = info?.rating?.ifEmpty { null }?.takeIf { averages == null }?.let { "$it/10" }
     Row(horizontalArrangement = Arrangement.spacedBy(Space.m), verticalAlignment = Alignment.CenterVertically) {
-        tier?.let { TierChip(it) }
-        if (labels.isNotEmpty()) Badges(labels)
-        if (estimated) Text("Estimated until it plays", style = Type.caption, maxLines = 1)
+        if (tier) (info?.tier?.ifEmpty { null } ?: movie.lib?.t?.ifEmpty { null })?.let { TierChip(it) }
+        listOfNotNull(scored?.scoreLabel(), averages).joinToString(" · ").ifEmpty { null }?.let { Text(it, style = SCORE_STYLE, maxLines = 1) }
+        movie.title.badge?.let { Badges(remember(it) { listOf(it) }) }
+        val group = movie.group.takeIf { movie.lib != null } ?: groupLabel(movie.group).name
+        Text(listOfNotNull(movie.title.year, extra, runtime, genre ?: group.ifEmpty { null }, rating).joinToString(" · "), style = Type.body, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 
-/** Year, running time, genres and rating; the group when the provider gives no genres. */
-@Composable
-private fun MetaLine(movie: Movie, info: MovieInfo?, extra: String? = null) {
-    val genre = info?.genre?.split(',', '/')?.map(String::trim)?.filter(String::isNotEmpty)?.take(2)?.joinToString(", ")?.ifEmpty { null }
-    val runtime = info?.secs?.takeIf { it > 0 }?.let { runtimeLabel(it * 1000L) }
-    val rating = info?.rating?.ifEmpty { null }?.let { "$it/10" }
-    Row(horizontalArrangement = Arrangement.spacedBy(Space.m), verticalAlignment = Alignment.CenterVertically) {
-        info?.tier?.ifEmpty { null }?.let { TierChip(it) }
-        movie.title.badge?.let { Badges(remember(it) { listOf(it) }) }
-        Text(listOfNotNull(movie.title.year, extra, runtime, genre ?: groupLabel(movie.group).name, rating).joinToString(" · "), style = Type.body, maxLines = 1, overflow = TextOverflow.Ellipsis)
+/** A card's corner: tier in its colour, then the net share ("60%", R19, R24); null when neither is known. */
+private fun cardChip(t: LibTitle): AnnotatedString? {
+    val score = t.scoreLabel()
+    if (t.t.isEmpty() && score == null) return null
+    return buildAnnotatedString {
+        if (t.t.isNotEmpty()) withStyle(SpanStyle(color = tierColor(t.t), fontWeight = FontWeight.SemiBold)) { append(t.t) }
+        if (t.t.isNotEmpty() && score != null) append("  ")
+        if (score != null) append(score)
     }
 }
+
+/** Dark enough under the chip's 13 sp text to clear 4.5:1 over any poster. */
+private val CHIP_GROUND = Color(0xE00B0E12)
+private val CHIP_SHAPE = RoundedCornerShape(Radius.chip)
+private val CHIP_TEXT = Type.caption.copy(color = Palette.textPrimary)
 
 /**
  * A title page's or Up next's button: a quiet translucent pill that turns solid light when focused, so
@@ -821,7 +1106,7 @@ private fun PageButton(label: String, onClick: () -> Unit, modifier: Modifier = 
  * ("S1 E3"), how far along. Focus lifts it with the accent ring, like a poster.
  */
 @Composable
-private fun WideCard(movie: Movie, saved: Resume, onFocused: () -> Unit, onClick: () -> Unit) {
+private fun WideCard(movie: Movie, saved: Resume, new: Boolean, onFocused: () -> Unit, onClick: () -> Unit) {
     val reduced = LocalReducedMotion.current
     val context = LocalPlatformContext.current
     val density = LocalDensity.current
@@ -829,7 +1114,7 @@ private fun WideCard(movie: Movie, saved: Resume, onFocused: () -> Unit, onClick
     val interaction = remember { MutableInteractionSource() }
     var focused by remember { mutableStateOf(false) }
     val lift = animateFloatAsState(if (focused) 1f else 0f, Motion.focus(), label = "lift")
-    val image = info?.backdrop?.ifEmpty { null }?.let { tmdbAt(it, "w780") } ?: movie.poster.ifEmpty { null }?.let(::posterUrl)
+    val image = backdropOf(movie, info)?.let { tmdbAt(it, "w780") } ?: movie.poster.ifEmpty { null }?.let(::posterUrl)
     val request = remember(image) {
         image?.let { with(density) { ImageRequest.Builder(context).data(it).size(WIDE.width.roundToPx(), WIDE.height.roundToPx()).crossfade(POSTER_FADE_MS).build() } }
     }
@@ -865,6 +1150,7 @@ private fun WideCard(movie: Movie, saved: Resume, onFocused: () -> Unit, onClick
         // The name and progress read over any picture.
         Box(Modifier.fillMaxSize().drawBehind { drawRect(Brush.verticalGradient(0.4f to Color.Transparent, 1f to Color(0xE6000000))) })
         Column(Modifier.align(Alignment.BottomStart).padding(horizontal = Space.s, vertical = Space.s), verticalArrangement = Arrangement.spacedBy(Space.xs)) {
+            if (new) Text(NEW_EPISODE, style = NEW_STYLE, maxLines = 1)
             Text(listOfNotNull(movie.title.title, saved.label).joinToString(" · "), style = Type.caption.copy(color = Palette.textPrimary), maxLines = 1, overflow = TextOverflow.Ellipsis)
             if (saved.dur > 0) ProgressLine({ saved.pos.toFloat() / saved.dur })
         }
@@ -879,7 +1165,7 @@ private fun WideCard(movie: Movie, saved: Resume, onFocused: () -> Unit, onClick
 private fun Hero(movie: Movie?, info: MovieInfo?, resume: List<Resume>, placeholder: String, modifier: Modifier) {
     AnimatedContent(
         targetState = movie to info,
-        contentKey = { it.first?.id to (it.second != null) },
+        contentKey = { it.first?.key to (it.second != null) },
         transitionSpec = { fadeIn(Motion.spring(0.3f)) togetherWith fadeOut(Motion.spring(0.2f)) using SizeTransform(clip = false) },
         modifier = modifier,
         label = "hero",
@@ -892,7 +1178,7 @@ private fun Hero(movie: Movie?, info: MovieInfo?, resume: List<Resume>, placehol
             Text(m.title.title, style = Type.display, maxLines = 1, overflow = TextOverflow.Ellipsis)
             // A show also says which episode it is on: "S1 E3 · 40 min left".
             val left = remember(m, resume) {
-                resume.firstOrNull { it.movie.id == m.id }?.let { r ->
+                resume.firstOrNull { it.title == m.titleId }?.let { r ->
                     listOfNotNull(r.label, r.takeIf { it.dur > 0 && it.pos > 0 }?.let { leftLabel(it.dur - it.pos) }).joinToString(" · ").ifEmpty { null }
                 }
             }
@@ -911,29 +1197,12 @@ private fun runtimeLabel(ms: Long): String {
     return if (min >= 60) "${min / 60} h ${min % 60} min" else "$min min"
 }
 
-/**
- * Rows of posters. The focused row rises to the top of the list; within a row the focused card keeps a
- * card's width from either edge. Each row comes back to the card last focused in it, and the screen to
- * the card focused last ([focus] restores it). Up and Down move a row at a time on purpose, scrolling the
- * next row in first, so a row above the screen is never skipped for a button; Up from the first row is [onTop].
- */
+/** A row's scroll: the focused card keeps a card's width from either edge, so the next one always shows. */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun Rows(rows: List<MovieRow>, watched: Set<Int>, focus: FocusRequester, active: Boolean, onFocused: (Movie) -> Unit, onOpen: (Movie) -> Unit, onTop: () -> Unit) {
+private fun rememberKeepClear(): BringIntoViewSpec {
     val density = LocalDensity.current
-    val scope = rememberCoroutineScope()
-    val first = remember { FocusRequester() }
-    // The card each row was left on, for a row built again after scrolling far away.
-    val columns = remember { HashMap<String, Int>() }
-    val rowFocus = remember { HashMap<String, FocusRequester>() }
-    var focusedRow by remember { mutableStateOf(-1) }
-    val pivot = remember(density) {
-        val top = with(density) { (CARD_TOP + FADE).toPx() }
-        object : BringIntoViewSpec {
-            override fun calculateScrollDistance(offset: Float, size: Float, containerSize: Float) = offset - top
-        }
-    }
-    val keepClear = remember(density) {
+    return remember(density) {
         val margin = with(density) { (CARD.width + Space.l).toPx() }
         object : BringIntoViewSpec {
             override fun calculateScrollDistance(offset: Float, size: Float, containerSize: Float): Float {
@@ -947,6 +1216,31 @@ private fun Rows(rows: List<MovieRow>, watched: Set<Int>, focus: FocusRequester,
             }
         }
     }
+}
+
+/**
+ * Rows of posters. The focused row rises to the top of the list; within a row the focused card keeps a
+ * card's width from either edge. Each row comes back to the card last focused in it, and the screen to
+ * the card focused last ([focus] restores it). Up and Down move a row at a time on purpose, scrolling the
+ * next row in first, so a row above the screen is never skipped for a button; Up from the first row is [onTop].
+ */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun Rows(rows: List<MovieRow>, watched: Set<TitleId>, focus: FocusRequester, active: Boolean, onFocused: (Movie) -> Unit, onOpen: (Movie) -> Unit, onTop: () -> Unit) {
+    val density = LocalDensity.current
+    val scope = rememberCoroutineScope()
+    val first = remember { FocusRequester() }
+    // The card each row was left on, for a row built again after scrolling far away.
+    val columns = remember { HashMap<String, Int>() }
+    val rowFocus = remember { HashMap<String, FocusRequester>() }
+    var focusedRow by remember { mutableStateOf(-1) }
+    val pivot = remember(density) {
+        val top = with(density) { (CARD_TOP + FADE).toPx() }
+        object : BringIntoViewSpec {
+            override fun calculateScrollDistance(offset: Float, size: Float, containerSize: Float) = offset - top
+        }
+    }
+    val keepClear = rememberKeepClear()
     // The card a title page was opened from (row key, movie id). Back lands on it explicitly.
     val list = rememberLazyListState()
     val back = remember { FocusRequester() }
@@ -1018,7 +1312,7 @@ private fun Rows(rows: List<MovieRow>, watched: Set<Int>, focus: FocusRequester,
 
 @Composable
 private fun PosterRow(
-    row: MovieRow, watched: Set<Int>, rowFocus: FocusRequester, entry: FocusRequester?, startAt: Int, back: Pair<Int, FocusRequester>?,
+    row: MovieRow, watched: Set<TitleId>, rowFocus: FocusRequester, entry: FocusRequester?, startAt: Int, back: Pair<Int, FocusRequester>?,
     onFocused: (Int, Movie) -> Unit, onOpen: (Movie) -> Unit, onVertical: (down: Boolean) -> Unit,
 ) {
     val own = remember { FocusRequester() }
@@ -1057,14 +1351,15 @@ private fun PosterRow(
                     edge
                 }
                 .focusRequester(rowFocus)
-                .focusRestorer(restore)
+                // Asking for the opened card enters through here: falling back to the entry card would win.
+                .focusRestorer(back?.second ?: restore)
                 .focusGroup(),
             contentPadding = PaddingValues(horizontal = EDGE, vertical = Space.m),
             horizontalArrangement = Arrangement.spacedBy(Space.l),
         ) {
-            itemsIndexed(row.movies, key = { _, m -> m.id }, contentType = { _, _ -> "card" }) { col, movie ->
+            itemsIndexed(row.movies, key = { _, m -> m.key }, contentType = { _, _ -> "card" }) { col, movie ->
                 PosterCard(
-                    movie, row.progress[movie.id], watched = movie.id in watched,
+                    movie, row.progress[movie.titleId], watched = movie.titleId in watched,
                     focus = if (col == at) restore else null,
                     back = back?.takeIf { it.first == movie.id }?.second,
                     onFocused = {
@@ -1137,6 +1432,11 @@ private fun PosterCard(movie: Movie, progress: Float?, watched: Boolean = false,
             ProgressLine({ progress }, Modifier.align(Alignment.BottomCenter).padding(horizontal = Space.s, vertical = Space.s))
         }
         if (watched) WatchedMark(Modifier.align(Alignment.TopEnd).padding(Space.s))
+        val chip = remember(movie.lib) { movie.lib?.let(::cardChip) }
+        if (chip != null) Text(
+            chip, style = CHIP_TEXT, maxLines = 1,
+            modifier = Modifier.align(Alignment.TopStart).padding(Space.xs).background(CHIP_GROUND, CHIP_SHAPE).padding(horizontal = Space.xs + 2.dp, vertical = 1.dp),
+        )
     }
 }
 
@@ -1144,12 +1444,13 @@ private fun monogram(title: String): String =
     title.split(' ').mapNotNull { w -> w.firstOrNull { it.isLetterOrDigit() } }.take(2).joinToString("") { it.uppercase() }
 
 /**
- * Search: the app's keyboard over a grid of matching posters (titles with every typed word). Back
- * leaves it. [focus] restores the result last focused, else the keyboard ([keys]).
+ * Search: the app's keyboard over a grid of matching posters: titles from TMDB and the provider's whole
+ * catalogue, or a genre's or language's ("comedy", "arabic"). Back leaves it. [focus] restores the result
+ * last focused, else the keyboard ([keys]).
  */
 @Composable
 private fun SearchGrid(
-    library: Movies,
+    library: Catalog,
     query: String,
     onQuery: (String) -> Unit,
     focus: FocusRequester,
@@ -1162,16 +1463,15 @@ private fun SearchGrid(
 ) {
     var found by remember { mutableStateOf<List<Movie>?>(null) }
     val sync = LocalContext.current.graph.sync
-    val films = LocalLibrary.current == LibraryKind.Movies
-    // Runs once typing pauses; the last results stay meanwhile. Films search the provider's whole
-    // catalogue (a film with no 4K copy is still found, on its best copy); offline, the library.
+    // Runs once typing pauses (the box keeps each answer, and so does the app); the last results stay
+    // meanwhile. Offline, the library's own titles.
     LaunchedEffect(query, library) {
         if (query.isBlank()) {
             found = null
             return@LaunchedEffect
         }
-        delay(if (films) 300 else 150)
-        found = (if (films) sync.vodSearch(query).getOrNull() else null) ?: withContext(Dispatchers.Default) { library.search(query) }
+        delay(SEARCH_DEBOUNCE_MS)
+        found = sync.search(query).getOrNull() ?: withContext(Dispatchers.Default) { library.search(query) }
     }
     val first = remember { FocusRequester() }
     // A spoken query: once its results are in, the first card takes focus. None leaves focus on the keys.
@@ -1206,10 +1506,10 @@ private fun SearchGrid(
         }
         val list = found
         when {
-            query.isBlank() -> item(key = "hint", span = { GridItemSpan(maxLineSpan) }) { HintLine("Type part of a title") }
+            query.isBlank() -> item(key = "hint", span = { GridItemSpan(maxLineSpan) }) { HintLine("Type a title, or a genre or language such as comedy or Arabic") }
             list == null -> {}
             list.isEmpty() -> item(key = "none", span = { GridItemSpan(maxLineSpan) }) { HintLine("No ${LocalLibrary.current.noun} match “${query.trim()}”") }
-            else -> itemsIndexed(list, key = { _, m -> m.id }) { i, movie ->
+            else -> itemsIndexed(list, key = { _, m -> m.key }) { i, movie ->
                 PosterCard(movie, null, focus = if (i == 0) first else null, back = back?.takeIf { it.first == movie.id }?.second, onFocused = { onFocused(movie) }, onClick = { onPlay(movie) })
             }
         }
@@ -1249,45 +1549,148 @@ private fun Unavailable(focus: FocusRequester, onRetry: () -> Unit) {
     }
 }
 
+/** Every source has answered and no copy plays here: the title stays, its page says so (R21). */
+private val Prepared.unavailable get() = plays == null && rdChecked && ranking != null && answer?.rdPending == false
+
 /**
- * A film's title page: its backdrop over the whole screen and, low-left, everything about it (meta,
- * how much is left, plot, cast, director), then Resume or Play, and Start over once it is started.
- * Back returns to the card it was opened from. [hidden] while the film plays over it.
+ * Where focus goes back to on a title page after a page its cast or More like this opened: the item [opened]
+ * ([back] is on it); [first] is the first More like this card (else the first person), an unavailable title's landing.
+ */
+private class ExtrasFocus {
+    val first = FocusRequester()
+    val back = FocusRequester()
+    var opened by mutableStateOf<String?>(null)
+}
+
+/**
+ * A film's title page: its backdrop over the whole screen and, low-left, everything about it (meta and
+ * scores, how much is left, plot), the copy Play will use, then Resume or Play, Start over once it is
+ * started, and Versions; below, its cast and director and More like this. Opening it prepares the film's
+ * copies (KTD13). A film nothing plays says so instead, focus on More like this (R21). Back returns to
+ * where it was opened from, or first closes Versions. [hidden] while the film, or a page over it, is up.
  */
 @Composable
-private fun FilmPage(film: Movie, resume: Resume?, active: Boolean, hidden: Boolean, onPlay: (fromStart: Boolean) -> Unit, onBack: () -> Unit) {
+private fun FilmPage(
+    film: Movie, openVersions: Boolean, resume: Resume?, watched: Set<TitleId>, active: Boolean, hidden: Boolean,
+    onPlay: (fromStart: Boolean) -> Unit, onOpen: (Movie) -> Unit, onPerson: (Person) -> Unit, onBack: () -> Unit,
+) {
+    val graph = LocalContext.current.graph
     val info = rememberInfo(film)
+    val prepared by remember(film.titleId) { graph.films.state(film.titleId) }.collectAsState()
+    val unavailable = prepared.unavailable
     val primary = remember { FocusRequester() }
+    val versionsButton = remember { FocusRequester() }
+    val noCopy = remember { FocusRequester() }
+    val extras = remember { ExtrasFocus() }
+    val hasExtras = info != null && (info.people.isNotEmpty() || info.more.isNotEmpty())
     var hasFocus by remember { mutableStateOf(false) }
-    LaunchedEffect(active) {
-        if (!active) return@LaunchedEffect
-        repeat(FOCUS_FRAMES) {
-            withFrameNanos {}
-            if (hasFocus) return@LaunchedEffect
-            runCatching { primary.requestFocus() }
+    var versions by remember { mutableStateOf(openVersions) }
+    val closedVersions = remember { booleanArrayOf(false) }
+    LaunchedEffect(Unit) {
+        withFrameNanos {}
+        Check.log("title_shown", "title" to film.titleId)
+    }
+    LaunchedEffect(active, versions, unavailable, hasExtras) {
+        if (!active || versions) return@LaunchedEffect
+        val target = when {
+            closedVersions[0] -> versionsButton
+            extras.opened != null -> extras.back
+            unavailable -> if (hasExtras) extras.first else noCopy
+            else -> primary
+        }
+        closedVersions[0] = false
+        try {
+            repeat(FOCUS_FRAMES) {
+                withFrameNanos {}
+                if (hasFocus) return@LaunchedEffect
+                runCatching { target.requestFocus() }
+            }
+        } finally {
+            extras.opened = null
         }
     }
     val started = resume != null && resume.pos > 0
-    TitleFrame(info?.backdrop, hidden, onBack, onFocus = { hasFocus = it }) {
-        Column(Modifier.align(Alignment.BottomStart).padding(start = EDGE, bottom = Space.xxxl).widthIn(max = PAGE_WIDTH), verticalArrangement = Arrangement.spacedBy(Space.s)) {
-            Text(film.title.title, style = BIG_TITLE, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            MetaLine(film, info)
-            // What the stream is, before it plays.
-            QualityLine(null, info?.quality.orEmpty(), estimated = info?.estimated == true)
-            if (started && resume!!.dur > 0) Row(horizontalArrangement = Arrangement.spacedBy(Space.m), verticalAlignment = Alignment.CenterVertically) {
-                Text(leftLabel(resume.dur - resume.pos), style = Type.headline, maxLines = 1)
-                ProgressLine({ resume.pos.toFloat() / resume.dur }, Modifier.width(PROGRESS_WIDTH))
-            }
-            info?.plot?.ifBlank { null }?.let { Text(it, style = Type.body, maxLines = 6, overflow = TextOverflow.Ellipsis) }
-            info?.cast?.ifBlank { null }?.let { Text("Starring $it", style = Type.caption, maxLines = 1, overflow = TextOverflow.Ellipsis) }
-            info?.director?.substringBefore(",")?.trim()?.ifBlank { null }?.let { Text("Directed by $it", style = Type.caption, maxLines = 1, overflow = TextOverflow.Ellipsis) }
-            Row(Modifier.padding(top = Space.m), horizontalArrangement = Arrangement.spacedBy(Space.m)) {
-                PageButton(if (started) "Resume" else "Play", { onPlay(false) }, Modifier.focusRequester(primary))
-                if (started) PageButton("Start over", { onPlay(true) })
-            }
-        }
+    // The provider's own copy, named on the Plays line when the box can't answer.
+    val iptv = film.id > 0 || graph.sync.movies.items.value?.findTitle(film.titleId) != null
+    TitleFrame(backdropOf(film, info), hidden, onBack, onFocus = { hasFocus = it }) {
+        TitleScroll(
+            main = {
+                Column(Modifier.padding(start = EDGE, bottom = Space.xl).widthIn(max = PAGE_WIDTH), verticalArrangement = Arrangement.spacedBy(Space.s)) {
+                    Text(film.title.title, style = BIG_TITLE, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    // The tier is the copy's that plays, on the Plays line.
+                    MetaLine(film, info, tier = false)
+                    if (started && resume!!.dur > 0) Row(horizontalArrangement = Arrangement.spacedBy(Space.m), verticalAlignment = Alignment.CenterVertically) {
+                        Text(leftLabel(resume.dur - resume.pos), style = Type.headline, maxLines = 1)
+                        ProgressLine({ resume.pos.toFloat() / resume.dur }, Modifier.width(PROGRESS_WIDTH))
+                    }
+                    info?.plot?.ifBlank { null }?.let { Text(it, style = Type.body, maxLines = if (unavailable) 4 else 6, overflow = TextOverflow.Ellipsis) }
+                    // The provider's facts name people only as text; TMDB's are the row below.
+                    if (info?.people.isNullOrEmpty()) {
+                        info?.cast?.ifBlank { null }?.let { Text("Starring $it", style = Type.caption, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                        info?.director?.substringBefore(",")?.trim()?.ifBlank { null }?.let { Text("Directed by $it", style = Type.caption, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                    }
+                    if (unavailable) {
+                        Text("No copy available", style = Type.headline.copy(color = Palette.warning), modifier = Modifier.padding(top = Space.s).focusRequester(noCopy).focusable())
+                        Text("Neither IPTV nor Real-Debrid has one that plays here. It stays in the library for when one turns up.", style = Type.caption)
+                    } else {
+                        // The Plays line may run past the column, across the page's whole width.
+                        PlaysLine(
+                            film.titleId, fallback = if (iptv) listOf("IPTV") + info?.quality.orEmpty() else null,
+                            Modifier.padding(top = Space.s).wrapContentWidth(Alignment.Start, unbounded = true).widthIn(max = LocalConfiguration.current.screenWidthDp.dp - EDGE * 2),
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(Space.m)) {
+                            PageButton(if (started) "Resume" else "Play", { onPlay(false) }, Modifier.focusRequester(primary))
+                            if (started) PageButton("Start over", { onPlay(true) })
+                            PageButton("Versions", { versions = true }, Modifier.focusRequester(versionsButton))
+                        }
+                    }
+                }
+            },
+            extras = { TitleExtras(info, watched, extras, onPerson, onOpen) },
+        )
+        if (versions) VersionsPanel(
+            film.titleId,
+            onPlay = { onPlay(false) },
+            onClose = {
+                closedVersions[0] = true
+                versions = false
+            },
+            modifier = Modifier.align(Alignment.CenterEnd).padding(Space.safe),
+        )
     }
 }
+
+/**
+ * "Plays: Real-Debrid · 4K · HDR10 · E-AC3 5.1 · 14.2 GB" (no video codec) with its tier: the copy Play will open, in a
+ * one-line slot that is there from the start, so nothing moves when it fills in or changes (R29). Until
+ * the ranking and Real-Debrid's check are in, it stays empty; after Play's own wait it names the best
+ * IPTV copy, and the library's ([fallback] labels) when the box can't answer.
+ */
+@Composable
+private fun PlaysLine(title: TitleId, fallback: List<String>?, modifier: Modifier = Modifier) {
+    val films = LocalContext.current.graph.films
+    val p by remember(title) { films.state(title) }.collectAsState()
+    var late by remember { mutableStateOf(false) }
+    LaunchedEffect(title) {
+        delay(FilmSession.WAIT_MS)
+        late = true
+    }
+    val copy = p.plays ?: p.ranking?.takeIf { late }?.copies?.firstOrNull { it.copy.source == Capacity.Source.Iptv && (it.support != Support.Wont || it.pinned) }?.copy
+    val text = when {
+        copy != null -> copyLine(copy, p.answer)
+        p.failed || (late && p.ranking == null) -> fallback?.joinToString(" · ")
+        p.rdChecked && p.ranking != null -> "no copy plays here right now"
+        else -> null
+    }
+    LaunchedEffect(text) { if (text != null) Check.log("plays", "title" to title, "copy" to copy?.id, "src" to (copy?.source ?: "library")) }
+    Row(modifier.height(PLAYS_HEIGHT), horizontalArrangement = Arrangement.spacedBy(Space.s), verticalAlignment = Alignment.CenterVertically) {
+        if (text == null) return@Row
+        copy?.let(::copyTier)?.let { TierChip(it) }
+        Text("Plays: $text", style = Type.body, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    }
+}
+
+private val PLAYS_HEIGHT = 24.dp
 
 /** A title page's ground: the backdrop, Back to leave, focus kept inside; undrawn while [hidden]. */
 @Composable
@@ -1309,6 +1712,189 @@ private fun TitleFrame(backdrop: String?, hidden: Boolean, onBack: () -> Unit, o
     }
 }
 
+/** How much of the cast row's heading shows under a title page's first screen, so Down has somewhere to go. */
+private val PEEK = 40.dp
+
+@OptIn(ExperimentalFoundationApi::class)
+private val NO_SCROLL = object : BringIntoViewSpec {
+    override fun calculateScrollDistance(offset: Float, size: Float, containerSize: Float) = 0f
+}
+
+/**
+ * A title page's two screens: [main] fills the first, bottom-aligned; [extras] (cast, More like this) wait
+ * below it. Focus going down to them scrolls them up whole, and back up to [main] scrolls back; nothing
+ * else scrolls the page, so a row moving its cards never drags it.
+ */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun TitleScroll(main: @Composable BoxScope.() -> Unit, extras: @Composable () -> Unit) {
+    val scroll = rememberScrollState()
+    val scope = rememberCoroutineScope()
+    val inherited = LocalBringIntoViewSpec.current
+    val keepClear = rememberKeepClear()
+    // The extras come a frame after the page, so its opening frame lays out only what shows.
+    var below by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        withFrameNanos {}
+        below = true
+    }
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        val screen = maxHeight
+        CompositionLocalProvider(LocalBringIntoViewSpec provides NO_SCROLL) {
+            Column(Modifier.fillMaxSize().verticalScroll(scroll)) {
+                CompositionLocalProvider(LocalBringIntoViewSpec provides inherited) {
+                    Box(
+                        Modifier.fillMaxWidth().height(screen - PEEK).onFocusChanged { if (it.hasFocus) scope.launch { scroll.animateScrollTo(0) } },
+                        contentAlignment = Alignment.BottomStart,
+                        content = main,
+                    )
+                }
+                Box(Modifier.onFocusChanged { if (it.hasFocus) scope.launch { scroll.animateScrollTo(scroll.maxValue) } }) {
+                    if (below) CompositionLocalProvider(LocalBringIntoViewSpec provides keepClear, content = extras)
+                }
+            }
+        }
+    }
+}
+
+/**
+ * A title's cast and director (OK opens their titles) and More like this, from its TMDB details (R32);
+ * nothing when TMDB has neither. [focus] marks the item opened, so Back lands on it.
+ */
+@Composable
+private fun TitleExtras(info: MovieInfo?, watched: Set<TitleId>, focus: ExtrasFocus, onPerson: (Person) -> Unit, onOpen: (Movie) -> Unit) {
+    val people = info?.people.orEmpty()
+    val more = info?.moreMovies.orEmpty()
+    if (people.isEmpty() && more.isEmpty()) return
+    val focusManager = LocalFocusManager.current
+    // More like this a frame after the cast: laying out both in one frame took ~30 ms on the stick.
+    var posters by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        withFrameNanos {}
+        posters = true
+    }
+    Column(Modifier.padding(bottom = Space.xl), verticalArrangement = Arrangement.spacedBy(Space.s)) {
+        if (people.isNotEmpty()) {
+            Text("Cast and crew", style = Type.headline, maxLines = 1, modifier = Modifier.padding(start = EDGE))
+            LazyRow(
+                Modifier.fillMaxWidth().focusRestorer().focusGroup(),
+                contentPadding = PaddingValues(horizontal = EDGE, vertical = Space.m),
+                horizontalArrangement = Arrangement.spacedBy(Space.m),
+            ) {
+                itemsIndexed(people, key = { _, p -> p.id }) { i, p ->
+                    val first = i == 0 && more.isEmpty()
+                    val back = focus.opened == "p:${p.id}"
+                    PageButton(
+                        if (p.role == "Director" || p.role == "Creator") "${p.name} · ${p.role.lowercase()}" else p.name,
+                        {
+                            focus.opened = "p:${p.id}"
+                            onPerson(p)
+                        },
+                        Modifier.then(if (first) Modifier.focusRequester(focus.first) else Modifier).then(if (back) Modifier.focusRequester(focus.back) else Modifier),
+                    )
+                }
+            }
+        }
+        if (more.isNotEmpty() && posters) {
+            val opened = focus.opened?.removePrefix("m:")
+            PosterRow(
+                remember(more) { MovieRow("more", "More like this", null, more, emptyMap()) },
+                watched = watched,
+                rowFocus = remember { FocusRequester() },
+                entry = focus.first,
+                startAt = 0,
+                back = more.firstOrNull { it.key == opened }?.let { it.id to focus.back },
+                onFocused = { _, _ -> },
+                onOpen = {
+                    focus.opened = "m:${it.key}"
+                    onOpen(it)
+                },
+                onVertical = { down -> if (!down) focusManager.moveFocus(FocusDirection.Up) },
+            )
+        }
+    }
+}
+
+/**
+ * A person's films and shows as a poster grid under their name, best score first (R32). Focus starts on the
+ * first, and comes back to the one opened. Back returns to the title page.
+ */
+@Composable
+private fun PersonPage(person: Person, watched: Set<TitleId>, active: Boolean, hidden: Boolean, onOpen: (Movie) -> Unit, onBack: () -> Unit) {
+    val sync = LocalContext.current.graph.sync
+    var titles by remember { mutableStateOf(sync.peekPerson(person.id)) }
+    var failed by remember { mutableStateOf(false) }
+    var attempt by remember { mutableStateOf(0) }
+    LaunchedEffect(attempt) {
+        failed = false
+        sync.person(person.id).onSuccess { titles = it }.onFailure { failed = titles == null }
+    }
+    val first = remember { FocusRequester() }
+    val back = remember { FocusRequester() }
+    val status = remember { FocusRequester() }
+    var opened by remember { mutableStateOf<String?>(null) }
+    var hasFocus by remember { mutableStateOf(false) }
+    val list = titles
+    // The cards come a frame after the page, as a title page's extras do, so its opening frame stays light.
+    var cards by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        withFrameNanos {}
+        cards = true
+    }
+    LaunchedEffect(active, list != null, failed) {
+        if (!active) return@LaunchedEffect
+        val target = when {
+            list.isNullOrEmpty() -> status
+            opened != null -> back
+            else -> first
+        }
+        repeat(FOCUS_FRAMES) {
+            withFrameNanos {}
+            if (hasFocus) return@LaunchedEffect
+            runCatching { target.requestFocus() }
+        }
+    }
+    TitleFrame(null, hidden, onBack, onFocus = { hasFocus = it }) {
+        LazyVerticalGrid(
+            columns = GridCells.FixedSize(CARD.width),
+            modifier = Modifier.fillMaxSize().focusGroup(),
+            contentPadding = PaddingValues(start = EDGE, end = EDGE, top = Space.safeY, bottom = Space.xxxl),
+            horizontalArrangement = Arrangement.spacedBy(Space.l),
+            verticalArrangement = Arrangement.spacedBy(Space.xl),
+        ) {
+            item(key = "name", span = { GridItemSpan(maxLineSpan) }) {
+                Column(verticalArrangement = Arrangement.spacedBy(Space.xs)) {
+                    Text(person.name, style = BIG_TITLE, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(
+                        when {
+                            !list.isNullOrEmpty() -> "${list.size} films and shows, best rated first"
+                            failed -> "Their films and shows didn’t load. Check that the Fire TV is online."
+                            list != null -> "No films or shows"
+                            else -> "Loading…"
+                        },
+                        style = Type.body, maxLines = 1,
+                        // Something holds focus while there are no cards, so Back still answers.
+                        modifier = if (list.isNullOrEmpty()) Modifier.focusRequester(status).focusable() else Modifier,
+                    )
+                    if (failed) ActionButton("Try again", { attempt++ }, Modifier.padding(top = Space.s))
+                }
+            }
+            if (cards && !list.isNullOrEmpty()) itemsIndexed(list, key = { _, m -> m.key }, contentType = { _, _ -> "card" }) { i, m ->
+                PosterCard(
+                    m, null, watched = m.titleId in watched,
+                    focus = if (i == 0) first else null,
+                    back = if (m.key == opened) back else null,
+                    onFocused = {},
+                    onClick = {
+                        opened = m.key
+                        onOpen(m)
+                    },
+                )
+            }
+        }
+    }
+}
+
 /** A row of a show's episode list: a season's heading, or an episode (its index in the show's list). */
 private sealed interface EpisodeLine {
     data class Season(val season: Int) : EpisodeLine
@@ -1318,19 +1904,35 @@ private sealed interface EpisodeLine {
 /**
  * A show's title page: its backdrop, then on the left everything about it and Resume (or Play) on the
  * episode up next; on the right its episodes by season, each with its still, length and progress.
- * Right enters the list on the episode up next; OK on any plays it from its place. Back returns to
- * where it was opened. [hidden] while an episode plays over it.
+ * Right enters the list on the episode up next; OK on any plays it from its place. Below, its cast and
+ * More like this. The episodes are the provider's when it lists the show, else TMDB's (Real-Debrid plays
+ * those). Back returns to where it was opened. [hidden] while an episode, or a page over it, is up.
+ * [watched] is the films watched (for More like this); episodes keep their own marks.
  */
 @Composable
-private fun ShowPage(show: Movie, resume: Resume?, watched: Set<Int>, active: Boolean, hidden: Boolean, onPlay: (List<Episode>, Int, fromStart: Boolean) -> Unit, onBack: () -> Unit) {
-    val sync = LocalContext.current.graph.sync
-    var data by remember { mutableStateOf(sync.peekShow(show.id)) }
+private fun ShowPage(
+    show: Movie, resume: Resume?, watched: Set<TitleId>, active: Boolean, hidden: Boolean,
+    onPlay: (List<Episode>, Int, fromStart: Boolean) -> Unit, onOpen: (Movie) -> Unit, onPerson: (Person) -> Unit, onBack: () -> Unit,
+) {
+    val graph = LocalContext.current.graph
+    val sync = graph.sync
+    val seenHere by graph.watchedEpisodes.ids.collectAsState()
+    val history by sync.history.items.collectAsState()
+    // The stick's marks with Trakt's (U16).
+    val seen = remember(seenHere, history) { history?.let { seenHere + it.watched } ?: seenHere }
+    val info = rememberInfo(show)
+    val extras = remember { ExtrasFocus() }
+    var data by remember { mutableStateOf(sync.peekShowOf(show)) }
     var failed by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        withFrameNanos {}
+        Check.log("title_shown", "title" to show.titleId)
+    }
     var attempt by remember { mutableStateOf(0) }
     LaunchedEffect(attempt) {
         failed = false
         // Fresh on opening, so a new episode shows; the kept copy (if any) is on screen meanwhile.
-        sync.episodes(show.id, fresh = true).onSuccess { data = it }.onFailure { if (data == null) failed = true }
+        sync.showOf(show, fresh = true).onSuccess { data = it }.onFailure { if (data == null) failed = true }
     }
     val episodes = data?.episodes
     val lines = remember(episodes) {
@@ -1342,75 +1944,116 @@ private fun ShowPage(show: Movie, resume: Resume?, watched: Set<Int>, active: Bo
         }
     }
     var lastPlayed by remember { mutableStateOf<Int?>(null) }
-    val target = episodes?.takeIf { it.isNotEmpty() }?.let { lastPlayed ?: upNextIndex(it, resume, watched) }
+    val target = episodes?.takeIf { it.isNotEmpty() }?.let { lastPlayed ?: upNextIndex(it, resume, seen) }
     val primary = remember { FocusRequester() }
     val targetRow = remember { FocusRequester() }
+    val listFocus = remember { FocusRequester() }
     val list = rememberLazyListState()
     var hasFocus by remember { mutableStateOf(false) }
-    LaunchedEffect(active, target != null, failed) {
-        if (!active) return@LaunchedEffect
-        if (target != null) list.scrollToItem((lines.indexOfFirst { it is EpisodeLine.Item && it.index == target } - 1).coerceAtLeast(0))
+    // The episode whose Versions are open (Menu on its row).
+    var versionsFor by remember { mutableStateOf<Int?>(null) }
+    val hadVersions = remember { booleanArrayOf(false) }
+    // Versions closed: back to the row it was opened from.
+    LaunchedEffect(versionsFor == null) {
+        if (versionsFor != null) hadVersions[0] = true
+        if (versionsFor != null || !hadVersions[0] || !active) return@LaunchedEffect
+        hadVersions[0] = false
         repeat(FOCUS_FRAMES) {
             withFrameNanos {}
             if (hasFocus) return@LaunchedEffect
-            runCatching { primary.requestFocus() }
+            runCatching { listFocus.requestFocus() }
         }
     }
-    TitleFrame(data?.backdrop, hidden, onBack, onFocus = { hasFocus = it }) {
-        Row(Modifier.fillMaxSize().padding(start = EDGE, end = EDGE), horizontalArrangement = Arrangement.spacedBy(Space.xxl)) {
-            Column(Modifier.width(SHOW_INFO_WIDTH).fillMaxHeight().padding(bottom = Space.xxxl), verticalArrangement = Arrangement.spacedBy(Space.s, Alignment.Bottom)) {
-                Text(show.title.title, style = BIG_TITLE, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                val seasons = episodes?.map { it.season }?.distinct()?.size
-                MetaLine(show, data?.info, extra = seasons?.let { if (it == 1) "1 season" else "$it seasons" })
-                data?.plot?.ifBlank { null }?.let { Text(it, style = Type.body, maxLines = 6, overflow = TextOverflow.Ellipsis) }
-                // The episode up next's stream, before it plays.
-                target?.let { episodes[it] }?.let { QualityLine(it.tier.ifEmpty { null }, it.quality, estimated = false) }
-                data?.cast?.ifBlank { null }?.let { Text("Starring $it", style = Type.caption, maxLines = 1, overflow = TextOverflow.Ellipsis) }
-                val next = target?.let { episodes[it] }
-                val started = next != null && resume?.episode == next.id && resume.pos > 0
-                Row(Modifier.padding(top = Space.m), horizontalArrangement = Arrangement.spacedBy(Space.m)) {
-                    when {
-                        next != null -> {
-                            PageButton("${if (started) "Resume" else "Play"} ${next.code}", { onPlay(episodes, target, false) }, Modifier.focusRequester(primary))
-                            if (started) PageButton("Start over", { onPlay(episodes, target, true) })
+    LaunchedEffect(active, target != null, failed) {
+        if (!active) return@LaunchedEffect
+        if (target != null && extras.opened == null) list.scrollToItem((lines.indexOfFirst { it is EpisodeLine.Item && it.index == target } - 1).coerceAtLeast(0))
+        try {
+            repeat(FOCUS_FRAMES) {
+                withFrameNanos {}
+                if (hasFocus) return@LaunchedEffect
+                runCatching { (if (extras.opened != null) extras.back else primary).requestFocus() }
+            }
+        } finally {
+            extras.opened = null
+        }
+    }
+    TitleFrame(backdropOf(show, info) ?: data?.backdrop, hidden, onBack, onFocus = { hasFocus = it }) {
+        TitleScroll(
+            main = {
+                Row(Modifier.fillMaxSize().padding(start = EDGE, end = EDGE), horizontalArrangement = Arrangement.spacedBy(Space.xxl)) {
+                    Column(Modifier.width(SHOW_INFO_WIDTH).fillMaxHeight().padding(bottom = Space.xl), verticalArrangement = Arrangement.spacedBy(Space.s, Alignment.Bottom)) {
+                        Text(show.title.title, style = BIG_TITLE, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                        val seasons = episodes?.map { it.season }?.distinct()?.size
+                        MetaLine(show, info ?: data?.info, extra = seasons?.let { if (it == 1) "1 season" else "$it seasons" })
+                        (info?.plot?.ifBlank { null } ?: data?.plot?.ifBlank { null })?.let { Text(it, style = Type.body, maxLines = 6, overflow = TextOverflow.Ellipsis) }
+                        if (info?.people.isNullOrEmpty()) data?.cast?.ifBlank { null }?.let { Text("Starring $it", style = Type.caption, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                        val next = target?.let { episodes[it] }
+                        // The copy the episode up next plays on, prepared as the page opens; TMDB's episodes have no IPTV copy of their own.
+                        if (next != null) key(next.titleId) { PlaysLine(next.titleId, fallback = if (next.id > 0) listOf("IPTV") + next.quality else null) }
+                        val started = next != null && resume?.episode == next.titleId && resume.pos > 0
+                        Row(Modifier.padding(top = Space.m), horizontalArrangement = Arrangement.spacedBy(Space.m)) {
+                            when {
+                                next != null -> {
+                                    PageButton("${if (started) "Resume" else "Play"} ${next.code}", { onPlay(episodes, target, false) }, Modifier.focusRequester(primary))
+                                    if (started) PageButton("Start over", { onPlay(episodes, target, true) })
+                                }
+                                failed -> PageButton("Try again", { attempt++ }, Modifier.focusRequester(primary))
+                                // Something holds focus meanwhile, so Back still answers.
+                                else -> Text(if (episodes == null) "Loading episodes…" else "No episodes yet", style = Type.body, modifier = Modifier.focusRequester(primary).focusable())
+                            }
                         }
-                        failed -> PageButton("Try again", { attempt++ }, Modifier.focusRequester(primary))
-                        // Something holds focus meanwhile, so Back still answers.
-                        else -> Text(if (episodes == null) "Loading episodes…" else "No episodes yet", style = Type.body, modifier = Modifier.focusRequester(primary).focusable())
+                        if (failed) Text("Episodes didn’t load. Check that the Fire TV is online.", style = Type.caption)
+                    }
+                    if (!episodes.isNullOrEmpty()) LazyColumn(
+                        // On the app's floating material, so the list reads over any backdrop.
+                        Modifier.weight(1f).padding(vertical = Space.safeY).material().edgeFade(Palette.material, top = Space.m, bottom = Space.xl)
+                            .focusRequester(listFocus).focusRestorer(targetRow).focusGroup(),
+                        state = list,
+                        contentPadding = PaddingValues(horizontal = Space.l, vertical = Space.m),
+                        verticalArrangement = Arrangement.spacedBy(Space.xs),
+                    ) {
+                        items(lines, key = { if (it is EpisodeLine.Item) it.episode.id else "s${(it as EpisodeLine.Season).season}" }) { line ->
+                            when (line) {
+                                is EpisodeLine.Season -> Text("Season ${line.season}", style = Type.headline, modifier = Modifier.padding(start = Space.m, top = Space.l, bottom = Space.xs))
+                                is EpisodeLine.Item -> EpisodeRow(
+                                    line.episode,
+                                    watched = line.episode.titleId in seen,
+                                    progress = resume?.takeIf { it.episode == line.episode.titleId && it.dur > 0 && it.pos > 0 }?.let { it.pos.toFloat() / it.dur },
+                                    focus = if (line.index == target) targetRow else null,
+                                    onClick = {
+                                        lastPlayed = line.index
+                                        onPlay(episodes, line.index, false)
+                                    },
+                                    onVersions = { versionsFor = line.index },
+                                )
+                            }
+                        }
                     }
                 }
-                if (failed) Text("Episodes didn’t load. Check that the Fire TV is online.", style = Type.caption)
-            }
-            if (!episodes.isNullOrEmpty()) LazyColumn(
-                // On the app's floating material, so the list reads over any backdrop.
-                Modifier.weight(1f).padding(vertical = Space.safeY).material().edgeFade(Palette.material, top = Space.m, bottom = Space.xl).focusRestorer(targetRow).focusGroup(),
-                state = list,
-                contentPadding = PaddingValues(horizontal = Space.l, vertical = Space.m),
-                verticalArrangement = Arrangement.spacedBy(Space.xs),
-            ) {
-                items(lines, key = { if (it is EpisodeLine.Item) it.episode.id else "s${(it as EpisodeLine.Season).season}" }) { line ->
-                    when (line) {
-                        is EpisodeLine.Season -> Text("Season ${line.season}", style = Type.headline, modifier = Modifier.padding(start = Space.m, top = Space.l, bottom = Space.xs))
-                        is EpisodeLine.Item -> EpisodeRow(
-                            line.episode,
-                            watched = line.episode.id in watched,
-                            progress = resume?.takeIf { it.episode == line.episode.id && it.dur > 0 && it.pos > 0 }?.let { it.pos.toFloat() / it.dur },
-                            focus = if (line.index == target) targetRow else null,
-                            onClick = {
-                                lastPlayed = line.index
-                                onPlay(episodes, line.index, false)
-                            },
-                        )
-                    }
-                }
-            }
+            },
+            extras = { TitleExtras(info, watched, extras, onPerson, onOpen) },
+        )
+        versionsFor?.let { i ->
+            VersionsPanel(
+                episodes!![i].titleId,
+                onPlay = {
+                    lastPlayed = i
+                    onPlay(episodes, i, false)
+                },
+                onClose = { versionsFor = null },
+                modifier = Modifier.align(Alignment.CenterEnd).padding(Space.safe),
+            )
         }
     }
 }
 
-/** An episode: its still (else its number), title, length, how far it was watched, a check once seen. */
+/**
+ * An episode: its still (else its number), title, length, how far it was watched, a check once seen;
+ * focused, the copy it plays on (prepared once focus rests there), and Menu opens its Versions.
+ */
 @Composable
-private fun EpisodeRow(episode: Episode, watched: Boolean, progress: Float?, focus: FocusRequester?, onClick: () -> Unit) {
+private fun EpisodeRow(episode: Episode, watched: Boolean, progress: Float?, focus: FocusRequester?, onClick: () -> Unit, onVersions: () -> Unit) {
+    var focused by remember { mutableStateOf(false) }
     val context = LocalPlatformContext.current
     val density = LocalDensity.current
     val request = remember(episode.image) {
@@ -1422,6 +2065,12 @@ private fun EpisodeRow(episode: Episode, watched: Boolean, progress: Float?, foc
         Modifier
             .fillMaxWidth()
             .then(if (focus != null) Modifier.focusRequester(focus) else Modifier)
+            .onFocusChanged { focused = it.isFocused }
+            .onKeyEvent {
+                if (remoteKey(it.nativeKeyEvent.keyCode) != RemoteKey.Menu) return@onKeyEvent false
+                if (it.type == KeyEventType.KeyDown && episode.titleId.isNotEmpty()) onVersions()
+                true
+            }
             .pressable(onClick)
             .padding(Space.s),
         verticalAlignment = Alignment.CenterVertically,
@@ -1437,9 +2086,24 @@ private fun EpisodeRow(episode: Episode, watched: Boolean, progress: Float?, foc
             Row(horizontalArrangement = Arrangement.spacedBy(Space.s), verticalAlignment = Alignment.CenterVertically) {
                 if (episode.secs > 0) Text("${(episode.secs + 30) / 60} min", style = Type.caption, maxLines = 1)
                 if (watched) Text("Watched", style = Type.caption.copy(color = Palette.accent), maxLines = 1)
+                if (focused && episode.titleId.isNotEmpty()) EpisodePlays(episode.titleId)
             }
         }
     }
+}
+
+/** A focused episode's copy, in its caption line ("Plays: IPTV · 1080p · Menu for versions"); asked for only once focus rests. */
+@Composable
+private fun EpisodePlays(title: TitleId) {
+    val films = LocalContext.current.graph.films
+    val p by produceState<Prepared?>(null, title) {
+        delay(WARM_REST_MS)
+        films.state(title).collect { value = it }
+    }
+    val plays = p?.plays
+    LaunchedEffect(plays) { if (plays != null) Check.log("plays", "title" to title, "copy" to plays.id, "src" to plays.source) }
+    val text = plays?.let { (listOf(sourceName(it.source)) + copyLabels(it).take(2)).joinToString(" · ") } ?: return
+    Text("Plays: $text · Menu for versions", style = Type.caption, maxLines = 1, overflow = TextOverflow.Ellipsis)
 }
 
 private val GENERIC_EPISODE = Regex("""(?i)episode\s*\d+""")

@@ -1,0 +1,12 @@
+[Unit]
+Description=iptv-preview: build the Movies & Shows library from TMDB and the provider's catalogue
+After=iptv-preview.service
+
+[Service]
+Type=oneshot
+User=iptv
+WorkingDirectory=/opt/iptv-preview
+EnvironmentFile=/opt/iptv-preview/.env
+ExecStart=/usr/local/bin/bun scripts/build-library.ts
+# It reads the ~30MB VOD catalogue; the server keeps its own 2G.
+MemoryMax=1G

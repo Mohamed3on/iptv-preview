@@ -8,9 +8,15 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.text.style.TextAlign
 import androidx.media3.common.text.Cue
 import androidx.media3.common.text.CueGroup
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.media3.common.MediaItem
+import com.mohamed3on.iptv.data.FoundSubtitle
+import com.mohamed3on.iptv.player.SubtitleFetch
 import com.mohamed3on.iptv.player.SubtitleOption
 import com.mohamed3on.iptv.player.SubtitleState
 import com.mohamed3on.iptv.player.SubtitleTracks
+import com.mohamed3on.iptv.player.at
 import com.mohamed3on.iptv.player.qualityLine
 import androidx.activity.compose.LocalActivity
 import androidx.compose.animation.AnimatedContent
@@ -72,15 +78,17 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
-import androidx.media3.common.MediaItem
-import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.VideoSize
 import com.mohamed3on.iptv.player.filmReading
 import androidx.tv.material3.Text
 import com.mohamed3on.iptv.data.Movie
 import com.mohamed3on.iptv.graph
+import android.util.Log
 import com.mohamed3on.iptv.player.AudioState
+import com.mohamed3on.iptv.player.BandwidthMeter
+import com.mohamed3on.iptv.player.Capacity
+import com.mohamed3on.iptv.player.FilmLoad
 import com.mohamed3on.iptv.player.AudioTracks
 import com.mohamed3on.iptv.player.FrameRate
 import com.mohamed3on.iptv.player.Phase
@@ -100,7 +108,26 @@ import com.mohamed3on.iptv.ui.theme.bottomScrim
 import com.mohamed3on.iptv.ui.theme.material
 import com.mohamed3on.iptv.ui.theme.reveal
 import com.mohamed3on.iptv.ui.theme.slideFade
+import com.mohamed3on.iptv.KeyCap
+import com.mohamed3on.iptv.data.RdStatus
+import com.mohamed3on.iptv.data.TitleId
+import com.mohamed3on.iptv.player.Copy
+import com.mohamed3on.iptv.player.ExoFilmPlayer
+import com.mohamed3on.iptv.player.FilmPhase
+import com.mohamed3on.iptv.player.FilmSession
+import com.mohamed3on.iptv.player.FilmState
+import com.mohamed3on.iptv.player.Notice
+import com.mohamed3on.iptv.player.OfferKind
+import com.mohamed3on.iptv.player.Place
+import com.mohamed3on.iptv.ui.theme.Radius
+import androidx.compose.foundation.layout.ColumnScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.map
+import com.mohamed3on.iptv.system.Check
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
@@ -135,15 +162,20 @@ private class MovieState {
 }
 
 /**
- * A movie full screen (v2): starts at [from] (ms) and keeps its place every 10s and on the way out.
- * Any key shows the controls (title, progress, elapsed and remaining), which hide 4s after the last
- * key while it plays. OK pauses and plays; Left/Right step 10s (30s once held for a second), ⏪/⏩ 30s,
- * and a run of steps seeks once it stops; Menu has audio and Play from beginning; Back drops a
- * pending seek, else hides the controls, else returns.
+ * A movie full screen (v2): [title] from [from] (ms), on the best copy a [FilmSession] finds (the
+ * prepared copies, else [fallback], the library's IPTV copy, after 4 s), keeping its place every 10s
+ * and on the way out. Any key shows the controls (title, the copy, progress, elapsed and remaining),
+ * which hide 4s after the last key while it plays. OK pauses and plays; Left/Right step 10s (30s once
+ * held for a second), ⏪/⏩ 30s, and a run of steps seeks once it stops; Up (▲) takes the offer in the
+ * corner; Menu has the version, audio, subtitles and Play from beginning; Back drops a pending seek,
+ * else undoes a trial or dismisses the notice, else hides the controls, else returns.
  * [onSave] keeps the place (ms); [onEnded] follows the end, after the place is saved as finished.
  */
 @Composable
-internal fun MoviePlayback(movie: Movie, from: Long, url: String, onSave: (pos: Long, dur: Long) -> Unit, onEnded: () -> Unit, onClose: () -> Unit, onNext: (() -> Unit)? = null) {
+internal fun MoviePlayback(
+    movie: Movie, title: TitleId, from: Long, fallback: Copy?, iptvUrl: (Copy) -> String,
+    onSave: (pos: Long, dur: Long) -> Unit, onEnded: () -> Unit, onClose: () -> Unit, onNext: (() -> Unit)? = null,
+) {
     val context = LocalContext.current
     val graph = context.graph
     val window = LocalActivity.current?.window
@@ -154,7 +186,10 @@ internal fun MoviePlayback(movie: Movie, from: Long, url: String, onSave: (pos: 
     val keep by rememberUpdatedState(onSave)
     // The file's size, for its bitrate in the film's quality reading.
     val fileBytes = remember { java.util.concurrent.atomic.AtomicLong(0) }
-    val exo = remember { moviePlayer(context, graph.http) { fileBytes.compareAndSet(0, it) } }
+    // Its loading bursts teach the typical bandwidth (KTD8); every film is an IPTV copy until Real-Debrid plays.
+    val load = remember { FilmLoad() }
+    val meter = remember { BandwidthMeter(graph.capacity) }
+    val exo = remember { moviePlayer(context, graph.http, load) { fileBytes.compareAndSet(0, it) } }
     // A film's first play measures what it really is (an episode's is known already), for its quality and tier.
     val films = LocalLibrary.current == LibraryKind.Movies
     val ui = remember { MovieState() }
@@ -164,6 +199,18 @@ internal fun MoviePlayback(movie: Movie, from: Long, url: String, onSave: (pos: 
     // The picture keeps its own shape (a 2.39:1 film letterboxed), never stretched to the screen; 0 until known.
     var aspect by remember { mutableFloatStateOf(0f) }
     val focus = remember { FocusRequester() }
+    // One session runs the film over its copies: failover, step-down, offers and trials (U9).
+    val film = remember { ExoFilmPlayer(exo) }
+    val setup = remember { graph.setup }
+    val session = remember {
+        FilmSession(title, null, film, graph.copyChoices, { setup.profile.value }, meter, graph.debrid, iptvUrl, scope, System::currentTimeMillis, graph.telemetry::film)
+    }
+    // A copy with no English subtitles gets them from the box (R30), drawn here over the picture.
+    val fetched = remember {
+        SubtitleFetch(exo, graph.http, graph.sync, scope, { graph.films.state(title).value.answer?.copies?.originalLanguage }) {
+            session.inform(Notice.Subtitles(it.lang))
+        }
+    }
 
     fun save() {
         if (ui.started) keep(exo.currentPosition, exo.duration.coerceAtLeast(0))
@@ -202,35 +249,74 @@ internal fun MoviePlayback(movie: Movie, from: Long, url: String, onSave: (pos: 
                 cues = cueGroup.cues
             }
 
-            override fun onPlayerError(error: PlaybackException) {
-                save()
-                ui.error = true
+            override fun onRenderedFirstFrame() {
+                session.state.value.copy?.let { Check.log("first_frame", "title" to title, "copy" to it.id, "src" to it.source) }
+            }
+
+            // A copy opens (the session has published it): its subtitle lookup starts at once.
+            override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+                val copy = session.state.value.copy ?: return
+                val url = mediaItem?.localConfiguration?.uri?.toString() ?: return
+                fetched.find(title, copy.id, url, graph.films.state(title).value.answer?.name(copy.id).orEmpty())
             }
         }
         exo.addListener(listener)
         val frameRate = window?.let { FrameRate(it, exo, phase, scope) }
-        exo.setMediaItem(MediaItem.fromUri(url), from)
-        exo.playWhenReady = true
-        exo.prepare()
+        session.play(Place(from), load = { graph.films.load(title) }, fallback = fallback, later = graph.films.answers(title))
         onDispose {
             save()
+            session.stop()
+            // Marks, pins and trials made while it played: the title page's Plays line follows them.
+            graph.films.rerank(title)
             frameRate?.detach()
             audio.release()
             subtitles.release()
+            fetched.release()
+            film.release()
             exo.removeListener(listener)
             exo.release()
+            meter.finish().forEach { (bucket, mbps) -> Log.i("IptvCapacity", "${bucket.first} ${bucket.second}: $mbps Mbps") }
         }
+    }
+    LaunchedEffect(Unit) {
+        while (true) {
+            meter.next(System.currentTimeMillis(), load.bytes.get(), load.filling(exo), session.state.value.copy?.source ?: Capacity.Source.Iptv)
+            delay(1_000)
+        }
+    }
+    // Every copy failed: the film isn't available.
+    LaunchedEffect(Unit) {
+        session.state.collect {
+            if (it.phase == FilmPhase.Unavailable && !ui.error) {
+                save()
+                ui.error = true
+            }
+        }
+    }
+    // firetv/check.sh (system/Check): each notice, and the subtitles that switch on (the copy's own or fetched).
+    LaunchedEffect(Unit) {
+        launch { session.state.map { it.notice }.distinctUntilChanged().collect { n -> n?.let { Check.log("notice", "kind" to it.toString().substringBefore('(')) } } }
+        launch { subtitles.state.map { it.selected?.language }.distinctUntilChanged().collect { it?.let { Check.log("subtitle", "lang" to it, "src" to "own") } } }
+        fetched.state.map { it.selected?.lang }.distinctUntilChanged().collect { it?.let { Check.log("subtitle", "lang" to it, "src" to "fetched") } }
+    }
+    // A new network or VPN is a new IP: a Real-Debrid link is tied to the old one (KTD2).
+    LaunchedEffect(Unit) { graph.route.effective.drop(1).collect { session.ipChanged() } }
+    LaunchedEffect(Unit) {
+        graph.debrid.status.first { it == RdStatus.NotPremium }
+        if (graph.premiumEndedShown.compareAndSet(false, true)) session.inform(Notice.PremiumEnded)
     }
     // Home: keep the place and let go of the account's one connection; back in the app, it's the movies.
     LifecycleEventEffect(Lifecycle.Event.ON_STOP) {
         save()
-        exo.stop()
+        session.stop()
         close()
     }
     LaunchedEffect(ui.started) {
         if (!ui.started || !films) return@LaunchedEffect
         delay(FILM_READING_MS) // past the first frames, so the formats have settled
-        filmReading(exo, fileBytes.get())?.let { graph.sync.reportFilmQuality(movie.id, it) }
+        // Only an IPTV copy is the provider's film the box keeps readings for.
+        val id = session.state.value.copy?.takeIf { it.source == Capacity.Source.Iptv }?.id?.removePrefix("iptv:")?.toIntOrNull() ?: return@LaunchedEffect
+        filmReading(exo, fileBytes.get())?.let { graph.sync.reportFilmQuality(id, it) }
     }
     LaunchedEffect(ui.playing) {
         while (ui.playing) {
@@ -240,6 +326,7 @@ internal fun MoviePlayback(movie: Movie, from: Long, url: String, onSave: (pos: 
     }
 
     var panel by remember { mutableStateOf(false) }
+    LaunchedEffect(panel) { session.panel(panel) }
     var kick by remember { mutableStateOf(0) }
     var controls by remember { mutableStateOf(true) }
     var target by remember { mutableStateOf<Long?>(null) }
@@ -266,7 +353,8 @@ internal fun MoviePlayback(movie: Movie, from: Long, url: String, onSave: (pos: 
             position.longValue = exo.currentPosition
             duration.longValue = exo.duration.coerceAtLeast(0)
             buffered.longValue = exo.bufferedPosition
-            quality = qualityLine(exo.videoFormat, exo.audioFormat)
+            // The copy playing, by its source, then what the decoders really show (R29).
+            quality = listOfNotNull(session.state.value.copy?.let { sourceName(it.source) }, qualityLine(exo.videoFormat, exo.audioFormat).ifEmpty { null }).joinToString(" · ")
             delay(250)
         }
     }
@@ -328,6 +416,8 @@ internal fun MoviePlayback(movie: Movie, from: Long, url: String, onSave: (pos: 
                                 commit[0]?.cancel()
                                 target = null
                             }
+                            // A trial's first 30 s go back to the last copy; else a notice is dismissed (KTD11).
+                            session.back() -> {}
                             controls -> controls = false
                             else -> {
                                 save()
@@ -341,11 +431,11 @@ internal fun MoviePlayback(movie: Movie, from: Long, url: String, onSave: (pos: 
                     AndroidKeyEvent.KEYCODE_MEDIA_PLAY_PAUSE, AndroidKeyEvent.KEYCODE_MEDIA_PLAY, AndroidKeyEvent.KEYCODE_MEDIA_PAUSE -> {
                         if (down && native.repeatCount == 0) {
                             if (target != null) seekNow()
-                            else if (code == AndroidKeyEvent.KEYCODE_MEDIA_PLAY) exo.play()
+                            else if (code == AndroidKeyEvent.KEYCODE_MEDIA_PLAY) session.resume()
                             else if (code == AndroidKeyEvent.KEYCODE_MEDIA_PAUSE || exo.playWhenReady) {
-                                exo.pause()
+                                session.pause()
                                 save()
-                            } else exo.play()
+                            } else session.resume()
                         }
                     }
                     AndroidKeyEvent.KEYCODE_DPAD_LEFT, AndroidKeyEvent.KEYCODE_DPAD_RIGHT -> if (down) {
@@ -358,7 +448,9 @@ internal fun MoviePlayback(movie: Movie, from: Long, url: String, onSave: (pos: 
                     }
                     AndroidKeyEvent.KEYCODE_MEDIA_REWIND -> if (down) seekBy(-JUMP_MS)
                     AndroidKeyEvent.KEYCODE_MEDIA_FAST_FORWARD -> if (down) seekBy(JUMP_MS)
-                    AndroidKeyEvent.KEYCODE_DPAD_UP, AndroidKeyEvent.KEYCODE_DPAD_DOWN -> {}
+                    // Up takes the offer or Skip intro showing (▲), unused otherwise.
+                    AndroidKeyEvent.KEYCODE_DPAD_UP -> if (down && native.repeatCount == 0) session.accept()
+                    AndroidKeyEvent.KEYCODE_DPAD_DOWN -> {}
                     else -> return@onKeyEvent false
                 }
                 if (down) kick++
@@ -372,7 +464,18 @@ internal fun MoviePlayback(movie: Movie, from: Long, url: String, onSave: (pos: 
             factory = { SurfaceView(it).apply { keepScreenOn = true }.also(exo::setVideoSurfaceView) },
             modifier = Modifier.align(Alignment.Center).then(if (aspect > 0f) Modifier.aspectRatio(aspect) else Modifier.fillMaxSize()),
         )
-        Subtitles(cues)
+        // A fetched file's line at the player's place, ten times a second; a new timing applies at once.
+        val fetchedState by fetched.state.collectAsState()
+        var line by remember { mutableStateOf<String?>(null) }
+        LaunchedEffect(fetchedState.cues, fetchedState.offset) {
+            val (lines, offset) = fetchedState.cues to fetchedState.offset
+            if (lines.isEmpty()) line = null
+            else while (true) {
+                line = lines.at(exo.currentPosition, offset)
+                delay(100)
+            }
+        }
+        Subtitles(cues, line)
 
         var spinner by remember { mutableStateOf(false) }
         LaunchedEffect(ui.buffering, ui.error) {
@@ -413,24 +516,49 @@ internal fun MoviePlayback(movie: Movie, from: Long, url: String, onSave: (pos: 
             val shown = reveal()
             val audioState by audio.state.collectAsState()
             val subtitleState by subtitles.state.collectAsState()
+            val filmState by session.state.collectAsState()
+            val prepared by remember(title) { graph.films.state(title) }.collectAsState()
             MoviePanel(
                 audioState,
                 subtitleState,
-                onSubtitle = { subtitles.select(it) },
+                fetchedState,
+                version = filmState.copy?.let { copyLine(it, prepared.answer) },
+                onSubtitle = {
+                    fetched.select(null)
+                    subtitles.select(it)
+                },
+                onFetched = fetched::select,
+                onShift = fetched::shift,
                 open = panel,
                 onAudio = { audio.select(it) },
                 onFromStart = {
                     panel = false
                     target = null
                     exo.seekTo(0)
-                    exo.play()
+                    session.resume()
                     position.longValue = 0
                 },
                 // Its place is kept here; leaving then saves nothing, so Continue watching names the next episode.
                 onNext = onNext?.let { next -> { save(); ui.started = false; next() } },
                 modifier = Modifier.slideFade({ shown.value }, Edge.Right, reduced),
-            )
+            ) { first ->
+                Versions(
+                    title, VersionsData(filmState.ranking, filmState.rd, prepared.answer, filmState.copy?.id), first,
+                    onChoose = {
+                        panel = false
+                        session.choose(it.id)
+                    },
+                    onChanged = {
+                        session.rerank()
+                        graph.films.rerank(title)
+                    },
+                    modifier = Modifier.weight(1f),
+                )
+            }
         }
+
+        // The session's notices, one at a time in the corner; never over the controls' text or a panel.
+        if (!panel && !ui.error) NoticeCorner(session.state, Modifier.align(Alignment.TopEnd).padding(Space.safe))
 
         if (ui.error) Unavailable(onBack = { close() })
     }
@@ -506,11 +634,19 @@ private fun PauseMark() {
     }
 }
 
-private enum class PanelPage { Main, Audio, Subtitles }
+private enum class PanelPage { Main, Version, Audio, Subtitles }
 
-/** Menu while a movie plays: audio track (when there is a choice), subtitles (when there are any), a show's Next episode and Play from beginning. */
+/**
+ * Menu while a movie plays: the version playing ([versions], R11), audio track (when there is a choice),
+ * subtitles (when there are any), a show's Next episode and Play from beginning.
+ */
 @Composable
-private fun MoviePanel(audio: AudioState, subtitles: SubtitleState, onSubtitle: (SubtitleOption?) -> Unit, open: Boolean, onAudio: (com.mohamed3on.iptv.player.AudioOption) -> Unit, onFromStart: () -> Unit, onNext: (() -> Unit)?, modifier: Modifier) {
+private fun MoviePanel(
+    audio: AudioState, subtitles: SubtitleState, fetched: SubtitleFetch.State, version: String?, onSubtitle: (SubtitleOption?) -> Unit,
+    onFetched: (FoundSubtitle) -> Unit, onShift: (Long) -> Unit, open: Boolean,
+    onAudio: (com.mohamed3on.iptv.player.AudioOption) -> Unit, onFromStart: () -> Unit, onNext: (() -> Unit)?, modifier: Modifier,
+    versions: @Composable ColumnScope.(first: FocusRequester) -> Unit,
+) {
     val stay by rememberUpdatedState(open)
     var page by remember { mutableStateOf(PanelPage.Main) }
     Column(
@@ -528,7 +664,14 @@ private fun MoviePanel(audio: AudioState, subtitles: SubtitleState, onSubtitle: 
             .padding(Space.xl),
         verticalArrangement = Arrangement.spacedBy(Space.xs),
     ) {
-        Text(if (page == PanelPage.Main) "Options" else page.name, style = Type.title, modifier = Modifier.padding(start = Space.l, bottom = Space.l))
+        Text(
+            when (page) {
+                PanelPage.Main -> "Options"
+                PanelPage.Version -> "Versions"
+                else -> page.name
+            },
+            style = Type.title, modifier = Modifier.padding(start = Space.l, bottom = Space.l),
+        )
         val first = remember(page) { FocusRequester() }
         LaunchedEffect(page) {
             withFrameNanos {}
@@ -539,19 +682,42 @@ private fun MoviePanel(audio: AudioState, subtitles: SubtitleState, onSubtitle: 
                 // Focus starts on the first row there is.
                 var firstTaken = false
                 fun take() = (if (firstTaken) null else first).also { firstTaken = true }
+                PanelRow("Version", version ?: "Finding…", focus = take()) { page = PanelPage.Version }
                 if (audio.options.size > 1) PanelRow("Audio", audio.selected?.let(::languageName), focus = take()) { page = PanelPage.Audio }
-                if (subtitles.options.isNotEmpty()) PanelRow("Subtitles", subtitles.selected?.let(::subtitleName) ?: "Off", focus = take()) { page = PanelPage.Subtitles }
+                val searching = fetched.status == SubtitleFetch.Status.Searching
+                if (subtitles.options.isNotEmpty() || fetched.subs.isNotEmpty() || searching) PanelRow(
+                    "Subtitles",
+                    fetched.selected?.let { "${fetchedName(it.lang)} · OpenSubtitles" } ?: subtitles.selected?.let(::subtitleName) ?: if (searching) "Searching…" else "Off",
+                    focus = take(),
+                ) { page = PanelPage.Subtitles }
                 if (onNext != null) PanelRow("Next episode", focus = take(), onClick = onNext)
                 PanelRow("Play from beginning", focus = take(), onClick = onFromStart)
             }
+            PanelPage.Version -> versions(first)
             PanelPage.Audio -> audio.options.forEachIndexed { i, option ->
                 val selected = option == audio.selected || (audio.selected == null && i == 0)
                 PanelRow(audioLabel(option), checked = option == audio.selected, focus = if (selected) first else null) { onAudio(option) }
             }
             PanelPage.Subtitles -> {
-                PanelRow("Off", checked = subtitles.selected == null, focus = if (subtitles.selected == null) first else null) { onSubtitle(null) }
-                subtitles.options.forEach { option ->
-                    PanelRow(subtitleName(option), checked = option == subtitles.selected, focus = if (option == subtitles.selected) first else null) { onSubtitle(option) }
+                // OpenSubtitles' state on top, then the timing of a fetched file, then every choice; scrolls when long.
+                fetchedNote(fetched)?.let { Text(it, style = Type.caption, modifier = Modifier.padding(start = Space.l, bottom = Space.s)) }
+                val list = rememberLazyListState()
+                LazyColumn(Modifier.weight(1f).scrollbar(list), state = list, verticalArrangement = Arrangement.spacedBy(Space.xs)) {
+                    if (fetched.selected != null) {
+                        item { PanelRow("Earlier", "−0.5 s") { onShift(-500) } }
+                        item { PanelRow("Later", "+0.5 s") { onShift(500) } }
+                    }
+                    val off = subtitles.selected == null && fetched.selected == null
+                    item { PanelRow("Off", checked = off, focus = if (off) first else null) { onSubtitle(null) } }
+                    items(subtitles.options.size) { i ->
+                        val option = subtitles.options[i]
+                        val on = fetched.selected == null && option == subtitles.selected
+                        PanelRow(subtitleName(option), checked = on, focus = if (on) first else null) { onSubtitle(option) }
+                    }
+                    items(fetched.subs.size) { i ->
+                        val sub = fetched.subs[i]
+                        PanelRow("${fetchedName(sub.lang)} · ${if (sub.hash) "matches this file" else sub.release}", checked = sub == fetched.selected, focus = if (sub == fetched.selected) first else null) { onFetched(sub) }
+                    }
                 }
             }
         }
@@ -566,7 +732,7 @@ private fun Unavailable(onBack: () -> Unit) {
         Column(Modifier.widthIn(max = CARD_WIDTH).material().padding(Space.xxl), verticalArrangement = Arrangement.spacedBy(Space.m)) {
             val shows = LocalLibrary.current == LibraryKind.Shows
             Text(if (shows) "This episode isn’t available right now" else "This movie isn’t available right now", style = Type.title)
-            Text("The provider didn’t send it. Try another, or this one again later.", style = Type.body)
+            Text("No copy of it would play. Try another, or this one again later.", style = Type.body)
             val button = remember { FocusRequester() }
             LaunchedEffect(Unit) {
                 withFrameNanos {}
@@ -593,12 +759,23 @@ private fun subtitleName(option: SubtitleOption): String {
     return listOfNotNull(language, option.label?.takeIf { it.isNotBlank() && !it.equals(language, ignoreCase = true) }).joinToString(" · ").ifEmpty { "Unknown language" }
 }
 
-/** The film's subtitles over the picture: text cues low and centred, picture cues (PGS) where the file puts them. */
+/** "English", "Arabic": a fetched file's language. */
+private fun fetchedName(lang: String) = java.util.Locale.forLanguageTag(lang).getDisplayLanguage(java.util.Locale.ENGLISH).ifBlank { lang }
+
+/** What OpenSubtitles gave, over the Subtitles page: the search, nothing, today's limit, or how far the lines are moved. */
+private fun fetchedNote(f: SubtitleFetch.State) = when (f.status) {
+    SubtitleFetch.Status.Searching -> "Searching OpenSubtitles…"
+    SubtitleFetch.Status.None -> "None found on OpenSubtitles"
+    SubtitleFetch.Status.NoneToday -> "No subtitles today"
+    else -> f.selected?.let { if (f.offset == 0L) "From OpenSubtitles" else "From OpenSubtitles · moved %+.1f s".format(java.util.Locale.ROOT, f.offset / 1000.0) }
+}
+
+/** The film's subtitles over the picture: text cues low and centred, picture cues (PGS) where the file puts them, and a fetched file's [line]. */
 @Composable
-private fun Subtitles(cues: List<Cue>) {
-    if (cues.isEmpty()) return
+private fun Subtitles(cues: List<Cue>, line: String?) {
+    if (cues.isEmpty() && line == null) return
     BoxWithConstraints(Modifier.fillMaxSize()) {
-        val text = cues.mapNotNull { it.text?.toString()?.takeIf(String::isNotBlank) }
+        val text = cues.mapNotNull { it.text?.toString()?.takeIf(String::isNotBlank) } + listOfNotNull(line)
         for (cue in cues) {
             val bitmap = cue.bitmap ?: continue
             val w = maxWidth * (if (cue.size != Cue.DIMEN_UNSET) cue.size else 0.5f)
@@ -624,3 +801,55 @@ private fun Subtitles(cues: List<Cue>) {
 }
 
 private val SUBTITLE_BOTTOM = 56.dp
+
+/**
+ * The film session's notice in the top corner, where the health dot sits for live TV: an offer with
+ * ▲ to take it, or a short word on what changed; during a trial, that Back goes back. Fades in and
+ * out; never pauses or covers the picture's middle.
+ */
+@Composable
+private fun NoticeCorner(state: StateFlow<FilmState>, modifier: Modifier) {
+    val film by state.collectAsState()
+    val now = film.notice?.let(::noticeText) ?: if (film.trial) NoticeText("Trying this version · Back returns to the last one") else null
+    val shown = animateFloatAsState(if (now != null) 1f else 0f, Motion.panel(), label = "notice")
+    val kept = remember { arrayOfNulls<NoticeText>(1) }
+    if (now != null) kept[0] = now
+    val n = kept[0] ?: return
+    if (now == null && shown.value == 0f) return
+    Row(
+        modifier
+            .widthIn(max = NOTICE_WIDTH)
+            .graphicsLayer { alpha = shown.value }
+            .material(Radius.panel)
+            .padding(horizontal = Space.l, vertical = Space.s),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(Space.s),
+    ) {
+        Text(n.text, style = Type.caption.copy(color = Palette.textPrimary), maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+        n.action?.let {
+            KeyCap("▲")
+            Text(it, style = Type.caption.copy(color = Palette.textPrimary), maxLines = 1)
+        }
+    }
+}
+
+private class NoticeText(val text: String, val action: String? = null)
+
+/** "Real-Debrid · 4K · HDR10": enough to tell copies apart in a line. */
+private fun short(c: Copy) = (listOf(sourceName(c.source)) + copyLabels(c).take(2)).joinToString(" · ")
+
+private fun noticeText(n: Notice) = when (n) {
+    is Notice.Offer -> when (n.kind) {
+        OfferKind.Better -> NoticeText("Better version ready: ${short(n.copy)}", "Switch")
+        OfferKind.Untested -> NoticeText("Untested here: ${short(n.copy)}", "Try it")
+        OfferKind.Lighter -> NoticeText("Stalling. Lighter version: ${short(n.copy)}", "Switch")
+    }
+    is Notice.SteppedDown -> NoticeText("Stalls: now on ${short(n.copy)} · Versions can reverse it")
+    is Notice.PinCleared -> NoticeText("Your pinned version won’t play here, so it’s unpinned")
+    is Notice.TrialResult -> NoticeText(if (n.works) "${short(n.copy)} works here" else "${short(n.copy)} didn’t play here · back to the last version")
+    is Notice.Subtitles -> NoticeText("${fetchedName(n.language)} subtitles from OpenSubtitles · timing in Options")
+    is Notice.SkipIntro -> NoticeText("Intro", "Skip")
+    Notice.PremiumEnded -> NoticeText("Real-Debrid premium has ended — renew at real-debrid.com")
+}
+
+private val NOTICE_WIDTH = 420.dp

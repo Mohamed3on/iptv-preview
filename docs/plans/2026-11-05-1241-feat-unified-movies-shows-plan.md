@@ -246,13 +246,18 @@ flowchart TB
 
 - KTD1. **The stick ranks, the server describes.** The server returns every candidate copy with parsed attributes. A pure Kotlin ranker on the stick applies language, support, bandwidth, marks, corrections and pins, because only the stick knows its setup and bandwidth. One ranker, one language, unit-tested. Governs R2–R4, R28.
 - KTD2. **Every Real-Debrid account call comes from the stick: cache check, link and stream.** The box never calls Real-Debrid. It keeps the token only in its `.env` and hands it to the stick in the app feed, as it does provider credentials, and it only discovers which torrents exist. The stick re-requests a link on every start, resume, or retry after an IP change, and never reuses a link across sessions. (session-settled: user-directed — the stick asks for links and streams, chosen over the box handing out links. Real-Debrid's rule is about two IPs streaming at once, and VPN changes between plays are fine.) Moving the cache check to the stick too follows from the same rule: the account then sees exactly one IP. U1 confirms this before anything builds on it. Governs R1.
-- KTD3. **Discovery through Torrentio's public stream endpoint, with no debrid key, from the box.** It returns info hash, file index, release name and size per IMDb id (and per season and episode). TMDB ids map to IMDb ids through the TMDB client (KTD9). Results are cached per title for 6 h. If U1 finds Torrentio blocks the box, self-host Comet on the box instead, behind the same endpoint. Governs R1.
-- KTD4. **Cache check on the stick, cheapest first.** Order of checks:
-  1. The account's own torrent list.
-  2. For ranked candidates not already in that list, in batches of 3 in rank order: `addMagnet`, then `selectFiles` (the file index), then `info`. Status `downloaded` means ready. Stop once a batch yields a ready copy, or after 12 candidates.
-  3. Keep a torrent only when it is `downloaded`, so the account list becomes the cache. Delete every torrent the check added that is not ready (`downloading`, `queued`, `magnet_conversion`) or returned `infringing_file`. Otherwise uncached torrents would sit as active downloads until Real-Debrid refuses new magnets (its too-many-active-downloads error), which would also break Nuvio and Stremio on the same account.
+- KTD3. **Discovery through Torrentio's Real-Debrid stream endpoint, from the box.** `GET torrentio.strem.fun/realdebrid=<key>/stream/{movie|series}/<id>.json` returns info hash, file index (from the `/resolve/…` URL), file name, release name and size per IMDb id (and per season and episode).
+  - Torrentio builds it without calling Real-Debrid. It marks a copy `[RD+]` when one of its users resolved it in the last 14 days, and drops hashes that returned `infringing_file` (for 60 days). `[RD+]` copies reach the stick as `cached: true`.
+  - The key is used only at `/resolve`, which we never call, so KTD2 holds.
+  - Measured: the bare endpoint answers the box in ~0.1 s; the debrid one took 0.12–0.22 s. `[RD+]` was 36–95 % of copies across 6 titles. The bare list's order is a poor guide: 6 of Breaking Bad S01E01's top 10 are infringing.
+  - TMDB ids map to IMDb ids through the TMDB client (KTD9). Results are cached per title for 6 h. Self-hosted Comet stays the fallback if Torrentio ever blocks the box; TorBox (a real batch cache check) is an optional second source if the `[RD+]` hit rate drops. Governs R1.
+- KTD4. **Cache check on the stick: the account first, then only `[RD+]` copies, one at a time.** Real-Debrid has no cache check any more, so only an add tells. Measured: `infringing_file` comes back at `addMagnet` itself (HTTP 451, error 35, ~40 ms, no torrent made); `addMagnet` 429s (error 34) after ~5 quick adds, while list and info keep working; adds 4 s apart were clean. Order of checks:
+  1. The account's own torrent list (~0.5 s), kept 15 min and added to after each successful add.
+  2. Copies ranked above the best account copy and marked `cached`, in rank order, one at a time, at most 3 per Play: `addMagnet`, `info`, `selectFiles` (the file by Torrentio's file name, else index), `info`. Status `downloaded` means ready: 0.4 s for one file, ~2 s for a pack. `[RD download]` copies are never added automatically; both tested were 451.
+  3. Adds at least 4 s apart, across the app. After a 429 or too-many-active-downloads, no adds for Retry-After or 60 s; the account copy or IPTV plays. Play never waits for an add's turn when an account copy exists.
+  4. Keep a torrent only when it is `downloaded`, so the account list becomes the cache. Delete every torrent the check added that is not ready (`downloading`, `queued`, `magnet_conversion`). Otherwise uncached torrents would sit as active downloads until Real-Debrid refuses new magnets (its too-many-active-downloads error), which would also break Nuvio and Stremio on the same account.
 
-  The first batch runs as a prewarm (KTD13), and the rest at Play. An `infringing_file` answer is a permanent fault for that copy (KTD7). Governs R1.
+  The prewarm (KTD13) runs the first add and keeps the ready torrent, so Play needs only a fresh unrestrict (~0.13 s). An `infringing_file` answer is a permanent fault for that copy (KTD7), and the stick posts the hash to the box (`POST /api/app/rd-infringing`) so no title offers it again. The filter changes over time (two hashes that were 451 in U1 played later the same day), so it is learned from 451s, not from release-name keywords. Torrentio's undocumented `selectFiles` `check_cache=1` is not used: what it does for an uncached hash is unknown. Governs R1.
 - KTD5. **Copies carry parsed attributes.** Attributes are resolution, HDR type, Dolby Vision profile if named, codec, audio format and channels, Atmos, embedded-subtitle hints, language tags, size, and bitrate (size over TMDB runtime). Real-Debrid copies get them from the release name. IPTV copies keep today's sources: the measured reading, then the provider's probe, then the category claim (`api/_quality-labels.ts`). A measured reading always replaces parsed claims for that copy. Governs R3, R29.
 - KTD6. **Each copy is sorted into works here, unsure, or won't work against a setup profile read live on the stick.**
   - The profile holds HDR types and modes (`Display.getHdrCapabilities`, API 30), decoders (`MediaCodecList`), and audio passthrough encodings and channels (Media3 `AudioCapabilities`), re-read on display and audio-device changes.
@@ -315,6 +320,7 @@ flowchart TB
 - KTD17. **Library and scores are built by a nightly box job, not on request.**
   - Built by `deploy/iptv-library.timer` and written atomically to `.cache/library.json` and `.cache/scores.json`.
   - Trakt is paced at 3 requests a second. MDBList uses its daily quota, rows on screen first.
+  - Only each row's top 150 candidates in TMDB popularity order (provider titles by their own popularity), plus the Watchlist and Recommended titles, are scored; rows are then sorted by score and cut to 60. Titles cut from rows stay reachable through search.
   - If TMDB is down or unset, `/api/app/library` serves the provider rows. Governs R15–R19.
 - KTD18. **OpenSubtitles through the box, matched by file hash.**
   - The stick computes the OpenSubtitles hash from two 64 KB range reads plus the file size. The box searches by hash, then by TMDB id, downloads within the account's daily quota, and caches per hash.
@@ -432,7 +438,8 @@ App paths are under `firetv/app/src/main/java/com/mohamed3on/iptv/`, and app tes
   4. Update KTD2–KTD4 in place if anything differs. If Real-Debrid refuses the VPN exit, record that the app's Real-Debrid calls and streams must bypass the VPN. If Torrentio is blocked, U3 switches to self-hosted Comet.
 - **Execution note:** This is a spike with no production code. Its output is the updated KTDs.
 - **Test expectation:** none -- spike; findings land in this plan.
-- **Verification:** KTD2–KTD4 reflect measured behaviour, including the latency of a cache check, so KTD13's 4 s budget is realistic.
+- **Verification:** KTD2–KTD4 reflect measured behaviour. From the stick's IP (VPN off): account list ~0.5 s, a ready check 0.4–2 s, unrestrict 0.13 s, first byte 0.32 s, 169 Mbps. KTD13's 4 s budget holds for an account or prewarmed copy; a cold check that needs spaced adds can miss it, and IPTV starts.
+- **Status:** Done 2026-11-05, except the VPN-on run (step 3). Torrentio answers the box, so no Comet. Blind adds down the bare list were mostly 451, which led to KTD3's debrid endpoint and KTD4's `[RD+]`-only adds.
 
 ### U2. Title ids and TMDB client on the server
 
@@ -643,7 +650,7 @@ App paths are under `firetv/app/src/main/java/com/mohamed3on/iptv/`, and app tes
 - **Files:** `api/_library.ts` (new), `scripts/build-library.ts` (new), `deploy/iptv-library.service` and `deploy/iptv-library.timer` (new), `deploy/sync.sh` (enable the timer), `api/app.ts` (`/api/app/library`), `api/_library.test.ts` (new).
 - **Approach:**
   1. Rows: trending films and shows (week), new releases, a set of genres, and language rows: English, Arabic, Russian, then the rest (`with_original_language`, `vote_count.gte` for films).
-  2. Merge in provider titles so the provider's catalogue stays findable. Each title gets its best known tier from IPTV copies plus copies seen earlier.
+  2. Merge in provider titles so the provider's catalogue stays findable. Each title gets its best known tier from IPTV copies plus copies seen earlier. Each row then keeps its 150 most popular candidates on TMDB (KTD17); the rest stay findable through search.
   3. Write atomically. The endpoint serves `library.json`, or the provider rows when it is missing or stale beyond 3 days.
 - **Test scenarios:**
   - A TMDB fixture with films in `en`, `ar`, `ru` and `ko` puts them in the matching language rows, with `ko` under "Other".
@@ -756,6 +763,8 @@ App paths are under `firetv/app/src/main/java/com/mohamed3on/iptv/`, and app tes
   2. Go if at least 40% have timestamps. Otherwise record the figure in this plan and stop.
 - **Test expectation:** none until go; on go, one test that maps a timestamp response to a skip window.
 - **Verification:** Either the coverage figure is recorded and the unit closed, or a Skip intro prompt appears on a covered episode.
+- **Measured 2026-11-05: go, 29 of 30 episodes (97%).** Trakt wasn't signed in, so the owner's Real-Debrid torrent list stood in for history: the 30 newest episodes by date added (Breaking Bad S01E01–02, Friends S01E02, The Pitt S02E01–03 and S01E15, Ride or Die S01E01–08, Game of Thrones S04E05–09, Severance S02E02–10, Twin Peaks S01E01). Per source: IntroDB (`api.introdb.app/segments`, IMDb id) 25/30, TheIntroDB (`api.theintrodb.org/v2/media`, TMDB id) 20/30, SkipDB (`api.skipdb.tv/api/segments`, IMDb id) 20/30; all free and keyless. TheIntroDB and IntroDB together reach the 29 (SkipDB adds none); the miss, Severance S02E08, is marked "no intro" by IntroDB. Chapter names weren't counted: that needs the files. AniSkip wasn't needed (no anime among the 30). Nuvio and Stremio Kai use IntroDB; a Stremio webOS fork uses SkipDB. A re-measure on real Trakt history (`.cache/history.json` `eps.slice(0, 30)`) is possible once the owner signs in.
+- **Built:** `api/_intros.ts` asks TheIntroDB, then IntroDB, and keeps each episode's answer in `.cache/intros/` (30 days found, 1 day none). The answer rides in the episode's `/api/app/copies` answer as `intro: [startMs, endMs]`, so it is prefetched with the copies. `FilmSession` shows `Notice.SkipIntro` once while the intro plays (not in its last 3 s), and takes it away when playback leaves the intro. ▲ (`accept()`) seeks to the intro's end. The corner reads "Intro ▲ Skip".
 
 ---
 
@@ -820,4 +829,4 @@ Never stream between 01:50 and 02:50 UTC (the nightly quality probe needs the on
 - How Fire OS's "Dolby Digital Plus" and "Best available" audio settings change the reported encodings (U5, measured on the stick).
 - Season-pack file matching for episodes: Torrentio's file index first, checked against TMDB runtime within 10% (U3, U9).
 - Whether IMDb and Letterboxd histograms can be fetched from the box at all (U12).
-- The source of intro timestamps and its coverage (U17).
+- ~~The source of intro timestamps and its coverage (U17).~~ Settled 2026-11-05: TheIntroDB, then IntroDB; 97% of the last 30 episodes.

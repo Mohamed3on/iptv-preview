@@ -1,6 +1,8 @@
 package com.mohamed3on.iptv
 
+import android.content.Intent
 import android.os.Bundle
+import com.mohamed3on.iptv.system.Check
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.ColumnScope
@@ -61,7 +63,6 @@ import androidx.media3.common.VideoSize
 import com.mohamed3on.iptv.player.AudioTracks
 import com.mohamed3on.iptv.player.FrameRate
 import com.mohamed3on.iptv.player.LiveQuality
-import com.mohamed3on.iptv.player.Telemetry
 import com.mohamed3on.iptv.player.liveQuality
 import kotlinx.coroutines.flow.combine
 import com.mohamed3on.iptv.player.Idle
@@ -98,10 +99,11 @@ class MainActivity : ComponentActivity() {
     private val health = MutableStateFlow<Health?>(null)
     /** The main player's picture shape (width / height, pixel aspect included); 0 until known. */
     private val aspect = MutableStateFlow(0f)
-    private val telemetry by lazy { Telemetry(graph.http, BuildConfig.SERVER_URL, BuildConfig.APP_TOKEN, graph.scope) }
+    private val telemetry get() = graph.telemetry
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        Check.request(intent.getStringExtra("open"))
         val sync = graph.sync
         // The pool lives from onStart to onStop (KTD7); multi-view takes its tiles' players from it.
         val pool = PlayerPool(this, graph.http)
@@ -190,6 +192,12 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    // firetv/check.sh opens screens with `am start --activity-single-top --es open <target>`.
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        Check.request(intent.getStringExtra("open"))
     }
 
     /**
@@ -370,7 +378,7 @@ private fun IdleStopped() {
 
 /** A remote key drawn as a small cap, so instructions point at the button itself. */
 @Composable
-private fun KeyCap(label: String) {
+internal fun KeyCap(label: String) {
     Text(
         label,
         style = Type.caption.copy(color = Palette.textPrimary),

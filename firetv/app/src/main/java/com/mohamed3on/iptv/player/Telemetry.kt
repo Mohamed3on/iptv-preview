@@ -117,6 +117,16 @@ class Telemetry(
         stream?.let { put("streamMbps", it) }
     }
 
+    /** A film session's copy change or answer ([FilmSession]'s report). */
+    fun film(e: FilmEvent) = when (e) {
+        is FilmEvent.Failover -> record("failover") {
+            put("copy", e.copy.id); put("failure", e.failure.toString()); put("permanent", e.permanent); put("playing", e.playing)
+        }
+        is FilmEvent.StepDown -> record("stepdown") { put("from", e.from.id); put("to", e.to.id) }
+        is FilmEvent.Offer -> record("offer") { put("kind", e.kind.name.lowercase()); put("copy", e.copy.id); put("accepted", e.accepted) }
+        is FilmEvent.Trial -> record("trial") { put("copy", e.copy.id); put("works", e.works) }
+    }
+
     /**
      * Sends [feed]'s measured quality once per app run, once its frame rate is known; [onStored] runs
      * when the server kept it, since the feed order may have changed.

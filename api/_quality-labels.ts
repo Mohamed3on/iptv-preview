@@ -13,7 +13,7 @@ export interface ProbedStream {
     color_transfer?: string
     r_frame_rate?: string
     avg_frame_rate?: string
-    side_data_list?: { side_data_type?: string }[]
+    side_data_list?: { side_data_type?: string; dv_profile?: number }[]
   }
   audio?: { codec_name?: string; codec_long_name?: string; profile?: string; channels?: number | string }
   /** kbps */

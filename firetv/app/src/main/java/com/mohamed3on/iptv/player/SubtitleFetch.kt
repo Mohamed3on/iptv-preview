@@ -163,9 +163,8 @@ class SubtitleFetch(
                 .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false).setPreferredTextLanguage("en").build()
             return
         }
-        val audio = language(C.TRACK_TYPE_AUDIO, true).firstOrNull { it != null && it != C.LANGUAGE_UNDETERMINED } ?: original()
-        // Only English is worth showing over English audio; Arabic stays the fallback for other languages.
-        if (found == null || (!found.lang.startsWith("en") && (audio == null || audio.startsWith("en")))) return
+        // Only English switches on by itself; Arabic is there to pick in Options.
+        if (found == null || !found.lang.startsWith("en")) return
         select(found)
         if (!wanted) onPicked(found)
     }

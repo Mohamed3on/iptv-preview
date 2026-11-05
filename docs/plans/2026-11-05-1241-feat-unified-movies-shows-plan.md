@@ -27,7 +27,15 @@ execution: code
 
 ## Product Contract
 
-Product Contract preservation: R1–R8, R10 and R12–R27 are unchanged in meaning. R9 now carries the owner-approved exception that a hand-picked copy is not stepped down (KTD12). R11 changed: the version list moves to the title page as well as Options (owner's choice during planning). R28–R33 were added at the owner's request during planning. AE7 was reworded because a soundbar behind the TV cannot be told apart from the TV itself.
+Product Contract preservation: R1–R5, R7, R8 and R11–R25 and R27 are unchanged in meaning. The 2026-11-05 review made these changes:
+- R6 remembers only permanent failures.
+- R9 does not step down a hand-picked copy (KTD12).
+- R10's No ends only that kind of offer.
+- R26 places the Watchlist and Recommended rows.
+- R28 keeps language first when every original copy is untested.
+- The Trakt Key Decision says watched marks combine every source.
+
+The owner chose all of these during the review. R11 changed: the version list moves to the title page as well as Options (owner's choice during planning). R28–R33 were added at the owner's request during planning. AE7 was reworded because a soundbar behind the TV cannot be told apart from the TV itself.
 
 ### Summary
 
@@ -53,7 +61,7 @@ The setup also changes: an LG OLED with Dolby Vision is planned, and the Sonos B
 - **Scores come from official APIs; scraping is a bonus.** Governs R22, R23, R24, R25. (session-settled: user-approved — proposed after the owner judged Letterboxd and IMDb scraping unlikely to work from the box: both APIs take free keys.)
 - **Reviews show scores, rank rows, use the owner's history, and sync back.** Governs R18, R23, R26, R27. (session-settled: user-directed — the owner picked all four uses.)
 - **Borrowed from Nuvio and Stremio: subtitles, new episodes in Up next, More like this and cast; skip intro only if worth it.** Governs R30, R31, R32, R33. (session-settled: user-directed — chosen from four offered features: More like this and cast only because they are cheap, skip intro only if worth it.)
-- **Trakt is the record of what has been watched.** Letterboxd offers no write access, so only Trakt receives what the app logs. Governs R8, R27.
+- **Trakt receives what the app logs; watched marks combine every source.** Watched marks are the union of Trakt, the Letterboxd diary and the app's own marks. Letterboxd offers no write access, so only Trakt receives finished plays. Governs R8, R26, R27.
 - **One plan, built in three stages.** Best copy first, because it is the largest quality win and it proves Real-Debrid works from this setup. Then the library and scores, then history. (session-settled: user-directed — chosen over planning only best-copy playback now, and over starting with the library.)
 
 ### Stages
@@ -75,7 +83,7 @@ Stage 1 works on the current library: the copies for a provider title are gather
 - R3. Eligible copies are ranked by picture and sound, counting only what the current TV, stick and soundbar report they support: resolution, HDR type, video codec, audio format and channel count.
 - R4. The ranking uses the typical bandwidth from recent measurements, never a single reading. A copy heavier than that bandwidth ranks below one that fits.
 - R5. Replacing the TV, stick or soundbar changes the next pick with no settings change.
-- R6. When a copy fails to start, the next copy plays without asking. The failure is remembered for this setup, and that copy is skipped on later plays.
+- R6. When a copy fails to start, the next copy plays without asking. A permanent failure (KTD7) is remembered for this setup, and that copy is skipped on later plays. A temporary one, such as a busy provider or a timeout, is not.
 - R7. Films and episodes play with a large buffer, so short bandwidth dips do not stall playback.
 - R8. Resume position and watched marks belong to the title, not the copy or the source, so switching copy keeps the place. Marks saved today under provider ids carry over.
 
@@ -84,9 +92,9 @@ Stage 1 works on the current library: the copies for a provider title are gather
 - R9. After repeated stalls mid-film, the app switches to the next lighter copy at the same position. It never switches to a better copy by itself. A copy the owner picked by hand is not stepped down; a notice offers the lighter copy instead (KTD12).
 - R10. When the current copy was limited by bandwidth (picked that way or stepped down), and bandwidth then stays above a better copy's needs with margin for several minutes, a small notice offers that copy once. The notice does not pause or cover the film.
   - Yes switches to that copy at the same position.
-  - No, or ignoring the notice until it fades, ends offers for the rest of that film.
+  - No, or ignoring the notice until it fades, ends this kind of offer for the rest of that film. R28's offer is counted separately.
   - No offer appears in the last ~15 minutes or during the credits.
-- R28. A copy that would rank higher but whose support on this setup is uncertain is never picked automatically while a known-working copy exists. It is offered once with the same kind of notice as R10, and listed as untested in Versions.
+- R28. A copy that would rank higher but whose support on this setup is uncertain is never picked automatically while a known-working copy in the same language tier exists. It is offered once with the same kind of notice as R10, and listed as untested in Versions. Language still comes first (R2): when every original-language copy is untested, the best of them plays even if a dub works, and Back during its first 30 seconds returns to the dub.
   - Yes switches to it at the same position as a trial.
   - If the trial plays cleanly for about 30 seconds, the copy is marked as working on this setup.
   - If the trial errors, or the owner presses Back once within those 30 seconds, playback returns to the previous copy at the same position and the copy is marked as not working here.
@@ -121,6 +129,9 @@ Stage 1 works on the current library: the copies for a provider title are gather
 **History (stage 3)**
 
 - R26. Watched marks, a Watchlist row and recommendations come from the owner's Trakt account and Letterboxd diary. Recommendations draw on what the owner rated highly.
+  - Rows run Up next, Watchlist, Recommended, then R17's rows.
+  - Watchlist and Recommended are hidden when empty.
+  - Recommended leaves out watched titles.
 - R27. Films and episodes the owner finishes in the app are logged to Trakt automatically.
 - R31. Shows the owner follows put their next unwatched or newly aired episode in Up next.
 - R33. A Skip intro prompt appears where intro timestamps exist. It ships only if timestamps cover enough of the owner's shows to be worth it.
@@ -520,6 +531,7 @@ App paths are under `firetv/app/src/main/java/com/mohamed3on/iptv/`, and app tes
   - A copy marked failed on this fingerprint is "won't" with its date. The same mark under another fingerprint has no effect.
   - A pinned copy is picked even when another ranks higher.
   - Only unsure copies exist: the best unsure copy is picked (R28 applies only when a working copy exists).
+  - Every original-language copy is unsure and a French dub works: the best unsure original is picked, with the dub as the trial's way back (R2, R28).
   - A tie between an IPTV and a Real-Debrid copy picks Real-Debrid.
   - A non-English original with two otherwise equal copies: the one known to embed English subtitles wins. A 720p copy with subtitles never beats a 4K copy without.
 - **Verification:** All scenarios pass in `testReleaseUnitTest`.
@@ -724,7 +736,7 @@ App paths are under `firetv/app/src/main/java/com/mohamed3on/iptv/`, and app tes
 - **Files:** `api/_history.ts` (new), `api/_history.test.ts` (new), `scripts/build-library.ts` (Watchlist and Recommended rows), `api/app.ts`, `ui/Movies.kt` (Up next merges new episodes).
 - **Approach:**
   1. Watched marks are the union of Trakt history, the Letterboxd RSS feed and local marks. Local marks are not back-filled to Trakt.
-  2. The Watchlist row comes from Trakt. Recommendations come from Trakt and rank by score.
+  2. The Watchlist row comes from Trakt. Recommendations come from Trakt, rank by score and leave out watched titles. Both rows sit after Up next and are hidden when empty (R26).
   3. Followed shows are shows with Trakt or local history in the last 6 months. Their next episode comes from Trakt's progress, or else from TMDB plus local marks, and goes into Up next labelled "New episode" when it is newly aired.
   4. Up next order: in-progress items first, then new episodes by air date. A show with an episode in progress shows only that episode. A new episode takes the hero slot only when nothing is in progress. "New episode" is an accent caption on the wide card.
 - **Test scenarios:**
@@ -809,35 +821,3 @@ Never stream between 01:50 and 02:50 UTC (the nightly quality probe needs the on
 - Season-pack file matching for episodes: Torrentio's file index first, checked against TMDB runtime within 10% (U3, U9).
 - Whether IMDb and Letterboxd histograms can be fetched from the box at all (U12).
 - The source of intro timestamps and its coverage (U17).
-
----
-
-## Deferred / Open Questions
-
-Review items left for the author. They do not block implementation.
-
-### From 2026-11-05 review
-
-- **R6 says every start failure is remembered; KTD7 remembers only permanent faults** — Product Contract R6 (start failover) (P2, coherence, confidence 75)
-
-  An implementer reading R6 alone would skip a copy on later plays after a temporary error such as a busy provider (HTTP 458) or a timeout. That silently demotes the best copy, which contradicts the confirmed rule that only real faults mark a copy.
-  Change: reword R6 so only permanent failures are remembered for this setup, as KTD7 defines them.
-
-- **R10's "ends offers" may silence the untested-copy offer too** — Product Contract R10 (bandwidth recovery offer) (P2, coherence, confidence 75)
-
-  Declining the bandwidth offer "ends offers for the rest of that film", but KTD11 limits each offer kind separately. Implementers will disagree on whether a No to the bandwidth offer also suppresses R28's untested-copy offer.
-  Change: reword R10's No and fade outcomes to end that offer kind for the film, matching KTD11.
-
-- **"Trakt is the record" conflicts with watched marks from three sources** — Product Contract Key Decisions (Trakt) (P2, coherence, confidence 75)
-
-  U16 makes watched marks the union of Trakt, Letterboxd and local marks and never back-fills local marks to Trakt. Calling Trakt "the record" leaves it unclear which source decides watched state.
-  Change: reword the Key Decision to say Trakt receives what the app logs, and that watched marks are the union of Trakt, Letterboxd and local marks.
-
-- **Untested original-language copy versus a working dub: which plays?** — Product Contract R2 and R28 (P1, coherence, confidence 75)
-
-  When every original-language copy is untested and a dub is known to work, R2 says play the original and R28 says never auto-play an untested copy while a working one exists. The ranking order (language before support) currently plays the untested original, and a blank picture would then need Back to undo. The owner needs to choose which rule wins.
-
-- **Where the Watchlist and Recommended rows sit** — Product Contract R17 and R26 (P2, design-lens, confidence 75)
-
-  R17 fixes the order of trending, new, genre and language rows, and R26 adds Watchlist and Recommended rows without placing them. A Watchlist buried below the language rows loses its point on a screen the owner mostly uses to go straight to what they know.
-  Suggested placement: Up next, Watchlist, Recommended, then R17's rows. Hide each when empty, and leave watched titles out of Recommended.

@@ -77,7 +77,7 @@ function tagOf(name: string, category: string): string {
 }
 
 /** A probed stream's attributes, read through its labels ("4K", "Dolby Vision", "HEVC", "Atmos", "E-AC3 5.1"), with the probe's Dolby Vision profile. */
-export function probed(s: ProbedStream): Attrs {
+function probed(s: ProbedStream): Attrs {
   const a = parseRelease(streamLabels(s).filter((l) => !l.endsWith('Mbps')).join(' '))
   const profile = Number(s.video?.side_data_list?.find((d) => d.dv_profile != null)?.dv_profile)
   return a.hdr.includes('dv') && profile > 0 ? { ...a, dvProfile: profile } : a

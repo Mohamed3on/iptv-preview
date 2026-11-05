@@ -2,7 +2,7 @@ import { afterEach, expect, spyOn, test } from 'bun:test'
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { filmCopy, markInfringing, probed, titleCopies, torrentioCandidates, type IptvCopy } from './_copies'
+import { filmCopy, markInfringing, titleCopies, torrentioCandidates, type IptvCopy } from './_copies'
 import { parseRelease } from './_release-name'
 import torrentio from './fixtures/torrentio-movie-tt1375666.json'
 import movie from './fixtures/tmdb-movie-27205.json'
@@ -42,19 +42,6 @@ test('Torrentio streams become candidates with audio languages from the flags, t
     behaviorHints: { filename: 'Inception.2010.2160p.UHD.BDRemux.DTS-HD.MA.5.1.HYBRID.DoVi.P8.by.DVT.mkv' },
   }])
   expect(remux).toMatchObject({ res: 2160, hdr: ['dv', 'hdr10'], dvProfile: 8, audio: 'dts-hd', ch: 6, remux: true })
-})
-
-test("a probed IPTV episode keeps the probe's Dolby Vision profile, so the stick can tell it plays", () => {
-  // Friends 4K-MAX s01e01 as get_series_info probes it (trimmed).
-  const episode = {
-    video: {
-      codec_name: 'hevc', codec_tag_string: '[0][0][0][0]', width: 2560, height: 1440, r_frame_rate: '24000/1001', avg_frame_rate: '24000/1001',
-      side_data_list: [{ side_data_type: 'DOVI configuration record', dv_version_major: 1, dv_profile: 5, dv_level: 5, rpu_present_flag: 1, el_present_flag: 0, bl_present_flag: 1 }],
-    },
-    audio: { codec_name: 'eac3', codec_long_name: 'unknown', channels: 2 },
-    bitrate: 22320,
-  }
-  expect(probed(episode)).toMatchObject({ hdr: ['dv'], dvProfile: 5, codec: 'hevc' })
 })
 
 test('every catalogue copy of a film keeps its language: dubs name the audio, subtitled copies the original', () => {

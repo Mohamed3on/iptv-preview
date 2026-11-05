@@ -311,7 +311,7 @@ internal fun sizeLabel(bytes: Long): String? = when {
 
 /** The copy as the title page and Options name it: "Real-Debrid · 4K · HDR10 · E-AC3 5.1 · 14.2 GB". */
 internal fun copyLine(c: Copy, answer: TitleAnswer?): String =
-    (listOf(sourceName(c.source)) + copyLabels(c) + listOfNotNull(sizeLabel(answer?.size(c.id) ?: 0))).joinToString(" · ")
+    (listOf(sourceName(c.source)) + (copyLabels(c) - setOfNotNull(VIDEO[c.codec])) + listOfNotNull(sizeLabel(answer?.size(c.id) ?: 0))).joinToString(" · ")
 
 private fun rdState(c: Copy, rd: Map<String, RdCheck>): String? {
     if (c.source != Source.RealDebrid) return null

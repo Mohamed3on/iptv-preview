@@ -4,7 +4,10 @@ package com.mohamed3on.iptv.player
 
 import android.content.Context
 import androidx.media3.common.C
+import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
+import androidx.media3.common.PlaybackException
+import androidx.media3.common.Player
 import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DataSpec
 import androidx.media3.datasource.HttpDataSource
@@ -39,6 +42,76 @@ fun moviePlayer(context: Context, http: OkHttpClient, load: FilmLoad = FilmLoad(
         )
         .build()
         .apply { setSeekParameters(SeekParameters.CLOSEST_SYNC) }
+
+/**
+ * [FilmSession]'s view of a film's ExoPlayer: each open carries the place and its audio and subtitle
+ * languages over; buffering after it has played (not after an open or a seek, and not while paused) is
+ * a rebuffer. Main thread only.
+ */
+class ExoFilmPlayer(private val exo: ExoPlayer) : FilmPlayer {
+    private var listener: FilmPlayer.Listener? = null
+    private var played = false
+    private var seeking = false
+
+    private val events = object : Player.Listener {
+        override fun onIsPlayingChanged(isPlaying: Boolean) {
+            if (isPlaying && !played) {
+                played = true
+                listener?.onPlaying()
+            }
+        }
+
+        override fun onPositionDiscontinuity(oldPosition: Player.PositionInfo, newPosition: Player.PositionInfo, reason: Int) {
+            if (reason == Player.DISCONTINUITY_REASON_SEEK) seeking = true
+        }
+
+        override fun onPlaybackStateChanged(state: Int) {
+            when (state) {
+                Player.STATE_BUFFERING -> if (played && !seeking && exo.playWhenReady) listener?.onRebuffer()
+                Player.STATE_READY -> seeking = false
+                Player.STATE_ENDED -> listener?.onEnded()
+            }
+        }
+
+        override fun onPlayerError(error: PlaybackException) {
+            listener?.onError(StreamErrors.failureOf(error))
+        }
+    }
+
+    init {
+        exo.addListener(events)
+    }
+
+    override fun open(url: String, place: Place) {
+        exo.stop()
+        played = false
+        seeking = false
+        exo.trackSelectionParameters = exo.trackSelectionParameters.buildUpon()
+            .clearOverridesOfType(C.TRACK_TYPE_AUDIO)
+            .clearOverridesOfType(C.TRACK_TYPE_TEXT)
+            .setPreferredAudioLanguage(place.audio)
+            .apply { if (place.subtitles != null) setPreferredTextLanguage(place.subtitles).setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false) }
+            .build()
+        exo.setMediaItem(MediaItem.fromUri(url), place.position)
+        exo.playWhenReady = true
+        exo.prepare()
+    }
+
+    override fun stop() = exo.stop()
+    override fun pause() = exo.pause()
+    override fun play() = exo.play()
+    override val place get() = Place(exo.currentPosition, language(C.TRACK_TYPE_AUDIO), language(C.TRACK_TYPE_TEXT))
+    override val duration get() = exo.duration.coerceAtLeast(0)
+
+    override fun setListener(listener: FilmPlayer.Listener?) {
+        this.listener = listener
+    }
+
+    fun release() = exo.removeListener(events)
+
+    private fun language(type: Int): String? = exo.currentTracks.groups.firstOrNull { it.type == type && it.isSelected }
+        ?.let { g -> (0 until g.length).firstOrNull(g::isTrackSelected)?.let { g.getTrackFormat(it).language } }
+}
 
 /** A film player's loading, read once a second for [BandwidthMeter]: its bytes so far and whether it is filling. */
 class FilmLoad {

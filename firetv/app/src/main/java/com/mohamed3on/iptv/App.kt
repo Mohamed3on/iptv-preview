@@ -18,6 +18,9 @@ import com.mohamed3on.iptv.data.WatchedStore
 import com.mohamed3on.iptv.data.WatchHistory
 import com.mohamed3on.iptv.player.Capacity
 import com.mohamed3on.iptv.player.CopyChoices
+import com.mohamed3on.iptv.player.FilmCopies
+import com.mohamed3on.iptv.player.Telemetry
+import com.mohamed3on.iptv.data.RealDebrid
 import com.mohamed3on.iptv.player.Setup
 import com.mohamed3on.iptv.system.VoiceFix
 import com.mohamed3on.iptv.update.Updater
@@ -85,5 +88,21 @@ class AppGraph(context: Context) {
     val sync = FeedSync(http, BuildConfig.SERVER_URL, BuildConfig.APP_TOKEN, context.filesDir, prefs, onEpisodes = migration::adoptEpisodes)
     /** What the TV, stick and soundbar can show and play; built off the launch path. */
     val setup by lazy { Setup(context) }
+    /** Events the server keeps for the stick (/api/app/events). */
+    val telemetry by lazy { Telemetry(http, BuildConfig.SERVER_URL, BuildConfig.APP_TOKEN, scope) }
+    /** Real-Debrid from the stick's own IP; one instance, so its account list and answers are shared. */
+    val debrid by lazy { RealDebrid(http, { sync.realDebridToken }, onInfringing = ::refused) }
+    /** Each title's copies, ranked and checked ahead of Play. Touch [setup] on the main thread first. */
+    val films by lazy { FilmCopies(sync::copies, debrid, copyChoices, capacity, { setup.profile.value }, scope) }
+    private val refusedHashes = mutableSetOf<String>()
+
+    /** A torrent Real-Debrid refused goes to the box (one post for a burst), which drops it from every title's copies. */
+    private fun refused(hash: String) {
+        if (synchronized(refusedHashes) { !refusedHashes.add(hash) || refusedHashes.size > 1 }) return
+        scope.launch {
+            delay(2_000)
+            sync.rdInfringing(synchronized(refusedHashes) { refusedHashes.toList().also { refusedHashes.clear() } })
+        }
+    }
     val updater = Updater(context, http, BuildConfig.SERVER_URL, BuildConfig.APP_TOKEN, scope)
 }

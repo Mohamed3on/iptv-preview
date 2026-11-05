@@ -119,6 +119,22 @@ interface SeriesInfo {
   episodes?: Record<string, { id: string; episode_num: number | string; title?: string; container_extension?: string; season?: number; info?: { duration_secs?: number | string; movie_image?: string } & ProbedStream }[]>
 }
 
+/** Each series' info, kept in-process: episode copies ask once per language listing, so every episode after a show's first answers at once. */
+const seriesInfos = new Map<number, { at: number; info: Promise<SeriesInfo> }>()
+const SERIES_KEEP_MS = 6 * 3600_000
+
+/** The provider's `get_series_info`, shared by showEpisodes and episodeEntries; a failure is not kept. */
+function seriesInfo(cfg: XtreamConfig, id: number): Promise<SeriesInfo> {
+  const now = Date.now()
+  const hit = seriesInfos.get(id)
+  if (hit && now - hit.at < SERIES_KEEP_MS) return hit.info
+  for (const [k, v] of seriesInfos) if (now - v.at >= SERIES_KEEP_MS) seriesInfos.delete(k)
+  const info = apiGet<SeriesInfo>(cfg, `get_series_info&series_id=${id}`)
+  seriesInfos.set(id, { at: now, info })
+  info.catch(() => seriesInfos.get(id)?.info === info && seriesInfos.delete(id))
+  return info
+}
+
 /** The first of the provider's backdrops (a list, sometimes one string); "" when none. */
 const firstBackdrop = (b: string[] | string | undefined) => String((Array.isArray(b) ? b[0] : b) ?? '').trim()
 /** The first few names of a cast list. */
@@ -133,7 +149,7 @@ async function showTitleOf(cfg: XtreamConfig): Promise<(id: number) => string> {
 
 /** A show's title id, plot, backdrop, genres, cast and rating, and its episodes (each with its title id) in season and episode order. */
 export async function showEpisodes(cfg: XtreamConfig, seriesId: number, show?: string) {
-  const info = await apiGet<SeriesInfo>(cfg, `get_series_info&series_id=${seriesId}`)
+  const info = await seriesInfo(cfg, seriesId)
   const titleId = show ?? (await showTitleOf(cfg))(seriesId)
   const episodes = Object.entries(info.episodes ?? {})
     .flatMap(([season, eps]) =>
@@ -164,7 +180,7 @@ export async function showEpisodes(cfg: XtreamConfig, seriesId: number, show?: s
 export async function episodeEntries(cfg: XtreamConfig, show: string, season: number, episode: number) {
   const lists = (await showList(cfg)).movies.filter((m) => m.titleId === show)
   const found = await Promise.all(lists.map(async (m) => {
-    const info = await apiGet<SeriesInfo>(cfg, `get_series_info&series_id=${m.id}`).catch(() => null)
+    const info = await seriesInfo(cfg, m.id).catch(() => null)
     const e = Object.entries(info?.episodes ?? {}).flatMap(([s, eps]) => eps.filter((e) => Number(e.season ?? s) === season && Number(e.episode_num) === episode))[0]
     return e && Number(e.id) > 0 ? { id: Number(e.id), ext: e.container_extension || 'mkv', probe: e.info, category: m.group, lang: language(m.group) ?? '' } : null
   }))

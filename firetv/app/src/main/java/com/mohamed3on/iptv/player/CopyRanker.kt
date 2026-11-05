@@ -214,7 +214,7 @@ private fun reason(r: Ranked, pick: Ranked?): String = when {
 }
 
 private val MIMES = mapOf(
-    "hevc" to "video/hevc", "h264" to "video/avc", "av1" to "video/av01", "vp9" to "video/x-vnd.on2.vp9", "mpeg2video" to "video/mpeg2",
+    "hevc" to "video/hevc", "h264" to "video/avc", "av1" to "video/av01", "vp9" to "video/x-vnd.on2.vp9", "mpeg2video" to "video/mpeg2", "vc1" to "video/wvc1",
 )
 /** H.264-equivalent bitrate, as `pictureTier` on the server scales it. */
 private val GAIN = mapOf("h264" to 1f, "hevc" to 2f, "vp9" to 1.8f, "av1" to 2.4f, "mpeg2video" to 0.6f)

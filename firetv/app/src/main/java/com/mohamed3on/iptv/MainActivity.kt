@@ -61,7 +61,6 @@ import androidx.media3.common.VideoSize
 import com.mohamed3on.iptv.player.AudioTracks
 import com.mohamed3on.iptv.player.FrameRate
 import com.mohamed3on.iptv.player.LiveQuality
-import com.mohamed3on.iptv.player.Telemetry
 import com.mohamed3on.iptv.player.liveQuality
 import kotlinx.coroutines.flow.combine
 import com.mohamed3on.iptv.player.Idle
@@ -98,7 +97,7 @@ class MainActivity : ComponentActivity() {
     private val health = MutableStateFlow<Health?>(null)
     /** The main player's picture shape (width / height, pixel aspect included); 0 until known. */
     private val aspect = MutableStateFlow(0f)
-    private val telemetry by lazy { Telemetry(graph.http, BuildConfig.SERVER_URL, BuildConfig.APP_TOKEN, graph.scope) }
+    private val telemetry get() = graph.telemetry
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -370,7 +369,7 @@ private fun IdleStopped() {
 
 /** A remote key drawn as a small cap, so instructions point at the button itself. */
 @Composable
-private fun KeyCap(label: String) {
+internal fun KeyCap(label: String) {
     Text(
         label,
         style = Type.caption.copy(color = Palette.textPrimary),

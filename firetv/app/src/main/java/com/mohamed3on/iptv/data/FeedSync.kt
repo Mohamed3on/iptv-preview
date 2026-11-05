@@ -9,6 +9,8 @@ import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.Request
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonPrimitive
 import java.io.File
 import java.io.IOException
 import java.util.zip.GZIPInputStream
@@ -196,6 +198,28 @@ class FeedSync(
             json.decodeFromString(TitleIdMap.serializer(), res.body.string())
         }
     }
+    /** Every copy of a film or episode the box knows, IPTV's and Real-Debrid's (/api/app/copies); not kept here (FilmCopies keeps them). */
+    suspend fun copies(title: TitleId): Result<CopiesAnswer> = withContext(Dispatchers.IO) {
+        runCatching {
+            val q = java.net.URLEncoder.encode(title, "UTF-8")
+            client.newCall(Request.Builder().url("$baseUrl/api/app/copies?t=$token&title=$q").build()).execute().use { res ->
+                if (!res.isSuccessful) throw IOException("HTTP ${res.code}")
+                json.decodeFromString(CopiesAnswer.serializer(), res.body.string())
+            }
+        }
+    }
+
+    /** Torrents Real-Debrid refused (infringing_file), so the box drops them from every title's copies; best effort. */
+    suspend fun rdInfringing(hashes: List<String>) = withContext(Dispatchers.IO) {
+        runCatching {
+            val body = kotlinx.serialization.json.buildJsonObject {
+                put("hashes", kotlinx.serialization.json.JsonArray(hashes.map(::JsonPrimitive)))
+            }.toString()
+            client.newCall(Request.Builder().url("$baseUrl/api/app/rd-infringing?t=$token")
+                .post(okhttp3.RequestBody.create("application/json".toMediaTypeOrNull(), body)).build()).execute().close()
+        }
+    }
+
     private val json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
     private val showCache = java.util.concurrent.ConcurrentHashMap<Int, Pair<Long, ShowEpisodes>>()
     private val SHOW_KEEP_MS = 30 * 60_000L
@@ -296,3 +320,22 @@ class FeedSync(
         store.put("etag.$kind", etag)
     }
 }
+
+/** `/api/app/copies`: a title's copies, its original language (ISO 639-1, "" unknown) and each source's state ("ok", "pending", "unavailable"). */
+@Serializable
+data class CopiesAnswer(val titleId: String = "", val originalLanguage: String = "", val runtime: Int = 0, val sources: CopySources = CopySources(), val copies: List<ServerCopy> = emptyList())
+
+@Serializable
+data class CopySources(val iptv: String = "ok", val rd: String = "ok")
+
+/**
+ * One copy as the box describes it (U3): an IPTV stream ([id], [ext]) or a Real-Debrid candidate ([hash], [file],
+ * [filename], [size], [cached] for Torrentio's [RD+]); attributes are the box's names, 0 or empty when unknown.
+ */
+@Serializable
+data class ServerCopy(
+    val src: String, val id: Int = 0, val ext: String = "mkv", val name: String = "",
+    val hash: String = "", val file: Int? = null, val filename: String? = null, val size: Long = 0, val cached: Boolean = false,
+    val res: Int = 0, val hdr: List<String> = emptyList(), val dvProfile: Int? = null, val codec: String = "", val audio: String = "",
+    val ch: Int = 0, val atmos: Boolean = false, val langs: List<String> = emptyList(), val subs: List<String> = emptyList(), val kbps: Double = 0.0,
+)

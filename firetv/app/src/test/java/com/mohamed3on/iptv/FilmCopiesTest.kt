@@ -1,0 +1,78 @@
+package com.mohamed3on.iptv
+
+import com.mohamed3on.iptv.data.CopiesAnswer
+import com.mohamed3on.iptv.data.CopySources
+import com.mohamed3on.iptv.data.Debrid
+import com.mohamed3on.iptv.data.RdCandidate
+import com.mohamed3on.iptv.data.RdCheck
+import com.mohamed3on.iptv.data.RdStatus
+import com.mohamed3on.iptv.data.ServerCopy
+import com.mohamed3on.iptv.player.Capacity
+import com.mohamed3on.iptv.player.CopyChoices
+import com.mohamed3on.iptv.player.FilmCopies
+import com.mohamed3on.iptv.player.Hdr
+import com.mohamed3on.iptv.player.Passthrough
+import com.mohamed3on.iptv.player.SetupProfile
+import com.mohamed3on.iptv.player.answerOf
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.test.advanceTimeBy
+import kotlinx.coroutines.test.runCurrent
+import kotlinx.coroutines.test.runTest
+import org.junit.Assert.assertEquals
+import org.junit.Test
+
+/** Real-Debrid has the torrents named in [ready]; the rest aren't cached. */
+private class ReadyDebrid(private val ready: Set<String>) : Debrid {
+    override val status = MutableStateFlow(RdStatus.Ok)
+    override suspend fun inAccount(candidates: List<RdCandidate>) = emptyMap<RdCandidate, RdCheck>()
+    override suspend fun probe(c: RdCandidate, wait: Boolean): RdCheck? = null
+    override suspend fun check(candidates: List<RdCandidate>) =
+        candidates.associateWith { if (it.hash in ready) RdCheck.Ready(it.hash, "hoster/${it.hash}") else RdCheck.NotCached }
+    override suspend fun link(ready: RdCheck.Ready) = ready.link
+}
+
+@OptIn(ExperimentalCoroutinesApi::class)
+class FilmCopiesTest {
+    private val tv = SetupProfile("TV", setOf(Hdr.Hdr10), setOf(5, 8), setOf("video/hevc", "video/avc"), setOf(Passthrough.Ac3, Passthrough.EAc3), 8)
+    private val iptv = ServerCopy("iptv", id = 7, ext = "mp4", res = 1080, codec = "h264", audio = "ac3", ch = 6)
+    private val rd4k = ServerCopy("rd", hash = "aa", file = 2, size = 9_000_000_000, cached = true, res = 2160, hdr = listOf("hdr10"), codec = "hevc", audio = "eac3", ch = 6, kbps = 8_000.0)
+
+    @Test
+    fun `the box's names become the ranker's`() {
+        val a = answerOf(CopiesAnswer("movie:1", "fr", copies = listOf(iptv, rd4k, ServerCopy("rd", hash = "bb", hdr = listOf("dv", "hdr10"), audio = "dts-hd", codec = "mpeg2", subs = listOf("en")))))
+        val (i, r, dv) = a.copies.copies
+        assertEquals(listOf("iptv:7", "rd:aa:2", "rd:bb"), listOf(i.id, r.id, dv.id))
+        assertEquals("fr", a.copies.originalLanguage)
+        assertEquals(8f, r.mbps)
+        assertEquals(listOf("DV", "HDR10"), dv.hdr)
+        assertEquals("dtshd" to "mpeg2video", dv.audio to dv.codec)
+        assertEquals(true, dv.englishSubs)
+        assertEquals(RdCandidate("aa", 2, null, cached = true), a.copies.rd["rd:aa:2"])
+        assertEquals("mp4", a.ext("iptv:7"))
+    }
+
+    @Test
+    fun `plays names the Real-Debrid copy once it is ready, IPTV when it isn't, and asks again while Real-Debrid is pending`() = runTest {
+        var asks = 0
+        fun copies(ready: Set<String>) = FilmCopies(
+            fetch = {
+                asks++
+                Result.success(CopiesAnswer("movie:1", "en", sources = CopySources(rd = if (asks == 1) "pending" else "ok"), copies = if (asks == 1) listOf(iptv) else listOf(iptv, rd4k)))
+            },
+            debrid = ReadyDebrid(ready), choices = CopyChoices(MapStore()), capacity = Capacity(MapStore()), setup = { tv }, scope = backgroundScope,
+        )
+        val ready = copies(setOf("aa")).state("movie:1")
+        runCurrent()
+        assertEquals("iptv:7", ready.value.plays?.id) // only IPTV so far
+        advanceTimeBy(3_000)
+        runCurrent()
+        assertEquals("rd:aa:2", ready.value.plays?.id)
+
+        asks = 1
+        val notCached = copies(emptySet()).state("movie:1")
+        advanceTimeBy(3_000)
+        runCurrent()
+        assertEquals("iptv:7", notCached.value.plays?.id)
+    }
+}

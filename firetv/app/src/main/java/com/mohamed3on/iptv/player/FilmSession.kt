@@ -44,8 +44,8 @@ interface FilmPlayer {
     }
 }
 
-/** A title's copies as discovery returns them; [rd] is each Real-Debrid copy's torrent, by copy id. */
-class TitleCopies(val copies: List<Copy>, val rd: Map<String, RdCandidate> = emptyMap())
+/** A title's copies as discovery returns them; [rd] is each Real-Debrid copy's torrent, by copy id; [originalLanguage] when known. */
+class TitleCopies(val copies: List<Copy>, val rd: Map<String, RdCandidate> = emptyMap(), val originalLanguage: String? = null)
 
 enum class FilmPhase { Stopped, Loading, Starting, Playing, Ended, Unavailable }
 
@@ -95,7 +95,8 @@ data class FilmState(
  */
 class FilmSession(
     private val titleId: String,
-    private val originalLanguage: String?,
+    /** The title's original language until copies name it (R2). */
+    private var originalLanguage: String?,
     private val player: FilmPlayer,
     private val choices: CopyChoices,
     private val setup: () -> SetupProfile,
@@ -272,6 +273,7 @@ class FilmSession(
     private fun arrived(t: TitleCopies, fallback: Copy?) {
         copies = t.copies + listOfNotNull(fallback?.takeIf { f -> t.copies.none { it.id == f.id } })
         torrents = t.rd
+        t.originalLanguage?.let { originalLanguage = it }
         rerank()
         check()
     }

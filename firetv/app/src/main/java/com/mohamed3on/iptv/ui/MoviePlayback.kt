@@ -123,7 +123,10 @@ import com.mohamed3on.iptv.ui.theme.Radius
 import androidx.compose.foundation.layout.ColumnScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.map
+import com.mohamed3on.iptv.system.Check
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -246,6 +249,10 @@ internal fun MoviePlayback(
                 cues = cueGroup.cues
             }
 
+            override fun onRenderedFirstFrame() {
+                session.state.value.copy?.let { Check.log("first_frame", "title" to title, "copy" to it.id, "src" to it.source) }
+            }
+
             // A copy opens (the session has published it): its subtitle lookup starts at once.
             override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
                 val copy = session.state.value.copy ?: return
@@ -285,6 +292,12 @@ internal fun MoviePlayback(
                 ui.error = true
             }
         }
+    }
+    // firetv/check.sh (system/Check): each notice, and the subtitles that switch on (the copy's own or fetched).
+    LaunchedEffect(Unit) {
+        launch { session.state.map { it.notice }.distinctUntilChanged().collect { n -> n?.let { Check.log("notice", "kind" to it.toString().substringBefore('(')) } } }
+        launch { subtitles.state.map { it.selected?.language }.distinctUntilChanged().collect { it?.let { Check.log("subtitle", "lang" to it, "src" to "own") } } }
+        fetched.state.map { it.selected?.lang }.distinctUntilChanged().collect { it?.let { Check.log("subtitle", "lang" to it, "src" to "fetched") } }
     }
     // A new network or VPN is a new IP: a Real-Debrid link is tied to the old one (KTD2).
     LaunchedEffect(Unit) { graph.route.effective.drop(1).collect { session.ipChanged() } }

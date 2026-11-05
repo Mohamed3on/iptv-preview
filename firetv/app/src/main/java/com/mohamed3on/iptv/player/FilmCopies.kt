@@ -20,6 +20,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.transformWhile
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import java.io.IOException
 import java.util.concurrent.ConcurrentHashMap
 
@@ -180,7 +181,8 @@ class FilmCopies(
             val torrents = p.answer?.copies?.rd ?: return@launch
             val ids = p.ranking?.copies.orEmpty()
                 .filter { it.copy.id in torrents && it.copy.id !in p.rd && (it.support != Support.Wont || it.pinned) }.map { it.copy.id }
-            val answers = if (ids.isEmpty()) emptyMap() else runCatching { debrid.check(ids.map(torrents::getValue)) }.getOrDefault(emptyMap())
+            // At most KTD13's 4 s: a check that hangs (rate limit, slow account list) must not hold the Plays line or Play.
+            val answers = if (ids.isEmpty()) emptyMap() else withTimeoutOrNull(CHECK_MS) { runCatching { debrid.check(ids.map(torrents::getValue)) }.getOrNull() } ?: emptyMap()
             val byId = ids.mapNotNull { id -> answers[torrents.getValue(id)]?.let { id to it } }.toMap()
             e.state.update { it.copy(rd = it.rd + byId, rdChecked = true).settled() }
             prefetch(e)
@@ -201,6 +203,7 @@ class FilmCopies(
         /** A pending Real-Debrid side is asked again this much later, at most [ASKS] asks in all. */
         const val REASK_MS = 2_500L
         const val ASKS = 3
+        const val CHECK_MS = 4_000L
     }
 }
 

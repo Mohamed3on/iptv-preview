@@ -8,6 +8,8 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
+import androidx.media3.common.Tracks
+import androidx.media3.common.util.Util
 import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DataSpec
 import androidx.media3.datasource.HttpDataSource
@@ -52,6 +54,9 @@ class ExoFilmPlayer(private val exo: ExoPlayer) : FilmPlayer {
     private var listener: FilmPlayer.Listener? = null
     private var played = false
     private var seeking = false
+    /** This open's audio checked; the audio language it asked for. */
+    private var checked = false
+    private var wanted: String? = null
 
     private val events = object : Player.Listener {
         override fun onIsPlayingChanged(isPlaying: Boolean) {
@@ -59,6 +64,18 @@ class ExoFilmPlayer(private val exo: ExoPlayer) : FilmPlayer {
                 played = true
                 listener?.onPlaying()
             }
+        }
+
+        // Once per open: a file whose audio can't play here, or whose track in the language asked for (the film's
+        // own, R2) can't while a dub could, is the wrong copy for this setup (e.g. a remux with DTS-HD English).
+        override fun onTracksChanged(tracks: Tracks) {
+            val audio = tracks.groups.filter { it.type == C.TRACK_TYPE_AUDIO }
+            if (checked || audio.isEmpty()) return
+            checked = true
+            fun plays(g: Tracks.Group) = (0 until g.length).any { g.isTrackSupported(it, true) }
+            val asked = wanted?.let(Util::normalizeLanguageCode)
+            val inLanguage = audio.filter { asked != null && it.getTrackFormat(0).language?.let(Util::normalizeLanguageCode) == asked }
+            if (audio.none(::plays) || (inLanguage.isNotEmpty() && inLanguage.none(::plays))) listener?.onError(StreamFailure.Unsupported)
         }
 
         override fun onPositionDiscontinuity(oldPosition: Player.PositionInfo, newPosition: Player.PositionInfo, reason: Int) {
@@ -86,10 +103,14 @@ class ExoFilmPlayer(private val exo: ExoPlayer) : FilmPlayer {
         exo.stop()
         played = false
         seeking = false
+        checked = false
+        wanted = place.audio
         exo.trackSelectionParameters = exo.trackSelectionParameters.buildUpon()
             .clearOverridesOfType(C.TRACK_TYPE_AUDIO)
             .clearOverridesOfType(C.TRACK_TYPE_TEXT)
             .setPreferredAudioLanguage(place.audio)
+            // A release's "default" subtitles are its own audience's (Russian on a Russian remux): only forced or chosen ones show.
+            .setIgnoredTextSelectionFlags(C.SELECTION_FLAG_DEFAULT)
             .apply { if (place.subtitles != null) setPreferredTextLanguage(place.subtitles).setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false) }
             .build()
         exo.setMediaItem(MediaItem.fromUri(url), place.position)

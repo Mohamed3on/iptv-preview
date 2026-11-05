@@ -53,6 +53,8 @@ private val json = Json { ignoreUnknownKeys = true }
 data class Episode(val id: Int, val season: Int, val episode: Int, val title: String = "", val ext: String = "mkv", val secs: Int = 0, val image: String = "",
     /** The stream's quality as labels, best first ("4K", "HDR10", "HEVC", "18 Mbps", "E-AC3 5.1"); empty when unknown. */
     val quality: List<String> = emptyList(),
+    /** The picture in a word: Reference, Great, OK or Soft; "" when unknown. */
+    val tier: String = "",
 ) {
     /** "S1 E3". */
     val code get() = "S$season E$episode"
@@ -75,6 +77,10 @@ data class MovieInfo(
     val plot: String = "", val secs: Int = 0, val genre: String = "", val rating: String = "", val backdrop: String = "", val cast: String = "", val director: String = "",
     /** The stream's quality as labels, best first ("4K", "Dolby Vision", "HEVC", "20 Mbps", "Atmos"); empty when unknown. */
     val quality: List<String> = emptyList(),
+    /** The picture in a word: Reference, Great, OK or Soft; "" when unknown. */
+    val tier: String = "",
+    /** [tier] is the category's claim, not yet measured (the first play measures it). */
+    val estimated: Boolean = false,
 )
 
 fun parseMovieInfo(text: String): MovieInfo = json.decodeFromString(MovieInfo.serializer(), text)

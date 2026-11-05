@@ -76,6 +76,7 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.VideoSize
+import com.mohamed3on.iptv.player.filmReading
 import androidx.tv.material3.Text
 import com.mohamed3on.iptv.data.Movie
 import com.mohamed3on.iptv.graph
@@ -151,7 +152,11 @@ internal fun MoviePlayback(movie: Movie, from: Long, url: String, onSave: (pos: 
     val close by rememberUpdatedState(onClose)
     val ended by rememberUpdatedState(onEnded)
     val keep by rememberUpdatedState(onSave)
-    val exo = remember { moviePlayer(context, graph.http) }
+    // The file's size, for its bitrate in the film's quality reading.
+    val fileBytes = remember { java.util.concurrent.atomic.AtomicLong(0) }
+    val exo = remember { moviePlayer(context, graph.http) { fileBytes.compareAndSet(0, it) } }
+    // A film's first play measures what it really is (an episode's is known already), for its quality and tier.
+    val films = LocalLibrary.current == LibraryKind.Movies
     val ui = remember { MovieState() }
     val audio = remember { AudioTracks(exo) }
     val subtitles = remember { SubtitleTracks(exo) }
@@ -221,6 +226,11 @@ internal fun MoviePlayback(movie: Movie, from: Long, url: String, onSave: (pos: 
         save()
         exo.stop()
         close()
+    }
+    LaunchedEffect(ui.started) {
+        if (!ui.started || !films) return@LaunchedEffect
+        delay(FILM_READING_MS) // past the first frames, so the formats have settled
+        filmReading(exo, fileBytes.get())?.let { graph.sync.reportFilmQuality(movie.id, it) }
     }
     LaunchedEffect(ui.playing) {
         while (ui.playing) {
@@ -547,6 +557,8 @@ private fun MoviePanel(audio: AudioState, subtitles: SubtitleState, onSubtitle: 
         }
     }
 }
+
+private const val FILM_READING_MS = 5_000L
 
 @Composable
 private fun Unavailable(onBack: () -> Unit) {

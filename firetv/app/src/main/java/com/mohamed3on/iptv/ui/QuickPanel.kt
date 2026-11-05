@@ -26,6 +26,7 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.layout.size
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
@@ -196,7 +197,7 @@ fun PanelRow(
             transitionSpec = { fadeIn(tween(Motion.FADE_MS)) togetherWith fadeOut(tween(Motion.FADE_MS)) },
             label = "value",
         ) { Text(it, style = Type.body, maxLines = 1) }
-        if (checked) Text("✓", style = Type.headline.copy(color = Palette.accent))
+        if (checked) CheckMark(Palette.accent)
     }
 }
 
@@ -238,3 +239,24 @@ internal fun channelLayout(channels: Int): String? = when (channels) {
     8 -> "7.1"
     else -> if (channels > 0) "$channels ch" else null
 }
+
+/** A selected option's mark: a drawn check, one stroke weight with the app's other marks (never a typed glyph). */
+@Composable
+internal fun CheckMark(color: androidx.compose.ui.graphics.Color, modifier: Modifier = Modifier) {
+    androidx.compose.foundation.Canvas(modifier.size(CHECK_SIZE)) {
+        val w = size.width
+        val path = androidx.compose.ui.graphics.Path().apply {
+            moveTo(w * 0.18f, w * 0.52f)
+            lineTo(w * 0.40f, w * 0.74f)
+            lineTo(w * 0.82f, w * 0.28f)
+        }
+        drawPath(
+            path, color,
+            style = androidx.compose.ui.graphics.drawscope.Stroke(
+                width = 2.dp.toPx(), cap = androidx.compose.ui.graphics.StrokeCap.Round, join = androidx.compose.ui.graphics.StrokeJoin.Round,
+            ),
+        )
+    }
+}
+
+private val CHECK_SIZE = 18.dp

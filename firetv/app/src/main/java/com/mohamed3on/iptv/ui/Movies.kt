@@ -15,6 +15,8 @@ import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.background
+import androidx.compose.ui.text.font.FontWeight
 import coil3.SingletonImageLoader
 import coil3.request.SuccessResult
 import com.mohamed3on.iptv.data.tmdbAt
@@ -737,6 +739,37 @@ private fun UpNextPage(
     }
 }
 
+/**
+ * The picture in a word, read by colour first: Reference (green), Great (accent), OK (plain), Soft (amber).
+ * From resolution and codec-adjusted bits per pixel (server, api/_quality-labels.ts).
+ */
+@Composable
+private fun TierChip(tier: String) {
+    val color = when (tier) {
+        "Reference" -> Palette.good
+        "Great" -> Palette.accent
+        "Soft" -> Palette.warning
+        else -> Palette.textSecondary
+    }
+    Text(
+        tier,
+        style = Type.caption.copy(color = color, fontWeight = FontWeight.SemiBold),
+        maxLines = 1,
+        modifier = Modifier.background(color.copy(alpha = 0.16f), RoundedCornerShape(Radius.chip)).padding(horizontal = Space.s, vertical = 1.dp),
+    )
+}
+
+/** A title page's stream line: the tier (when not already in the meta line), the labels, and whether it is only claimed so far. */
+@Composable
+private fun QualityLine(tier: String?, labels: List<String>, estimated: Boolean) {
+    if (tier == null && labels.isEmpty()) return
+    Row(horizontalArrangement = Arrangement.spacedBy(Space.m), verticalAlignment = Alignment.CenterVertically) {
+        tier?.let { TierChip(it) }
+        if (labels.isNotEmpty()) Badges(labels)
+        if (estimated) Text("Estimated until it plays", style = Type.caption, maxLines = 1)
+    }
+}
+
 /** Year, running time, genres and rating; the group when the provider gives no genres. */
 @Composable
 private fun MetaLine(movie: Movie, info: MovieInfo?, extra: String? = null) {
@@ -744,6 +777,7 @@ private fun MetaLine(movie: Movie, info: MovieInfo?, extra: String? = null) {
     val runtime = info?.secs?.takeIf { it > 0 }?.let { runtimeLabel(it * 1000L) }
     val rating = info?.rating?.ifEmpty { null }?.let { "$it/10" }
     Row(horizontalArrangement = Arrangement.spacedBy(Space.m), verticalAlignment = Alignment.CenterVertically) {
+        info?.tier?.ifEmpty { null }?.let { TierChip(it) }
         movie.title.badge?.let { Badges(remember(it) { listOf(it) }) }
         Text(listOfNotNull(movie.title.year, extra, runtime, genre ?: groupLabel(movie.group).name, rating).joinToString(" · "), style = Type.body, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
@@ -1239,7 +1273,7 @@ private fun FilmPage(film: Movie, resume: Resume?, active: Boolean, hidden: Bool
             Text(film.title.title, style = BIG_TITLE, maxLines = 2, overflow = TextOverflow.Ellipsis)
             MetaLine(film, info)
             // What the stream is, before it plays.
-            info?.quality?.takeIf { it.isNotEmpty() }?.let { Badges(it) }
+            QualityLine(null, info?.quality.orEmpty(), estimated = info?.estimated == true)
             if (started && resume!!.dur > 0) Row(horizontalArrangement = Arrangement.spacedBy(Space.m), verticalAlignment = Alignment.CenterVertically) {
                 Text(leftLabel(resume.dur - resume.pos), style = Type.headline, maxLines = 1)
                 ProgressLine({ resume.pos.toFloat() / resume.dur }, Modifier.width(PROGRESS_WIDTH))
@@ -1330,7 +1364,7 @@ private fun ShowPage(show: Movie, resume: Resume?, watched: Set<Int>, active: Bo
                 MetaLine(show, data?.info, extra = seasons?.let { if (it == 1) "1 season" else "$it seasons" })
                 data?.plot?.ifBlank { null }?.let { Text(it, style = Type.body, maxLines = 6, overflow = TextOverflow.Ellipsis) }
                 // The episode up next's stream, before it plays.
-                target?.let { episodes[it].quality }?.takeIf { it.isNotEmpty() }?.let { Badges(it) }
+                target?.let { episodes[it] }?.let { QualityLine(it.tier.ifEmpty { null }, it.quality, estimated = false) }
                 data?.cast?.ifBlank { null }?.let { Text("Starring $it", style = Type.caption, maxLines = 1, overflow = TextOverflow.Ellipsis) }
                 val next = target?.let { episodes[it] }
                 val started = next != null && resume?.episode == next.id && resume.pos > 0

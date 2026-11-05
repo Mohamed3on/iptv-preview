@@ -7,6 +7,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.Request
 import java.io.File
 import java.io.IOException
@@ -135,6 +136,27 @@ class FeedSync(
             }
         }
     }
+
+    /**
+     * What a film really is, measured while it played ([reading] from player.filmReading), so the server
+     * knows its quality rather than its category's claim. Once per film per app session; best effort.
+     */
+    suspend fun reportFilmQuality(id: Int, reading: Map<String, Any>) = withContext(Dispatchers.IO) {
+        if (!filmsReported.add(id)) return@withContext
+        runCatching {
+            val body = kotlinx.serialization.json.JsonObject((reading + ("id" to id)).mapValues { (_, v) ->
+                when (v) {
+                    is Number -> kotlinx.serialization.json.JsonPrimitive(v)
+                    is Boolean -> kotlinx.serialization.json.JsonPrimitive(v)
+                    else -> kotlinx.serialization.json.JsonPrimitive(v.toString())
+                }
+            }).toString()
+            val request = Request.Builder().url("$baseUrl/api/app/film-quality?t=$token")
+                .post(okhttp3.RequestBody.create("application/json".toMediaTypeOrNull(), body)).build()
+            client.newCall(request).execute().use { res -> if (res.isSuccessful) movieInfos.remove(id) }
+        }
+    }
+    private val filmsReported = java.util.Collections.synchronizedSet(HashSet<Int>())
 
     /** What [movieInfo] or [episodes] already holds for a title, without waiting: a screen's first frame. */
     fun peekMovieInfo(id: Int): MovieInfo? = movieInfos[id]

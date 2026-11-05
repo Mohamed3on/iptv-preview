@@ -287,7 +287,8 @@ class CopyChoices(private val store: KeyValueStore, private val now: () -> Long 
         if (setup.isBlank) return
         val at = now()
         marks.getOrPut(setup.fingerprint) { mutableMapOf() }[copy.id] =
-            Mark(works, at, if (copy.source == Source.RealDebrid) at + RD_MARK_MS else Long.MAX_VALUE)
+            // A failed IPTV copy is tried again after a day: a busy or dead provider link can look like a bad file.
+            Mark(works, at, when { copy.source == Source.RealDebrid -> at + RD_MARK_MS; works -> Long.MAX_VALUE; else -> at + IPTV_FAIL_MS })
         write<Map<String, Map<String, Mark>>>(MARKS, marks)
     }
 
@@ -321,6 +322,7 @@ class CopyChoices(private val store: KeyValueStore, private val now: () -> Long 
         const val PINS = "copies.pins"
         const val LEARNT = "copies.learnt"
         const val RD_MARK_MS = 30L * 24 * 3_600_000
+        const val IPTV_FAIL_MS = 24L * 3_600_000
         val json = Json { ignoreUnknownKeys = true }
     }
 }

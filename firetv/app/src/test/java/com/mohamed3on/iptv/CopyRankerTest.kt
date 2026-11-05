@@ -95,7 +95,7 @@ class CopyRankerTest {
         now += 31L * 24 * 3_600_000
         val later = CopyChoices(store) { now } // a fresh load prunes too
         assertEquals(hdr10Web, later.rank("movie:1", listOf(hdr10Web, iptv1080), "en", hdr10Tv) { null }.pick?.copy)
-        assertEquals(Support.Wont, later.rank("movie:1", listOf(iptv1080), "en", hdr10Tv) { null }.copies[0].support)
+        assertEquals(Support.Works, later.rank("movie:1", listOf(iptv1080), "en", hdr10Tv) { null }.copies[0].support) // an IPTV failure lapses after a day
     }
 
     @Test fun aPinBeatsTheRanking() {

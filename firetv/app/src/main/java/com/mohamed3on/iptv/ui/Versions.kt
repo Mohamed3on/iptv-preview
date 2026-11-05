@@ -310,6 +310,7 @@ private fun rdStatus(status: RdStatus, answer: TitleAnswer?) = when (status) {
     RdStatus.RateLimited -> "Busy, adds paused"
     RdStatus.TooManyDownloads -> "Too many downloads"
     RdStatus.Denied -> "Refused (account or IP)"
+    RdStatus.NotPremium -> "Premium ended"
     RdStatus.Ok -> when {
         answer?.rdPending == true -> "Searching…"
         answer?.rdUnavailable == true -> "Search unavailable"

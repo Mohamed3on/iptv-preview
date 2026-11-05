@@ -138,4 +138,17 @@ class RealDebridTest {
         assertEquals(0L, testScheduler.currentTime)
         assertTrue(paths().none { it.endsWith("addMagnet") })
     }
+
+    @Test fun `an ended premium, read from the account or a refused unrestrict, stops every Real-Debrid call`() = runTest {
+        val free = rd()
+        reply(200, """{"type":"free","expiration":"2026-11-01T00:00:00.000Z"}""")
+        free.readAccount()
+        assertEquals(RdStatus.NotPremium, free.status.value)
+        assertTrue(free.check(listOf(film)).isEmpty())
+        val refused = rd()
+        reply(503, """{"error":"hoster_not_free","error_code":20}""")
+        runCatching { refused.link(RdCheck.Ready("T1", "https://real-debrid.com/d/L1")) }
+        assertEquals(RdStatus.NotPremium, refused.status.value)
+        assertEquals(listOf("GET /rest/user", "POST /rest/unrestrict/link"), paths())
+    }
 }

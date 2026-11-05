@@ -4,6 +4,7 @@ import com.mohamed3on.iptv.data.Debrid
 import com.mohamed3on.iptv.data.RdCandidate
 import com.mohamed3on.iptv.data.RdCheck
 import com.mohamed3on.iptv.data.RdError
+import com.mohamed3on.iptv.data.RdStatus
 import com.mohamed3on.iptv.player.Capacity.Source
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -65,6 +66,8 @@ sealed interface Notice {
     data class TrialResult(val copy: Copy, val works: Boolean) : Notice
     /** Subtitles in [language] ("en", "ar") came from OpenSubtitles and show (R30). */
     data class Subtitles(val language: String) : Notice
+    /** Real-Debrid's premium ended: its copies are skipped (shown once an app session). */
+    data object PremiumEnded : Notice
     /** The intro plays; ▲ jumps to its [end] (R33). Goes once playback leaves it. */
     data class SkipIntro(val end: Long) : Notice
 }
@@ -324,7 +327,8 @@ class FilmSession(
         return ranking?.copies?.firstOrNull { r ->
             val c = r.copy
             c.id !in tried && (r.support != Support.Wont || c.id == pin) &&
-                if (c.source == Source.Iptv) !iptvBusy else c.id in torrents && rd[c.id].let { it == null || it is RdCheck.Ready }
+                if (c.source == Source.Iptv) !iptvBusy
+                else debrid.status.value != RdStatus.NotPremium && c.id in torrents && rd[c.id].let { it == null || it is RdCheck.Ready }
         }
     }
 

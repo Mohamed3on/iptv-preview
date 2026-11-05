@@ -105,7 +105,9 @@ class AppGraph(context: Context) {
     /** Trakt through the box: the Options sign-in and finished plays, queued until logged. */
     val trakt by lazy { TraktSync(http, BuildConfig.SERVER_URL, BuildConfig.APP_TOKEN, prefs, scope) }
     /** Real-Debrid from the stick's own IP; one instance, so its account list and answers are shared. */
-    val debrid by lazy { RealDebrid(http, { sync.realDebridToken }, onInfringing = ::refused) }
+    val debrid by lazy { RealDebrid(http, { sync.realDebridToken }, onInfringing = ::refused).also { scope.launch { it.readAccount() } } }
+    /** "Real-Debrid premium has ended" shows once an app session. */
+    val premiumEndedShown = java.util.concurrent.atomic.AtomicBoolean()
     /** Each title's copies, ranked and checked ahead of Play. Touch [setup] on the main thread first. */
     val films by lazy { FilmCopies(sync::copies, debrid, copyChoices, capacity, { setup.profile.value }, scope) }
 

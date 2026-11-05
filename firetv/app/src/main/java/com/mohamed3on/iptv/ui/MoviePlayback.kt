@@ -109,6 +109,7 @@ import com.mohamed3on.iptv.ui.theme.material
 import com.mohamed3on.iptv.ui.theme.reveal
 import com.mohamed3on.iptv.ui.theme.slideFade
 import com.mohamed3on.iptv.KeyCap
+import com.mohamed3on.iptv.data.RdStatus
 import com.mohamed3on.iptv.data.TitleId
 import com.mohamed3on.iptv.player.Copy
 import com.mohamed3on.iptv.player.ExoFilmPlayer
@@ -123,6 +124,7 @@ import androidx.compose.foundation.layout.ColumnScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
@@ -286,6 +288,10 @@ internal fun MoviePlayback(
     }
     // A new network or VPN is a new IP: a Real-Debrid link is tied to the old one (KTD2).
     LaunchedEffect(Unit) { graph.route.effective.drop(1).collect { session.ipChanged() } }
+    LaunchedEffect(Unit) {
+        graph.debrid.status.first { it == RdStatus.NotPremium }
+        if (graph.premiumEndedShown.compareAndSet(false, true)) session.inform(Notice.PremiumEnded)
+    }
     // Home: keep the place and let go of the account's one connection; back in the app, it's the movies.
     LifecycleEventEffect(Lifecycle.Event.ON_STOP) {
         save()
@@ -830,6 +836,7 @@ private fun noticeText(n: Notice) = when (n) {
     is Notice.TrialResult -> NoticeText(if (n.works) "${short(n.copy)} works here" else "${short(n.copy)} didn’t play here · back to the last version")
     is Notice.Subtitles -> NoticeText("${fetchedName(n.language)} subtitles from OpenSubtitles · timing in Options")
     is Notice.SkipIntro -> NoticeText("Intro", "Skip")
+    Notice.PremiumEnded -> NoticeText("Real-Debrid premium has ended — renew at real-debrid.com")
 }
 
 private val NOTICE_WIDTH = 420.dp

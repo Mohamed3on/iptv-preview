@@ -24,8 +24,8 @@ import java.util.concurrent.ConcurrentHashMap
  */
 data class RdCandidate(val hash: String, val fileIdx: Int?, val filename: String? = null, val cached: Boolean = false)
 
-/** The Real-Debrid account as Versions shows it (source status). */
-enum class RdStatus { Ok, NoToken, TokenInvalid, RateLimited, TooManyDownloads, Denied }
+/** The Real-Debrid account as Versions shows it (source status). [NotPremium] holds for the app session: no more Real-Debrid calls. */
+enum class RdStatus { Ok, NoToken, TokenInvalid, RateLimited, TooManyDownloads, Denied, NotPremium }
 
 /** A failed Real-Debrid call. Only [permanent] faults (`infringing_file`) mark a copy (KTD7). Never carries the token. */
 class RdError(val permanent: Boolean, val code: String) : Exception(code)
@@ -87,6 +87,7 @@ class AddGate {
 @Serializable private class Info(val status: String, val files: List<RdFile> = emptyList(), val links: List<String> = emptyList())
 @Serializable private class Added(val id: String)
 @Serializable private class Unrestricted(val download: String)
+@Serializable private class User(val type: String = "")
 @Serializable private class ApiError(val error: String? = null, @SerialName("error_code") val code: Int? = null)
 
 private val json = Json { ignoreUnknownKeys = true }
@@ -112,9 +113,26 @@ class RealDebrid(
     private var listed: List<Torrent>? = null
     private var listedAt = 0L
     private val answers = ConcurrentHashMap<RdCandidate, RdCheck>()
+    @Volatile private var notPremium = false
+    @Volatile private var accountRead = false
+
+    /** Reads the account (`/user`) once per app session, off Play's path: premium ended means [RdStatus.NotPremium]. */
+    suspend fun readAccount() {
+        if (accountRead || token() == null) return
+        runCatching { call<User>(Request.Builder().url("$base/user")) }.onSuccess {
+            accountRead = true
+            if (it.type != "premium") lapsed()
+        }
+    }
+
+    private fun lapsed() {
+        notPremium = true
+        _status.value = RdStatus.NotPremium
+    }
 
     override suspend fun inAccount(candidates: List<RdCandidate>): Map<RdCandidate, RdCheck> {
         if (token() == null) return emptyMap<RdCandidate, RdCheck>().also { _status.value = RdStatus.NoToken }
+        if (notPremium) return emptyMap()
         // A new check starts clean once the add pause is over; a bad token stays until a call succeeds.
         if (now() >= gate.pausedUntil && _status.value != RdStatus.TokenInvalid) _status.value = RdStatus.Ok
         return try {
@@ -130,6 +148,7 @@ class RealDebrid(
     }
 
     override suspend fun probe(c: RdCandidate, wait: Boolean): RdCheck? {
+        if (notPremium) return RdCheck.Failed(RdError(false, "not_premium"))
         if (now() - listedAt >= KEEP_MS) answers.clear()
         answers[c]?.let { return it }
         if (now() < gate.pausedUntil) return RdCheck.Failed(RdError(false, "too_many_requests"))
@@ -138,7 +157,7 @@ class RealDebrid(
     }
 
     override suspend fun link(ready: RdCheck.Ready): String =
-        call<Unrestricted>(Request.Builder().url("$base/unrestrict/link").post(form("link", ready.link))).download
+        if (notPremium) throw RdError(false, "not_premium") else call<Unrestricted>(Request.Builder().url("$base/unrestrict/link").post(form("link", ready.link))).download
 
     /** Takes addMagnet's turn, waiting out the spacing; without [wait], false unless the turn is free now. */
     private suspend fun turn(wait: Boolean): Boolean {
@@ -213,7 +232,7 @@ class RealDebrid(
             throw RdError(false, "network")
         }
         if (code !in 200..299) fail(code, body, retryAfter)
-        if (now() >= gate.pausedUntil) _status.value = RdStatus.Ok
+        if (now() >= gate.pausedUntil && !notPremium) _status.value = RdStatus.Ok
         return when {
             T::class == Unit::class -> Unit as T
             body.isBlank() -> json.decodeFromString<T>("[]") // an empty torrent list is a 204
@@ -228,10 +247,12 @@ class RealDebrid(
         when {
             permanent -> {}
             code == 401 || e?.code == 8 -> _status.value = RdStatus.TokenInvalid
+            // permission_denied at addMagnet, hoster_not_free at unrestrict: the premium has ended.
+            e?.code == 9 || e?.code == 20 -> lapsed()
             code == 429 || e?.code == 5 || e?.code == 34 -> refusesAdds(RdStatus.RateLimited)
             e?.code == 21 -> refusesAdds(RdStatus.TooManyDownloads)
-            // Locked or not premium, IP not allowed (a VPN exit?), traffic or fair-use limit.
-            code == 403 || e?.code in setOf(9, 14, 15, 22, 23, 36) -> _status.value = RdStatus.Denied
+            // Locked or not activated, IP not allowed (a VPN exit?), traffic or fair-use limit.
+            code == 403 || e?.code in setOf(14, 15, 22, 23, 36) -> _status.value = RdStatus.Denied
         }
         throw RdError(permanent, e?.error ?: "http_$code")
     }

@@ -101,6 +101,7 @@ import com.mohamed3on.iptv.ui.theme.Edge
 import com.mohamed3on.iptv.ui.theme.LocalReducedMotion
 import com.mohamed3on.iptv.ui.theme.Motion
 import com.mohamed3on.iptv.ui.theme.Palette
+import com.mohamed3on.iptv.ui.theme.ScrollText
 import com.mohamed3on.iptv.ui.theme.Scrim
 import com.mohamed3on.iptv.ui.theme.Space
 import com.mohamed3on.iptv.ui.theme.Type
@@ -825,7 +826,7 @@ private fun NoticeCorner(state: StateFlow<FilmState>, modifier: Modifier) {
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(Space.s),
     ) {
-        Text(n.text, style = Type.caption.copy(color = Palette.textPrimary), maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+        ScrollText(n.text, style = Type.caption.copy(color = Palette.textPrimary), lines = 2, modifier = Modifier.weight(1f, fill = false))
         n.action?.let {
             KeyCap("▲")
             Text(it, style = Type.caption.copy(color = Palette.textPrimary), maxLines = 1)

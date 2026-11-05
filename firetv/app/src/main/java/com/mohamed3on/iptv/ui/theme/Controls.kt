@@ -14,7 +14,14 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.platform.LocalDensity
+import kotlinx.coroutines.delay
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -90,6 +97,47 @@ fun FitText(text: String, style: TextStyle, modifier: Modifier = Modifier, color
 }
 
 private val FADE = 24.dp
+
+/**
+ * Lines that never end in "…": a slot [lines] high (at least [minLines]); text that runs past it scrolls up slowly once
+ * it has rested 1.5 s, pauses at the end, and starts over from the top when the text changes, clipped under a soft fade
+ * at the bottom. With reduced motion the slot grows to hold all of it.
+ */
+@Composable
+fun ScrollText(text: String, style: TextStyle, lines: Int, modifier: Modifier = Modifier, minLines: Int = 1, color: Color = Color.Unspecified) {
+    if (LocalReducedMotion.current) return Text(text, style = style, color = color, minLines = minLines, modifier = modifier)
+    val slot = with(LocalDensity.current) { style.lineHeight.toDp() } * lines
+    val scroll = rememberScrollState()
+    LaunchedEffect(text) {
+        scroll.scrollTo(0)
+        while (true) {
+            delay(1_500)
+            val end = scroll.maxValue.takeIf { it in 1 until Int.MAX_VALUE } ?: return@LaunchedEffect
+            scroll.animateScrollTo(end, tween((end * SCROLL_MS_PER_PX).toInt(), easing = LinearEasing))
+            delay(2_000)
+            scroll.scrollTo(0)
+        }
+    }
+    Box(modifier.heightIn(max = slot).fadeBottom(scroll).verticalScroll(scroll, enabled = false)) {
+        Text(text, style = style, color = color, minLines = minLines)
+    }
+}
+
+/** About 25 px a second: slow enough to read along. */
+private const val SCROLL_MS_PER_PX = 40f
+
+/** Fades the bottom [FADE] of a slot while more text waits below it. */
+private fun Modifier.fadeBottom(scroll: ScrollState): Modifier = graphicsLayer {
+    compositingStrategy = if (scroll.maxValue > 0) CompositingStrategy.Offscreen else CompositingStrategy.Auto
+}.drawWithCache {
+    val fade = FADE.toPx().coerceAtMost(size.height)
+    val from = size.height - fade
+    val brush = Brush.verticalGradient(0f to Color.Black, 1f to Color.Transparent, startY = from, endY = size.height)
+    onDrawWithContent {
+        drawContent()
+        if (scroll.value < scroll.maxValue) drawRect(brush, Offset(0f, from), Size(size.width, fade), blendMode = BlendMode.DstIn)
+    }
+}
 
 /** Fades the last [FADE] of a line whose text ([textWidth] wide) runs past it. */
 private fun Modifier.fadeEnd(textWidth: FloatState): Modifier = graphicsLayer {

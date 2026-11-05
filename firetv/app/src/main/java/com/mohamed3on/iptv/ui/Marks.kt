@@ -34,17 +34,21 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.tv.material3.Text
 import com.mohamed3on.iptv.ui.theme.Palette
+import com.mohamed3on.iptv.ui.theme.ScrollText
 import com.mohamed3on.iptv.ui.theme.Space
 import com.mohamed3on.iptv.ui.theme.Type
 import com.mohamed3on.iptv.ui.theme.material
 import com.mohamed3on.iptv.ui.theme.tabular
 
 /**
- * ☰ on a title page or an episode row: [rows] (Mark watched, Versions…) and Rate, whose page picks 1–10 with
- * Left/Right and OK, or clears the rating. Back peels one page; ☰ closes it.
+ * ☰ on a title page, a card or an episode row: [rows] (Mark watched, Versions…), Rate (when [onRate] is given), whose page
+ * picks 1–10 with Left/Right and OK, or clears the rating, then [after]. Back peels one page; ☰ closes it.
  */
 @Composable
-internal fun MarksPanel(heading: String, rows: List<Pair<String, () -> Unit>>, rating: Int?, onRate: (Int?) -> Unit, onClose: () -> Unit, modifier: Modifier = Modifier) {
+internal fun MarksPanel(
+    heading: String, rows: List<Pair<String, () -> Unit>>, rating: Int?, onRate: ((Int?) -> Unit)?, onClose: () -> Unit, modifier: Modifier = Modifier,
+    after: List<Pair<String, () -> Unit>> = emptyList(),
+) {
     var rate by remember { mutableStateOf(false) }
     val first = remember { FocusRequester() }
     LaunchedEffect(rate) {
@@ -69,11 +73,12 @@ internal fun MarksPanel(heading: String, rows: List<Pair<String, () -> Unit>>, r
             .padding(Space.xl),
         verticalArrangement = Arrangement.spacedBy(Space.xs),
     ) {
-        Text(if (rate) "Rate $heading" else heading, style = Type.title, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(start = Space.l, bottom = Space.l))
+        ScrollText(if (rate) "Rate $heading" else heading, style = Type.title, lines = 2, modifier = Modifier.padding(start = Space.l, bottom = Space.l))
         if (!rate) {
             rows.forEachIndexed { i, (label, onClick) -> PanelRow(label, focus = if (i == 0) first else null, onClick = onClick) }
-            PanelRow("Rate", rating?.let { "$it/10" }, focus = if (rows.isEmpty()) first else null) { rate = true }
-        } else {
+            if (onRate != null) PanelRow("Rate", rating?.let { "$it/10" }, focus = if (rows.isEmpty()) first else null) { rate = true }
+            after.forEachIndexed { i, (label, onClick) -> PanelRow(label, focus = if (i == 0 && rows.isEmpty() && onRate == null) first else null, onClick = onClick) }
+        } else if (onRate != null) {
             RatingRow(rating ?: 7, first, onRate)
             if (rating != null) PanelRow("Clear rating") { onRate(null) }
             Text("Left and right to choose, OK to save", style = Type.caption, modifier = Modifier.padding(start = Space.l, top = Space.m))

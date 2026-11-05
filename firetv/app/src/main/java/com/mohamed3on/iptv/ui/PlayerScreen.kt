@@ -97,6 +97,7 @@ import com.mohamed3on.iptv.ui.theme.Scrim
 import com.mohamed3on.iptv.ui.theme.edgeFade
 import com.mohamed3on.iptv.ui.theme.Space
 import com.mohamed3on.iptv.ui.theme.FitText
+import com.mohamed3on.iptv.ui.theme.ScrollText
 import com.mohamed3on.iptv.ui.theme.Type
 import com.mohamed3on.iptv.player.Health
 import com.mohamed3on.iptv.player.AudioOption
@@ -615,7 +616,7 @@ private fun Banner(
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(Space.xs)) {
             Row(horizontalArrangement = Arrangement.spacedBy(Space.m), verticalAlignment = Alignment.CenterVertically) {
                 // Event slots are named for the event, so a long name gets a second line rather than an ellipsis.
-                Text(remember(channel.name) { displayName(channel.name) }, style = Type.title, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+                ScrollText(remember(channel.name) { displayName(channel.name) }, style = Type.title, lines = 2, modifier = Modifier.weight(1f, fill = false))
                 AnimatedVisibility(info == null, enter = fadeIn(tween(Motion.FADE_MS)), exit = fadeOut(tween(STATS_OUT_MS))) { Badges(badges) }
                 if (tuning) Tuning()
             }
@@ -677,7 +678,7 @@ private fun Guide(channel: Channel, guide: GuideDb?, clock: State<Long>, describ
                 modifier = Modifier.widthIn(max = PROGRESS_WIDTH),
             )
         }
-        if (describe && now.descr.isNotBlank()) Text(now.descr, style = Type.body, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        if (describe && now.descr.isNotBlank()) ScrollText(now.descr, style = Type.body, lines = 2)
     }
     if (next != null && !next.synthetic) {
         Text("Next · ${clockTime(next.start)} ${cleanTitle(next.title)}", style = Type.body, maxLines = 2)

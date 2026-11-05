@@ -170,6 +170,7 @@ import com.mohamed3on.iptv.ui.theme.ProgressLine
 import com.mohamed3on.iptv.ui.theme.Radius
 import com.mohamed3on.iptv.ui.theme.Space
 import com.mohamed3on.iptv.ui.theme.FitText
+import com.mohamed3on.iptv.ui.theme.ScrollText
 import com.mohamed3on.iptv.ui.theme.Type
 import com.mohamed3on.iptv.ui.theme.edgeFade
 import com.mohamed3on.iptv.ui.theme.material
@@ -211,8 +212,8 @@ private val PROGRESS_WIDTH = 200.dp
 /** Up next's cards: 16:9, so a backdrop fits whole. */
 private val WIDE = DpSize(184.dp, 104.dp)
 private val STILL = DpSize(128.dp, 72.dp)
-/** Room kept at the hero's right for the Search and Hide watched buttons. */
-private val SEARCH_ROOM = 168.dp
+/** Room kept at the hero's right for the Search button. */
+private val SEARCH_ROOM = 120.dp
 /** Prefs key: "1" while the rows show watched titles (they leave them out by default). */
 private const val SHOW_WATCHED = "movies.showWatched"
 /** Backdrops decode at 720p: darkened behind text, more pixels show nothing and cost the stick's memory. */
@@ -616,7 +617,10 @@ private fun MoviesBrowse(
 ) {
     val reduced = LocalReducedMotion.current
     val prefs = LocalContext.current.graph.prefs
+    val scope = rememberCoroutineScope()
     var hideWatched by remember { mutableStateOf(prefs.get(SHOW_WATCHED) == null) }
+    // ☰ on a card: its actions panel, with Remove from Up next ([Actions.removable]) and the rows' Hide watched setting.
+    var actions by remember { mutableStateOf<Actions?>(null) }
     // Each saved place with its title as last played (its provider id, for its episodes and IPTV copy) and as the
     // library has it now (tier and score), newest first; one played only from Real-Debrid from its own name and poster (R21).
     // Then followed shows' next episodes, latest aired first: one takes the hero only when nothing is part-way through.
@@ -740,7 +744,7 @@ private fun MoviesBrowse(
                     onResume = onResume,
                     onStartOver = onStartOver,
                     onOpen = onOpen,
-                    onRemove = onRemove,
+                    onMenu = { actions = Actions(it, removable = true) },
                     onDown = { page = BrowsePage.Rows },
                     modifier = Modifier.onFocusChanged { if (it.hasFocus) at = FocusAt.UpNext },
                 )
@@ -763,36 +767,85 @@ private fun MoviesBrowse(
                                 focused.value = null // so "back on the card" is only true once it is
                                 onOpen(it)
                             },
+                            onMenu = { actions = Actions(it) },
                         )
                     } else Box(Modifier.onFocusChanged { if (it.hasFocus) at = FocusAt.Rows }) {
                         Rows(
                             rows, watched, content, active,
                             onFocused = { focused.value = it },
                             onOpen = onOpen,
-                            onRemove = onRemove,
+                            onMenu = { m, continuing -> actions = Actions(m, removable = continuing, rows = true) },
                             // Up from the first row: back to Up next, else to Search.
                             onTop = { if (upNext.isNotEmpty()) page = BrowsePage.UpNext else runCatching { searchButton.requestFocus() } },
                         )
                     }
                 }
             }
-            if (kind == 2 && shownPage != BrowsePage.Search) Column(
-                Modifier.align(Alignment.TopEnd).padding(top = Space.safeY, end = EDGE),
-                horizontalAlignment = Alignment.End,
-                verticalArrangement = Arrangement.spacedBy(Space.s),
-            ) {
-                PageButton(
-                    "Search", ::openSearch,
-                    Modifier.focusRequester(searchButton).onFocusChanged { if (it.isFocused) at = FocusAt.SearchButton },
-                )
+            if (kind == 2 && shownPage != BrowsePage.Search) PageButton(
+                "Search", ::openSearch,
+                Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(top = Space.safeY, end = EDGE)
+                    .focusRequester(searchButton)
+                    .onFocusChanged { if (it.isFocused) at = FocusAt.SearchButton },
+            )
+        }
+        actions?.let { a ->
+            TitleActions(
+                a.movie,
+                onClose = {
+                    actions = null
+                    // Back where it was: the card (or its row's, when it left), the result, or Resume.
+                    scope.launch {
+                        withFrameNanos {}
+                        runCatching { (if (shownPage == BrowsePage.Search) results else if (shownPage == BrowsePage.UpNext) resumeButton else content).requestFocus() }
+                    }
+                },
+                onRemove = if (a.removable) ({ onRemove(a.movie) }) else null,
                 // Watched titles in the library's rows, or not (hidden at first; the Watchlist, Up next and search keep them); kept across launches.
-                PageButton(if (hideWatched) "Show watched" else "Hide watched", {
+                hideWatched = if (a.rows) hideWatched else null,
+                onHideWatched = {
                     hideWatched = !hideWatched
                     prefs.put(SHOW_WATCHED, if (hideWatched) null else "1")
-                })
-            }
+                },
+                modifier = Modifier.align(Alignment.CenterEnd).padding(Space.safe),
+            )
         }
     }
+}
+
+/** ☰'s panel on the browsing screen: for [movie], from Up next or Continue watching ([removable]) or the rows ([rows]). */
+private class Actions(val movie: Movie, val removable: Boolean = false, val rows: Boolean = false)
+
+/**
+ * ☰ on a card or a title page: Add to / Remove from Watchlist (not a title only Letterboxd's list holds), Mark watched or
+ * unwatched, Rate, then Remove from Up next ([onRemove]) and the rows' Hide watched titles setting ([hideWatched]) where they apply.
+ */
+@Composable
+private fun TitleActions(
+    movie: Movie, onClose: () -> Unit, onRemove: (() -> Unit)? = null, hideWatched: Boolean? = null, onHideWatched: () -> Unit = {}, modifier: Modifier = Modifier,
+) {
+    val graph = LocalContext.current.graph
+    val id = movie.titleId
+    val onList = id in graph.watchlist.ids.collectAsState().value
+    val letterboxdOnly = onList && id in graph.watchlist.letterboxd.collectAsState().value
+    val seen = id in graph.marks.watched.collectAsState().value
+    val markable = graph.marks.canMark(id)
+    MarksPanel(
+        movie.title.title,
+        listOfNotNull(
+            if (graph.watchlist.canHold(id) && !letterboxdOnly) (if (onList) "Remove from Watchlist" else "Add to Watchlist") to { graph.watchlist.toggle(id); onClose() } else null,
+            if (markable) (if (seen) "Mark unwatched" else "Mark watched") to { graph.marks.setWatched(id, !seen); onClose() } else null,
+        ),
+        graph.marks.ratings.collectAsState().value[id],
+        onRate = if (markable) ({ graph.marks.rate(id, it); onClose() }) else null,
+        onClose = onClose,
+        modifier = modifier,
+        after = listOfNotNull(
+            onRemove?.let { "Remove from Up next" to { it(); onClose() } },
+            hideWatched?.let { "Hide watched titles: ${if (it) "On" else "Off"}" to { onHideWatched(); onClose() } },
+        ),
+    )
 }
 
 /** [focused] once it has rested for [HERO_REST_MS], so holding a key never churns what depends on it. */
@@ -953,7 +1006,7 @@ private fun UpNextPage(
     onResume: (Movie) -> Unit,
     onStartOver: (Movie) -> Unit,
     onOpen: (Movie) -> Unit,
-    onRemove: (Movie) -> Unit,
+    onMenu: (Movie) -> Unit,
     onDown: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -986,19 +1039,19 @@ private fun UpNextPage(
                     if (r.dur > 0) ProgressLine({ r.pos.toFloat() / r.dur }, Modifier.width(PROGRESS_WIDTH))
                     if (r.at == 0L && m.titleId in newShows) Text(NEW_EPISODE, style = NEW_STYLE, maxLines = 1)
                 }
-                Text(i?.plot.orEmpty(), style = Type.body, minLines = 3, maxLines = 3, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = Space.xs))
+                ScrollText(i?.plot.orEmpty(), style = Type.body, lines = 3, minLines = 3, modifier = Modifier.padding(top = Space.xs))
             }
         }
         val alone = entries.size == 1
         Row(
             Modifier
                 .padding(start = EDGE, top = Space.l)
-                // With one title there is no strip below: Down goes on to the rows, and Menu takes it out, from here.
+                // With one title there is no strip below: Down goes on to the rows, and Menu opens its actions, from here.
                 .onKeyEvent {
                     if (!alone || it.type != KeyEventType.KeyDown) return@onKeyEvent false
                     when (it.nativeKeyEvent.keyCode) {
                         AndroidKeyEvent.KEYCODE_DPAD_DOWN -> onDown()
-                        AndroidKeyEvent.KEYCODE_MENU -> onRemove(movie)
+                        AndroidKeyEvent.KEYCODE_MENU -> onMenu(movie)
                         else -> return@onKeyEvent false
                     }
                     true
@@ -1013,12 +1066,12 @@ private fun UpNextPage(
             }
         }
         if (alone) {
-            Text("Menu removes it · Down for all ${LocalLibrary.current.noun}", style = Type.caption, maxLines = 1, modifier = Modifier.padding(start = EDGE, top = Space.l))
+            Text("Menu for more · Down for all ${LocalLibrary.current.noun}", style = Type.caption, maxLines = 1, modifier = Modifier.padding(start = EDGE, top = Space.l))
             return@Column
         }
         Row(Modifier.padding(start = EDGE, top = Space.xl), horizontalArrangement = Arrangement.spacedBy(Space.m), verticalAlignment = Alignment.CenterVertically) {
             Text("Continue watching", style = Type.headline, maxLines = 1)
-            Text("Menu removes a title · Down for all ${LocalLibrary.current.noun}", style = Type.caption, maxLines = 1)
+            Text("Menu for more · Down for all ${LocalLibrary.current.noun}", style = Type.caption, maxLines = 1)
         }
         LazyRow(
             modifier = Modifier
@@ -1031,14 +1084,9 @@ private fun UpNextPage(
                             if (down) onDown()
                             true
                         }
-                        // The focused title leaves Up next; focus steps to a neighbour first (or up to Resume).
+                        // The focused title's actions (Remove from Up next among them).
                         AndroidKeyEvent.KEYCODE_MENU -> {
-                            if (down && it.nativeKeyEvent.repeatCount == 0) {
-                                val i = entries.indexOfFirst { e -> e.first.key == movie.key }
-                                val side = if (i < entries.lastIndex) FocusDirection.Right else FocusDirection.Left
-                                if (entries.size == 1 || !focusManager.moveFocus(side)) runCatching { resumeButton.requestFocus() }
-                                onRemove(movie)
-                            }
+                            if (down && it.nativeKeyEvent.repeatCount == 0) onMenu(movie)
                             true
                         }
                         else -> false
@@ -1090,7 +1138,7 @@ private val NEW_STYLE = Type.caption.copy(color = Palette.accent, fontWeight = F
  * no average is known); the group when nothing names genres.
  */
 @Composable
-private fun MetaLine(movie: Movie, info: MovieInfo?, extra: String? = null, tier: Boolean = true) {
+private fun MetaLine(movie: Movie, info: MovieInfo?, extra: String? = null) {
     val genre = info?.genre?.split(',', '/')?.map(String::trim)?.filter(String::isNotEmpty)?.take(2)?.joinToString(", ")?.ifEmpty { null }
     val runtime = (info?.secs?.takeIf { it > 0 }?.let { it * 1000L } ?: movie.lib?.rt?.takeIf { it > 0 }?.let { it * 60_000L })?.let(::runtimeLabel)
     val scored: Scored? = movie.lib?.takeIf { it.known } ?: info
@@ -1098,7 +1146,6 @@ private fun MetaLine(movie: Movie, info: MovieInfo?, extra: String? = null, tier
     val yours = LocalContext.current.graph.marks.ratings.collectAsState().value[movie.titleId]
     val scores = remember(scored, yours) { scoresLine(scored, yours) }
     Row(horizontalArrangement = Arrangement.spacedBy(Space.m), verticalAlignment = Alignment.CenterVertically) {
-        if (tier) (info?.tier?.ifEmpty { null } ?: movie.lib?.t?.ifEmpty { null })?.let { TierChip(it) }
         if (scores != null) Text(scores, style = SCORE_STYLE, maxLines = 1)
         movie.title.badge?.let { Badges(remember(it) { listOf(it) }) }
         val group = movie.group.takeIf { movie.lib != null } ?: groupLabel(movie.group).name
@@ -1159,17 +1206,17 @@ private fun compactCount(n: Int) = when {
 private fun yoursLabel(rating: Int) = "You $rating/10"
 
 /**
- * A card's corner: tier in its colour, then TrueScore's recent (else all-time) net-loved share for a film in its store, else the
- * combined score out of 10, in its own colour ([scored]'s when a title page learnt it); null when neither is known.
+ * A card's corner: TrueScore's recent (else all-time) net-loved share for a film in its store, else the combined score out
+ * of 10, in its colour ([scored]'s when a title page learnt it); null when neither is known.
  */
-private fun cardChip(t: LibTitle, scored: Scored): AnnotatedString? {
+private fun cardChip(scored: Scored): AnnotatedString? {
     val share = (scored.tq ?: scored.tr)?.let(::pct)
     val score = scored.s10
-    if (t.t.isEmpty() && share == null && score == null) return null
+    if (share == null && score == null) return null
     return buildAnnotatedString {
-        if (t.t.isNotEmpty()) withStyle(SpanStyle(color = tierColor(t.t), fontWeight = FontWeight.SemiBold)) { append(t.t) }
-        if (t.t.isNotEmpty() && (share != null || score != null)) append("  ")
-        if (share != null) withStyle(SpanStyle(color = Palette.share(share))) { append("$share%") }
+        // An arrow when the recent share is 10 points or more off the all-time one.
+        val drift = if (share != null && scored.tq != null && scored.tr != null) share - pct(scored.tr!!) else 0
+        if (share != null) withStyle(SpanStyle(color = Palette.share(share))) { append("$share%" + if (drift >= 10) " ↑" else if (drift <= -10) " ↓" else "") }
         else if (score != null) withStyle(SpanStyle(color = Palette.outOf10(score))) { append("%.1f".format(Locale.ROOT, score)) }
     }
 }
@@ -1315,7 +1362,7 @@ private fun Hero(movie: Movie?, info: MovieInfo?, resume: List<Resume>, placehol
                 }
             }
             MetaLine(m, i, extra = left)
-            i?.plot?.ifBlank { null }?.let { Text(it, style = Type.body, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = PLOT_WIDTH)) }
+            i?.plot?.ifBlank { null }?.let { ScrollText(it, style = Type.body, lines = 2, modifier = Modifier.widthIn(max = PLOT_WIDTH)) }
         }
     }
 }
@@ -1358,7 +1405,7 @@ private fun rememberKeepClear(): BringIntoViewSpec {
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun Rows(rows: List<MovieRow>, watched: Set<TitleId>, focus: FocusRequester, active: Boolean, onFocused: (Movie) -> Unit, onOpen: (Movie) -> Unit, onRemove: (Movie) -> Unit, onTop: () -> Unit) {
+private fun Rows(rows: List<MovieRow>, watched: Set<TitleId>, focus: FocusRequester, active: Boolean, onFocused: (Movie) -> Unit, onOpen: (Movie) -> Unit, onMenu: (Movie, continuing: Boolean) -> Unit, onTop: () -> Unit) {
     val density = LocalDensity.current
     val scope = rememberCoroutineScope()
     val first = remember { FocusRequester() }
@@ -1428,15 +1475,7 @@ private fun Rows(rows: List<MovieRow>, watched: Set<TitleId>, focus: FocusReques
                             opened = row.key to movie.id
                             onOpen(movie)
                         },
-                        // Continue watching: Menu takes a title out, as on Up next.
-                        // Focus stays in the row (the next card), else the rows' first when it was the last.
-                        onMenu = if (row.key != CONTINUE_ROW) null else { movie ->
-                            onRemove(movie)
-                            scope.launch {
-                                withFrameNanos {}
-                                if (row.movies.size > 1) runCatching { rowFocus[row.key]?.requestFocus() } else runCatching { focus.requestFocus() }
-                            }
-                        },
+                        onMenu = { movie -> onMenu(movie, row.key == CONTINUE_ROW) },
                         onVertical = { down ->
                             when {
                                 !down && i == 0 -> onTop()
@@ -1508,7 +1547,7 @@ private fun PosterRow(
                         onFocused(col, movie)
                     },
                     onClick = { onOpen(movie) },
-                    onMenu = onMenu?.let { remove -> { remove(movie) } },
+                    onMenu = onMenu?.let { m -> { m(movie) } },
                 )
             }
         }
@@ -1521,13 +1560,11 @@ private fun PosterRow(
  */
 @Composable
 private fun PosterCard(movie: Movie, progress: Float?, watched: Boolean = false, focus: FocusRequester?, back: FocusRequester? = null, onFocused: () -> Unit, onClick: () -> Unit, onMenu: (() -> Unit)? = null) {
-    val watchlist = LocalContext.current.graph.watchlist
     val reduced = LocalReducedMotion.current
     val context = LocalPlatformContext.current
     val density = LocalDensity.current
     val interaction = remember { MutableInteractionSource() }
     var focused by remember { mutableStateOf(false) }
-    var told by remember { mutableStateOf(false) }
     val lift = animateFloatAsState(if (focused) 1f else 0f, Motion.focus(), label = "lift")
     var failed by remember(movie.poster) { mutableStateOf(false) }
     val request = remember(movie.poster) {
@@ -1542,11 +1579,11 @@ private fun PosterCard(movie: Movie, progress: Float?, watched: Boolean = false,
             .then(if (back != null) Modifier.focusRequester(back) else Modifier)
             .onFocusChanged {
                 focused = it.isFocused
-                if (it.isFocused) onFocused() else told = false
+                if (it.isFocused) onFocused()
             }
             .onKeyEvent {
-                if (remoteKey(it.nativeKeyEvent.keyCode) != RemoteKey.Menu || (onMenu == null && !watchlist.canHold(movie.titleId))) return@onKeyEvent false
-                if (it.type == KeyEventType.KeyDown) if (onMenu != null) onMenu() else told = !watchlist.toggle(movie.titleId)
+                if (onMenu == null || remoteKey(it.nativeKeyEvent.keyCode) != RemoteKey.Menu) return@onKeyEvent false
+                if (it.type == KeyEventType.KeyDown && it.nativeKeyEvent.repeatCount == 0) onMenu()
                 true
             }
             .clickable(interaction, indication = null, onClick = onClick)
@@ -1581,16 +1618,14 @@ private fun PosterCard(movie: Movie, progress: Float?, watched: Boolean = false,
             ProgressLine({ progress }, Modifier.align(Alignment.BottomCenter).padding(horizontal = Space.s, vertical = Space.s))
         }
         if (watched) WatchedMark(Modifier.align(Alignment.TopEnd).padding(Space.s))
-        if (focused && watchlist.canHold(movie.titleId)) {
-            val onList = movie.titleId in watchlist.ids.collectAsState().value
-            val letterboxd = onList && movie.titleId in watchlist.letterboxd.collectAsState().value
-            Text(
-                if (told || letterboxd) watchlistLabel(onList, letterboxd, told) else if (onList) "✓ Watchlist · ☰" else "☰ Watchlist", style = CHIP_TEXT, maxLines = 2, // the Letterboxd notes take two lines on a card
-                modifier = Modifier.align(Alignment.BottomStart).padding(Space.xs).background(CHIP_GROUND, CHIP_SHAPE).padding(horizontal = Space.xs + 2.dp, vertical = 1.dp),
-            )
-        }
+        // How long it runs, where no progress line takes the bottom.
+        val rt = movie.lib?.rt ?: 0
+        if (rt > 0 && progress == null) Text(
+            remember(rt) { if (rt >= 60) "${rt / 60}h %02d".format(Locale.ROOT, rt % 60).removeSuffix(" 00") else "${rt}m" }, style = CHIP_TEXT, maxLines = 1,
+            modifier = Modifier.align(Alignment.BottomEnd).padding(Space.xs).background(CHIP_GROUND, CHIP_SHAPE).padding(horizontal = Space.xs + 2.dp, vertical = 1.dp),
+        )
         val learnt = movie.lib?.takeIf { !it.known }?.let { LocalContext.current.graph.sync.scores[movie.titleId] }
-        val chip = remember(movie.lib, learnt) { movie.lib?.let { cardChip(it, learnt ?: it) } }
+        val chip = remember(movie.lib, learnt) { movie.lib?.let { cardChip(learnt ?: it) } }
         if (chip != null) Text(
             chip, style = CHIP_TEXT, maxLines = 1,
             modifier = Modifier.align(Alignment.TopStart).padding(Space.xs).background(CHIP_GROUND, CHIP_SHAPE).padding(horizontal = Space.xs + 2.dp, vertical = 1.dp),
@@ -1618,6 +1653,7 @@ private fun SearchGrid(
     stray: () -> Boolean,
     arrive: () -> Boolean,
     onPlay: (Movie) -> Unit,
+    onMenu: (Movie) -> Unit,
 ) {
     var found by remember { mutableStateOf<List<Movie>?>(null) }
     val graph = LocalContext.current.graph
@@ -1676,7 +1712,7 @@ private fun SearchGrid(
             list == null -> {}
             list.isEmpty() -> item(key = "none", span = { GridItemSpan(maxLineSpan) }) { HintLine("No ${LocalLibrary.current.noun} match “${query.trim()}”") }
             else -> itemsIndexed(list, key = { _, m -> m.key }) { i, movie ->
-                PosterCard(movie, null, focus = if (i == 0) first else null, back = back?.takeIf { it.first == movie.id }?.second, onFocused = { onFocused(movie) }, onClick = { graph.recentSearches.add(query); onPlay(movie) })
+                PosterCard(movie, null, focus = if (i == 0) first else null, back = back?.takeIf { it.first == movie.id }?.second, onFocused = { onFocused(movie) }, onClick = { graph.recentSearches.add(query); onPlay(movie) }, onMenu = { onMenu(movie) })
             }
         }
     }
@@ -1786,14 +1822,14 @@ private fun FilmPage(
         TitleScroll(
             main = {
                 Column(Modifier.padding(start = EDGE, bottom = Space.xl).widthIn(max = PAGE_WIDTH), verticalArrangement = Arrangement.spacedBy(Space.s)) {
-                    Text(film.title.title, style = BIG_TITLE, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    ScrollText(film.title.title, style = BIG_TITLE, lines = 2)
                     // The tier is the copy's that plays, on the Plays line.
-                    MetaLine(film, info, tier = false)
+                    MetaLine(film, info)
                     if (started && resume!!.dur > 0) Row(horizontalArrangement = Arrangement.spacedBy(Space.m), verticalAlignment = Alignment.CenterVertically) {
                         Text(leftLabel(resume.dur - resume.pos), style = Type.headline, maxLines = 1)
                         ProgressLine({ resume.pos.toFloat() / resume.dur }, Modifier.width(PROGRESS_WIDTH))
                     }
-                    info?.plot?.ifBlank { null }?.let { Text(it, style = Type.body, maxLines = if (unavailable) 4 else 6, overflow = TextOverflow.Ellipsis) }
+                    info?.plot?.ifBlank { null }?.let { ScrollText(it, style = Type.body, lines = if (unavailable) 4 else 6) }
                     // The provider's facts name people only as text; TMDB's are the row below.
                     if (info?.people.isNullOrEmpty()) {
                         info?.cast?.ifBlank { null }?.let { Text("Starring $it", style = Type.caption, maxLines = 2) }
@@ -1828,17 +1864,7 @@ private fun FilmPage(
             },
             modifier = Modifier.align(Alignment.CenterEnd).padding(Space.safe),
         )
-        if (marking) {
-            val seen = film.titleId in watched
-            MarksPanel(
-                film.title.title,
-                listOf((if (seen) "Mark unwatched" else "Mark watched") to { graph.marks.setWatched(film.titleId, !seen); marking = false }),
-                graph.marks.ratings.collectAsState().value[film.titleId],
-                onRate = { graph.marks.rate(film.titleId, it); marking = false },
-                onClose = { marking = false },
-                modifier = Modifier.align(Alignment.CenterEnd).padding(Space.safe),
-            )
-        }
+        if (marking) TitleActions(film, onClose = { marking = false }, modifier = Modifier.align(Alignment.CenterEnd).padding(Space.safe))
     }
 }
 
@@ -2172,10 +2198,10 @@ private fun ShowPage(
             main = {
                 Row(Modifier.fillMaxSize().padding(start = EDGE, end = EDGE), horizontalArrangement = Arrangement.spacedBy(Space.xxl)) {
                     Column(Modifier.width(SHOW_INFO_WIDTH).fillMaxHeight().padding(bottom = Space.xl), verticalArrangement = Arrangement.spacedBy(Space.s, Alignment.Bottom)) {
-                        Text(show.title.title, style = BIG_TITLE, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                        ScrollText(show.title.title, style = BIG_TITLE, lines = 2)
                         val seasons = episodes?.map { it.season }?.distinct()?.size
                         MetaLine(show, info ?: data?.info, extra = seasons?.let { if (it == 1) "1 season" else "$it seasons" })
-                        (info?.plot?.ifBlank { null } ?: data?.plot?.ifBlank { null })?.let { Text(it, style = Type.body, maxLines = 6, overflow = TextOverflow.Ellipsis) }
+                        (info?.plot?.ifBlank { null } ?: data?.plot?.ifBlank { null })?.let { ScrollText(it, style = Type.body, lines = 6) }
                         if (info?.people.isNullOrEmpty()) data?.cast?.ifBlank { null }?.let { Text("Starring $it", style = Type.caption, maxLines = 2) }
                         val next = target?.let { episodes[it] }
                         // The copy the episode up next plays on, prepared as the page opens; TMDB's episodes have no IPTV copy of their own.
@@ -2248,6 +2274,8 @@ private fun ShowPage(
                 MarksPanel(
                     show.title.title,
                     listOfNotNull(
+                        if (graph.watchlist.canHold(show.titleId) && !(show.titleId in graph.watchlist.letterboxd.value && show.titleId in graph.watchlist.ids.value))
+                            (if (show.titleId in graph.watchlist.ids.value) "Remove from Watchlist" else "Add to Watchlist") to { graph.watchlist.toggle(show.titleId); close() } else null,
                         season?.let { s -> "Mark season $s watched" to { graph.marks.setWatched("${show.titleId}:s$s", true, all.filter { it.season == s }.map { it.titleId }); close() } },
                         "Mark show watched" to { graph.marks.setWatched(show.titleId, true, all.map { it.titleId }); close() },
                     ),

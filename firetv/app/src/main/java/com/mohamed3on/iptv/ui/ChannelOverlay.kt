@@ -91,6 +91,7 @@ import com.mohamed3on.iptv.ui.theme.Palette
 import com.mohamed3on.iptv.ui.theme.ProgressLine
 import com.mohamed3on.iptv.ui.theme.Space
 import com.mohamed3on.iptv.ui.theme.FitText
+import com.mohamed3on.iptv.ui.theme.ScrollText
 import com.mohamed3on.iptv.ui.theme.LocalFocused
 import com.mohamed3on.iptv.ui.theme.Type
 import com.mohamed3on.iptv.ui.theme.reveal
@@ -1132,7 +1133,7 @@ private fun RowActions(title: String, favourite: Boolean, canMove: Boolean, stay
             .padding(Space.m),
         verticalArrangement = Arrangement.spacedBy(Space.xs),
     ) {
-        Text(title, style = Type.title, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(start = Space.l, end = Space.l, top = Space.s, bottom = Space.s))
+        ScrollText(title, style = Type.title, lines = 2, modifier = Modifier.padding(start = Space.l, end = Space.l, top = Space.s, bottom = Space.s))
         PanelRow(if (favourite) "Remove from Favourites" else "Add to Favourites", focus = first, onClick = onFavourite)
         if (canMove) PanelRow("Move", onClick = onMove)
     }

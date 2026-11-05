@@ -41,7 +41,9 @@ import com.mohamed3on.iptv.data.Programme
 import com.mohamed3on.iptv.data.displayName
 import com.mohamed3on.iptv.ui.theme.Badges
 import com.mohamed3on.iptv.ui.theme.LiveMark
+import com.mohamed3on.iptv.ui.theme.FitText
 import com.mohamed3on.iptv.ui.theme.Palette
+import com.mohamed3on.iptv.ui.theme.ScrollText
 import com.mohamed3on.iptv.ui.theme.Space
 import com.mohamed3on.iptv.ui.theme.Type
 import com.mohamed3on.iptv.ui.theme.tabular
@@ -106,7 +108,7 @@ internal fun Details(channel: Channel, guide: GuideDb?, clock: State<Long>, stay
         verticalArrangement = Arrangement.spacedBy(Space.s),
     ) {
         Column(Modifier.padding(horizontal = Space.xl), verticalArrangement = Arrangement.spacedBy(Space.s)) {
-            Text(remember(channel.name) { displayName(channel.name) }, style = Type.title, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            ScrollText(remember(channel.name) { displayName(channel.name) }, style = Type.title, lines = 2)
             if (channel.badges.isNotEmpty()) {
                 Badges(channel.badges)
             }
@@ -155,16 +157,15 @@ private fun ScheduleRow(programme: Programme, clock: State<Long>, focus: FocusRe
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Space.s)) {
             Text(clockTime(programme.start), style = Type.caption.tabular, modifier = Modifier.width(TIME_WIDTH))
             if (airing && programme.match) LiveMark()
-            Text(
+            FitText(
                 remember(programme) { cleanTitle(programme.title) },
                 style = if (airing) Type.body.copy(color = Palette.textPrimary) else Type.body,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
+                active = focused,
             )
         }
         // Lined up under the title, past the time.
         if (focused && programme.descr.isNotBlank()) {
-            Text(programme.descr, style = Type.caption, maxLines = 5, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(start = TIME_WIDTH + Space.s))
+            ScrollText(programme.descr, style = Type.caption, lines = 5, modifier = Modifier.padding(start = TIME_WIDTH + Space.s))
         }
     }
 }

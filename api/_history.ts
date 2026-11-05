@@ -1,11 +1,12 @@
 // The owner's history (U16; R26, R31, KTD19): what Trakt and the Letterboxd diary say was watched, Trakt's
 // Watchlist and recommendations, and each followed show's next episode for Up next. The Trakt and Letterboxd
 // parts are kept in .cache/history.json, read again nightly by scripts/build-library.ts and when the app asks
-// and they are over 10 minutes old (then one Trakt call, last_activities, when nothing changed, and the RSS
-// feed). /api/app/history serves them with titles in the library's shape, with ETag/304 like the library.
+// and they are over 10 minutes old (then one Trakt call, last_activities, when nothing changed, the RSS
+// feed and the Letterboxd watchlist's pages; the owner's Letterboxd export adds older marks and stars). /api/app/history serves them with titles in the library's shape, with ETag/304 like the library.
 // Watched marks are the union of Trakt, Letterboxd and the stick's own marks (merged on the stick); the
 // stick's are never written back to Trakt. A source that fails keeps what it gave last and says so in `src`.
 import { readFile } from 'node:fs/promises'
+import { setTimeout as sleep } from 'node:timers/promises'
 import { fileURLToPath } from 'node:url'
 import { writeAtomic } from './_fs.js'
 import { byScore, decorate, type Known } from './_browse.js'
@@ -32,8 +33,12 @@ export interface Kept {
   hidden: string[]
   watchlist: string[]
   recs: string[]
-  /** Films in the Letterboxd diary: every one the feed has listed (it holds the latest 50). */
+  /** Films in the Letterboxd diary: every one the feed or the export has listed (the feed holds the latest 50). */
   lb: string[]
+  /** The owner's Letterboxd stars per film (0.5–5): the export's, the feed's newer ones on top. */
+  ratings?: Record<string, number>
+  /** The Letterboxd watchlist, in its order (newest first). */
+  lbw?: string[]
 }
 type TraktPart = Pick<Kept, 'trakt' | 'acts' | 'movies' | 'eps' | 'shows' | 'hidden' | 'watchlist' | 'recs'>
 
@@ -100,14 +105,62 @@ async function traktPart(prev: Kept | null, full: boolean): Promise<TraktPart> {
 /** The films a Letterboxd RSS feed lists (diary entries and reviews carry `tmdb:movieId`). */
 export const letterboxdFilms = (xml: string) => [...xml.matchAll(/<tmdb:movieId>(\d+)<\/tmdb:movieId>/g)].map((m) => `movie:${m[1]}`)
 
-async function letterboxdPart(prev: Kept | null): Promise<Pick<Kept, 'letterboxd' | 'lb'>> {
+/** The owner's stars per film in a Letterboxd RSS feed, the latest entry's. */
+export const letterboxdRatings = (xml: string): Record<string, number> => Object.fromEntries(xml.split('<item>').slice(1).reverse().flatMap((i) => {
+  const id = i.match(/<tmdb:movieId>(\d+)</)?.[1], r = i.match(/<letterboxd:memberRating>([\d.]+)</)?.[1]
+  return id && r ? [[`movie:${id}`, Number(r)]] : []
+}))
+
+const cacheFile = (name: string) => fileURLToPath(new URL(`../.cache/${name}`, import.meta.url))
+// The owner's Letterboxd export, dropped in by hand: { at, watched: ["movie:N"], ratings: { "movie:N": 0.5–5 }, watchlist: ["movie:N"] }.
+const LB_EXPORT = cacheFile('letterboxd-export.json')
+/** Letterboxd film slug → title id: each film's page is read once. */
+const LB_IDS = cacheFile('letterboxd-tmdb.json')
+const readJson = <T>(file: string, none: T): Promise<T> => readFile(file, 'utf8').then((s) => JSON.parse(s) as T, () => none)
+
+const BROWSER_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36'
+const letterboxd = (path: string) =>
+  fetch(`https://letterboxd.com${path}`, { headers: { 'user-agent': BROWSER_UA }, signal: AbortSignal.timeout(15_000) }).then((r) => (r.ok ? r.text() : ''), () => '')
+
+/** The Letterboxd watchlist as title ids; null when a page didn't answer. Up to 20 new films' pages read per call, 2 a second. */
+async function letterboxdWatchlist(user: string): Promise<string[] | null> {
+  const slugs: string[] = []
+  for (let n = 1; n <= 30; n++) {
+    const html = await letterboxd(`/${user}/watchlist/${n > 1 ? `page/${n}/` : ''}`)
+    if (!html.includes('Watchlist &bull;')) return null
+    slugs.push(...[...html.matchAll(/data-item-slug="([^"]+)"/g)].map((m) => m[1]))
+    if (!html.includes(`/watchlist/page/${n + 1}/`)) break
+  }
+  const ids = await readJson<Record<string, string>>(LB_IDS, {})
+  let looked = 0
+  for (const slug of slugs) {
+    if (ids[slug] || looked >= 20) continue
+    if (looked++) await sleep(500)
+    const page = await letterboxd(`/film/${slug}/`)
+    const tmdb = page.match(/data-tmdb-id="(\d+)"/)?.[1]
+    if (tmdb) ids[slug] = `${page.includes('data-tmdb-type="tv"') ? 'tv' : 'movie'}:${tmdb}`
+  }
+  if (looked) await writeAtomic(LB_IDS, ids)
+  return [...new Set(slugs.map((s) => ids[s]).filter(known))]
+}
+
+async function letterboxdPart(prev: Kept | null): Promise<Pick<Kept, 'letterboxd' | 'lb' | 'ratings' | 'lbw'>> {
   const user = process.env.LETTERBOXD_USER
-  if (!user) return { letterboxd: 'off', lb: [] }
-  const r = await fetch(`https://letterboxd.com/${encodeURIComponent(user)}/rss/`, { headers: { 'user-agent': 'iptv-preview' }, signal: AbortSignal.timeout(15_000) }).catch(() => null)
-  const xml = r?.ok ? await r.text().catch(() => '') : ''
-  // A challenge page or an error: skipped, the films seen before kept.
-  if (!xml.includes('<rss')) return { letterboxd: 'blocked', lb: prev?.lb ?? [] }
-  return { letterboxd: 'on', lb: [...new Set([...letterboxdFilms(xml), ...(prev?.lb ?? [])])] }
+  if (!user) return { letterboxd: 'off', lb: [], ratings: {}, lbw: [] }
+  const u = encodeURIComponent(user)
+  const [xml, lbw, exp] = await Promise.all([
+    letterboxd(`/${u}/rss/`),
+    letterboxdWatchlist(u),
+    readJson<{ watched?: string[]; ratings?: Record<string, number>; watchlist?: string[] }>(LB_EXPORT, {}),
+  ])
+  // A challenge page or an error: skipped, what was read before kept.
+  const rss = xml.includes('<rss')
+  return {
+    letterboxd: rss && lbw ? 'on' : 'blocked',
+    lb: [...new Set([...(rss ? letterboxdFilms(xml) : []), ...(prev?.lb ?? []), ...(exp.watched ?? [])])],
+    ratings: { ...prev?.ratings, ...exp.ratings, ...(rss && letterboxdRatings(xml)) },
+    lbw: lbw ?? prev?.lbw ?? exp.watchlist ?? [],
+  }
 }
 
 /**
@@ -201,7 +254,9 @@ async function pool<T, R>(items: T[], n: number, fn: (x: T) => Promise<R>): Prom
 const ROW_CAP = 60
 const FOLLOW_CAP = 30
 /** Titles Watchlist and Recommended can show, which the nightly build scores whatever the library rows hold. */
-export const historyTitles = (h: Kept | null) => [...(h?.watchlist ?? []).slice(0, ROW_CAP * 2), ...(h?.recs ?? [])]
+export const historyTitles = (h: Kept | null) => [...watchlistOf(h).slice(0, ROW_CAP * 2), ...(h?.recs ?? [])]
+/** The Watchlist: Trakt's, then Letterboxd's. */
+export const watchlistOf = (h: Kept | null) => [...new Set([...(h?.watchlist ?? []), ...(h?.lbw ?? [])])]
 
 /**
  * What /api/app/history answers: each source's state, every title Trakt and Letterboxd mark watched, the
@@ -227,7 +282,7 @@ export async function historyAnswer(h: Kept | null, local: string[], k: Known) {
   })
   const list = async (ids: string[]) => (await pool(ids, 8, title)).filter((t): t is LibTitle => !!t)
   const [watchlist, recommended, shows] = await Promise.all([
-    list((h?.watchlist ?? []).slice(0, ROW_CAP * 2)),
+    list(watchlistOf(h).slice(0, ROW_CAP * 2)),
     list((h?.recs ?? []).filter((id) => !seen.has(id))),
     pool(next, 8, (n) => title(n.show)),
   ])
@@ -235,6 +290,9 @@ export async function historyAnswer(h: Kept | null, local: string[], k: Known) {
     src: { trakt: h?.trakt ?? 'off', letterboxd: h?.letterboxd ?? 'off' },
     watched: [...new Set([...(h?.movies ?? []), ...(h?.lb ?? []), ...(h?.eps ?? [])])],
     watchlist,
+    // On the Watchlist only through Letterboxd, which has no write API: the stick can't take them off.
+    lbw: (h?.lbw ?? []).filter((id) => !h?.watchlist.includes(id)),
+    ratings: h?.ratings ?? {},
     recommended: byScore(recommended).slice(0, ROW_CAP),
     next: next.flatMap(({ show: _s, ...n }, i) => (shows[i] ? [{ t: shows[i], ...n }] : [])),
   }

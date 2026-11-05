@@ -124,19 +124,20 @@ class NextEpisode(val show: Movie, val episode: TitleId, val label: String, val 
 
 /**
  * The owner's history from the box (U16): every film and episode Trakt and Letterboxd mark [watched] (merged with
- * the stick's own marks in memory), the Watchlist and Recommended rows, and followed shows' next episodes, latest aired first.
+ * the stick's own marks in memory), the Watchlist and Recommended rows, and followed shows' next episodes, latest aired first;
+ * the owner's Letterboxd stars ([ratings]) and the Watchlist titles only Letterboxd's list holds ([letterboxd]: no write API).
  */
-class History(val watched: Set<TitleId>, val watchlist: List<Movie>, val recommended: List<Movie>, val next: List<NextEpisode>)
+class History(val watched: Set<TitleId>, val watchlist: List<Movie>, val recommended: List<Movie>, val next: List<NextEpisode>, val ratings: Map<TitleId, Float> = emptyMap(), val letterboxd: Set<TitleId> = emptySet())
 
 @Serializable
-private class HistoryJson(val watched: List<TitleId> = emptyList(), val watchlist: List<LibTitle> = emptyList(), val recommended: List<LibTitle> = emptyList(), val next: List<NextJson> = emptyList())
+private class HistoryJson(val watched: List<TitleId> = emptyList(), val watchlist: List<LibTitle> = emptyList(), val recommended: List<LibTitle> = emptyList(), val next: List<NextJson> = emptyList(), val ratings: Map<TitleId, Float> = emptyMap(), val lbw: List<TitleId> = emptyList())
 
 @Serializable
 private class NextJson(val t: LibTitle, val ep: TitleId, val c: String, val new: Int = 0)
 
 fun parseHistory(text: String): History {
     val h = json.decodeFromString(HistoryJson.serializer(), text)
-    return History(h.watched.toHashSet(), h.watchlist.map { it.toMovie() }, h.recommended.map { it.toMovie() }, h.next.map { NextEpisode(it.t.toMovie(), it.ep, it.c, it.new == 1) })
+    return History(h.watched.toHashSet(), h.watchlist.map { it.toMovie() }, h.recommended.map { it.toMovie() }, h.next.map { NextEpisode(it.t.toMovie(), it.ep, it.c, it.new == 1) }, h.ratings, h.lbw.toHashSet())
 }
 
 /** A movie's name as shown: [title] without the provider's [badge] prefix ("EN", "HDR") and the [year] pulled out. */

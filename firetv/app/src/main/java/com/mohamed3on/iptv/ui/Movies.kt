@@ -1063,9 +1063,10 @@ private fun MetaLine(movie: Movie, info: MovieInfo?, extra: String? = null, tier
     val scored: Scored? = movie.lib?.takeIf { it.known } ?: info
     val averages = scored?.averagesLabel()
     val rating = info?.rating?.ifEmpty { null }?.takeIf { averages == null }?.let { "$it/10" }
+    val mine = LocalContext.current.graph.sync.history.items.collectAsState().value?.ratings?.get(movie.titleId)?.let { "You ★" + it.toString().removeSuffix(".0") }
     Row(horizontalArrangement = Arrangement.spacedBy(Space.m), verticalAlignment = Alignment.CenterVertically) {
         if (tier) (info?.tier?.ifEmpty { null } ?: movie.lib?.t?.ifEmpty { null })?.let { TierChip(it) }
-        listOfNotNull(scored?.scoreLabel(), averages).joinToString(" · ").ifEmpty { null }?.let { Text(it, style = SCORE_STYLE, maxLines = 1) }
+        listOfNotNull(scored?.scoreLabel(), averages, mine).joinToString(" · ").ifEmpty { null }?.let { Text(it, style = SCORE_STYLE, maxLines = 1) }
         movie.title.badge?.let { Badges(remember(it) { listOf(it) }) }
         val group = movie.group.takeIf { movie.lib != null } ?: groupLabel(movie.group).name
         FitText(listOfNotNull(movie.title.year, extra, runtime, genre ?: group.ifEmpty { null }, rating).joinToString(" · "), style = Type.body, active = true)
@@ -1093,13 +1094,25 @@ private val CHIP_TEXT = Type.caption.copy(color = Palette.textPrimary)
  * the one OK will press reads from across the room.
  */
 @Composable
-/** "+ Watchlist" / "✓ Watchlist" on a title page: OK puts the film or show on the Trakt watchlist or takes it off. */
+/** "+ Watchlist" / "✓ Watchlist" on a title page: OK puts the film or show on the Trakt watchlist or takes it off (not one only Letterboxd's list holds). */
 private fun WatchlistButton(title: TitleId) {
     val watchlist = LocalContext.current.graph.watchlist
     if (!watchlist.canHold(title)) return
     val ids by watchlist.ids.collectAsState()
-    PageButton(if (title in ids) "✓ Watchlist" else "+ Watchlist", { watchlist.toggle(title) })
+    val letterboxd by watchlist.letterboxd.collectAsState()
+    var told by remember(title) { mutableStateOf(false) }
+    PageButton(watchlistLabel(title in ids, title in letterboxd, told), { told = !watchlist.toggle(title) })
 }
+
+private fun watchlistLabel(on: Boolean, letterboxd: Boolean, told: Boolean) = when {
+    told -> LETTERBOXD_ONLY
+    on && letterboxd -> "✓ Watchlist (Letterboxd)"
+    on -> "✓ Watchlist"
+    else -> "+ Watchlist"
+}
+
+/** A toggle on a title only Letterboxd's watchlist holds: there is no API to take it off. */
+private const val LETTERBOXD_ONLY = "Only Letterboxd can remove it"
 
 @Composable
 private fun PageButton(label: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
@@ -1414,6 +1427,7 @@ private fun PosterCard(movie: Movie, progress: Float?, watched: Boolean = false,
     val density = LocalDensity.current
     val interaction = remember { MutableInteractionSource() }
     var focused by remember { mutableStateOf(false) }
+    var told by remember { mutableStateOf(false) }
     val lift = animateFloatAsState(if (focused) 1f else 0f, Motion.focus(), label = "lift")
     var failed by remember(movie.poster) { mutableStateOf(false) }
     val request = remember(movie.poster) {
@@ -1428,11 +1442,11 @@ private fun PosterCard(movie: Movie, progress: Float?, watched: Boolean = false,
             .then(if (back != null) Modifier.focusRequester(back) else Modifier)
             .onFocusChanged {
                 focused = it.isFocused
-                if (it.isFocused) onFocused()
+                if (it.isFocused) onFocused() else told = false
             }
             .onKeyEvent {
                 if (remoteKey(it.nativeKeyEvent.keyCode) != RemoteKey.Menu || !watchlist.canHold(movie.titleId)) return@onKeyEvent false
-                if (it.type == KeyEventType.KeyDown) watchlist.toggle(movie.titleId)
+                if (it.type == KeyEventType.KeyDown) told = !watchlist.toggle(movie.titleId)
                 true
             }
             .clickable(interaction, indication = null, onClick = onClick)
@@ -1469,8 +1483,9 @@ private fun PosterCard(movie: Movie, progress: Float?, watched: Boolean = false,
         if (watched) WatchedMark(Modifier.align(Alignment.TopEnd).padding(Space.s))
         if (focused && watchlist.canHold(movie.titleId)) {
             val onList = movie.titleId in watchlist.ids.collectAsState().value
+            val letterboxd = onList && movie.titleId in watchlist.letterboxd.collectAsState().value
             Text(
-                if (onList) "✓ Watchlist · ☰" else "☰ Watchlist", style = CHIP_TEXT, maxLines = 1,
+                if (told || letterboxd) watchlistLabel(onList, letterboxd, told) else if (onList) "✓ Watchlist · ☰" else "☰ Watchlist", style = CHIP_TEXT, maxLines = 2, // the Letterboxd notes take two lines on a card
                 modifier = Modifier.align(Alignment.BottomStart).padding(Space.xs).background(CHIP_GROUND, CHIP_SHAPE).padding(horizontal = Space.xs + 2.dp, vertical = 1.dp),
             )
         }

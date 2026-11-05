@@ -24,7 +24,7 @@ import { dirname } from 'node:path'
 import { buildAppFeed, buildAppGuide } from './_app-feed.js'
 import { iptvCopies, markInfringing, titleCopies } from './_copies.js'
 import { appTokenOk, backupConfigFromEnv, configFromEnv, fetchCuratedChannels, saneFps, savedVodChannels, withBackupFeeds, withCompetitionGroups } from './_lib.js'
-import { currentHistory, historyAnswer, loadHistory, saveHistory } from './_history.js'
+import { currentHistory, historyAnswer, loadHistory, saveHistory, watchlistOf } from './_history.js'
 import { providerLibrary, servedLibrary } from './_library.js'
 import { addBitrate, mergeAppReading, saveQuality, type Meta } from './_quality.js'
 import { QUALITY } from './quality-cache.js'
@@ -384,7 +384,7 @@ export async function search(req: Request): Promise<Response> {
   const cfg = configFromEnv()
   const h = await currentHistory().catch(() => null)
   const titles = await searchTitles(q, {
-    history: h ? { watchlist: new Set(h.watchlist), watched: new Set([...h.movies, ...(h.lb ?? [])]) } : undefined,
+    history: h ? { watchlist: new Set(watchlistOf(h)), watched: new Set([...h.movies, ...(h.lb ?? [])]) } : undefined,
     known: await knownTitles(),
     tmdb: process.env.TMDB_TOKEN ? (path) => tmdbGet(path) : undefined,
     vod: (q) => searchVod(cfg, q, 20),

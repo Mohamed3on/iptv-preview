@@ -36,7 +36,7 @@ const trakt = (path: string): Response => {
 }
 
 test('a Letterboxd RSS item with tmdb:movieId 603 marks movie:603 watched', async () => {
-  const fetch = sources((u) => (u.hostname === 'letterboxd.com' ? new Response(rss) : trakt(u.pathname)))
+  const fetch = sources((u) => (u.hostname !== 'letterboxd.com' ? trakt(u.pathname) : new Response(u.pathname.includes('/watchlist/') ? '<title>Watchlist &bull; Letterboxd</title>' : rss)))
   try {
     const h = await refreshHistory(null)
     expect(h.letterboxd).toBe('on')

@@ -15,6 +15,7 @@ import com.mohamed3on.iptv.data.ResumeStore
 import com.mohamed3on.iptv.data.VpnMonitor
 import com.mohamed3on.iptv.data.WatchedStore
 import com.mohamed3on.iptv.data.WatchHistory
+import com.mohamed3on.iptv.player.Setup
 import com.mohamed3on.iptv.system.VoiceFix
 import com.mohamed3on.iptv.update.Updater
 import kotlinx.coroutines.CoroutineScope
@@ -22,6 +23,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
@@ -39,6 +41,7 @@ class App : Application(), SingletonImageLoader.Factory {
             // The movie library is read once the first tune has had the stick to itself, so Movies opens at once.
             delay(5.seconds)
             graph.sync.movies.loadCached()
+            withContext(Dispatchers.Main) { graph.setup } // its callbacks land on the main thread too
         }
         graph.scope.launch { VoiceFix.onceThisBoot(this@App) }
     }
@@ -70,5 +73,7 @@ class AppGraph(context: Context) {
     val watchedMovies = WatchedStore(prefs, "movies.watched")
     val watchedEpisodes = WatchedStore(prefs, "shows.watched")
     val sync = FeedSync(http, BuildConfig.SERVER_URL, BuildConfig.APP_TOKEN, context.filesDir, prefs)
+    /** What the TV, stick and soundbar can show and play; built off the launch path. */
+    val setup by lazy { Setup(context) }
     val updater = Updater(context, http, BuildConfig.SERVER_URL, BuildConfig.APP_TOKEN, scope)
 }

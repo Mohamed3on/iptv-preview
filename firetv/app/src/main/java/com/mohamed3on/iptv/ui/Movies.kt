@@ -1073,7 +1073,7 @@ private fun UpNextPage(
             return@Column
         }
         Row(Modifier.padding(start = EDGE, top = Space.xl), horizontalArrangement = Arrangement.spacedBy(Space.m), verticalAlignment = Alignment.CenterVertically) {
-            Text("Continue watching", style = Type.headline, maxLines = 1)
+            Text("Up next", style = Type.headline, maxLines = 1)
             Text("Menu for more · Down for all ${LocalLibrary.current.noun}", style = Type.caption, maxLines = 1)
         }
         LazyRow(
@@ -1230,29 +1230,10 @@ private val CHIP_GROUND = Color(0xE00B0E12)
 private val CHIP_SHAPE = RoundedCornerShape(Radius.row - Space.xs)
 private val CHIP_TEXT = Type.caption.copy(color = Palette.textPrimary)
 
-/** "+ Watchlist" / "✓ Watchlist" on a title page: OK puts the film or show on the Trakt watchlist or takes it off (not one only Letterboxd's list holds). */
-@Composable
-private fun WatchlistButton(title: TitleId) {
-    val watchlist = LocalContext.current.graph.watchlist
-    if (!watchlist.canHold(title)) return
-    val ids by watchlist.ids.collectAsState()
-    val letterboxd by watchlist.letterboxd.collectAsState()
-    var told by remember(title) { mutableStateOf(false) }
-    PageButton(watchlistLabel(title in ids, title in letterboxd, told), { told = !watchlist.toggle(title) })
-}
-
-private fun watchlistLabel(on: Boolean, letterboxd: Boolean, told: Boolean) = when {
-    told -> LETTERBOXD_ONLY
-    on && letterboxd -> "✓ Watchlist (Letterboxd)"
-    on -> "✓ Watchlist"
-    else -> "+ Watchlist"
-}
-
 /** A [PageButton]'s height: a headline line and its padding. */
 private val BUTTON_HEIGHT = 21.dp + Space.m * 2
 
 /** A toggle on a title only Letterboxd's watchlist holds: there is no API to take it off. */
-private const val LETTERBOXD_ONLY = "Only Letterboxd can remove it"
 
 /** "Trailer" on a title page when TMDB names one ([key], a YouTube video): OK plays it in SmartTube, else YouTube; Back comes back here. */
 @Composable
@@ -1874,7 +1855,6 @@ private fun FilmPage(
                             PageButton(if (started) "Resume" else "Play", { onPlay(false) }, Modifier.focusRequester(primary))
                             if (started) PageButton("Start over", { onPlay(true) })
                             PageButton("Versions", { versions = true }, Modifier.focusRequester(versionsButton))
-                            WatchlistButton(film.titleId)
                             TrailerButton(info?.trailer)
                         }
                     }
@@ -2249,7 +2229,6 @@ private fun ShowPage(
                                 next != null -> {
                                     PageButton("${if (started) "Resume" else "Play"} ${next.code}", { onPlay(episodes, target, false) }, Modifier.focusRequester(primary))
                                     if (started) PageButton("Start over", { onPlay(episodes, target, true) })
-                                    WatchlistButton(show.titleId)
                                     TrailerButton(info?.trailer)
                                 }
                                 failed -> PageButton("Try again", { attempt++ }, Modifier.focusRequester(primary))

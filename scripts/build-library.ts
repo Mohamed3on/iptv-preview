@@ -2,10 +2,13 @@
 // provider's 4K and Blu-ray films and its shows, each looked up on TMDB once (a title the last build already
 // knew keeps its details). Run nightly on the box by deploy/iptv-library.timer. Without TMDB_TOKEN, or when
 // every TMDB list fails, nothing is written and the app keeps the last library (or the provider's rows).
-// Usage: bun scripts/build-library.ts   (XTREAM_*, TMDB_TOKEN from env / .env.local)
+// Then it scores the titles (api/_scores.ts: Trakt, MDBList, and IMDb's histograms with SCRAPE_IMDB=1), sorts each
+// row by score and cuts it to 60. Each key is optional: without one its source is skipped, and rows keep their order.
+// Usage: bun scripts/build-library.ts   (XTREAM_*, TMDB_TOKEN, TRAKT_CLIENT_ID, MDBLIST_KEY from env / .env.local)
 import { readFile } from 'node:fs/promises'
 import { configFromEnv } from '../api/_lib.js'
-import { assemble, fromTmdb, LIBRARY_FILE, providerTitles, rowDefs, saveLibrary, type Library, type LibTitle, type TmdbItem } from '../api/_library.js'
+import { assemble, fromTmdb, LIBRARY_FILE, LIBRARY_FULL_FILE, providerTitles, rowDefs, saveLibrary, type Library, type LibTitle, type TmdbItem } from '../api/_library.js'
+import { loadScores, onScreen, ranked, refreshScores, saveScores, scoreTitles } from '../api/_scores.js'
 import { tmdbGet, type Kind } from '../api/_tmdb.js'
 
 if (!process.env.TMDB_TOKEN) {
@@ -42,10 +45,10 @@ if (!seeds.some((s) => s.length)) throw new Error(`TMDB answered no list (${fail
 const gn: Record<string, string> = Object.fromEntries((await Promise.all(['movie', 'tv'].map((k) =>
   tmdbGet<{ genres: { id: number; name: string }[] }>(`genre/${k}/list`).then((r) => r.genres, () => [])))).flat().map((g) => [g.id, g.name]))
 
-const prev = await readFile(LIBRARY_FILE, 'utf8').then((s) => JSON.parse(s) as Library, () => null)
+const prev = await readFile(LIBRARY_FULL_FILE, 'utf8').catch(() => readFile(LIBRARY_FILE, 'utf8')).then((s) => JSON.parse(s) as Library, () => null)
 // TMDB details by title id: this run's rows, then the last build's (without its tiers and scores).
 const known = new Map<string, LibTitle>()
-for (const { t: _t, e: _e, s: _s, ...meta } of [...seeds.flat(), ...(prev?.titles ?? [])]) if (meta.l && !known.has(meta.id)) known.set(meta.id, meta)
+for (const { t: _t, e: _e, s: _s, sn: _n, se: _se, lb: _l, ir: _i, ...meta } of [...seeds.flat(), ...(prev?.titles ?? [])]) if (meta.l && !known.has(meta.id)) known.set(meta.id, meta)
 const provider = await providerTitles(configFromEnv())
 const missing = [...new Set(provider.map((p) => p.t.id))].filter((id) => /^(movie|tv):/.test(id) && !known.has(id))
 await pool(missing, 6, async (id) => {
@@ -54,6 +57,18 @@ await pool(missing, 6, async (id) => {
   if (r) known.set(id, fromTmdb(kind, r))
 })
 
-const lib = assemble(defs, seeds, provider.map(({ t, group }) => ({ group, t: known.has(t.id) ? { ...known.get(t.id)!, ...(t.t && { t: t.t }), ...(t.e && { e: t.e }) } : t })), prev, gn)
+const full = assemble(defs, seeds, provider.map(({ t, group }) => ({ group, t: known.has(t.id) ? { ...known.get(t.id)!, ...(t.t && { t: t.t }), ...(t.e && { e: t.e }) } : t })), prev, gn)
+await saveLibrary(full, LIBRARY_FULL_FILE)
+// Rows sorted by the scores known so far go out at once. The APIs are asked in that order (about an hour on
+// the first night, at Trakt's 3 a second), then the rows are sorted again.
+const scores = await loadScores()
+await saveLibrary(ranked(full, scoreTitles(scores)))
+const fresh = new Set(full.rows.find((r) => r.id === 'new')?.i.map((i) => full.titles[i].id))
+const env = process.env
+const asked = await refreshScores(onScreen(ranked(full, scoreTitles(scores), Infinity)), fresh, scores,
+  { trakt: env.TRAKT_CLIENT_ID, mdblist: env.MDBLIST_KEY, scrape: env.SCRAPE_IMDB === '1' },
+  { mdbMax: Number(env.MDBLIST_DAILY) || 1000, save: () => saveScores(scores) })
+await saveScores(scores)
+const lib = ranked(full, scoreTitles(scores))
 await saveLibrary(lib)
-console.log(`library: ${lib.titles.length} titles in ${lib.rows.length} rows; ${missing.length} provider titles looked up; ${failed} TMDB pages failed`)
+console.log(`library: ${full.titles.length} titles in ${full.rows.length} rows, ${lib.titles.length} on show; ${missing.length} provider titles looked up; ${failed} TMDB pages failed; asked Trakt ${asked.trakt}, MDBList ${asked.mdblist}, IMDb ${asked.imdb}`)

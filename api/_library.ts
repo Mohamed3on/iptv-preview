@@ -33,19 +33,18 @@ export interface LibTitle {
   t?: Tier
   /** 1 when [t] is a category's claim (its resolution's ceiling), not measured. */
   e?: 1
-  /** Conviction score (api/_scores.ts); absent when unknown. */
+  /** Combined score (api/_scores.ts) on /10, one decimal, and × 10 as an integer (the sort key); absent when unknown. */
+  s10?: number
   s?: number
-  /** Its net share, (loved − hated) / total, in %. */
-  sn?: number
-  /** 1 when [s] is estimated (under 50 Trakt votes, fitted from Letterboxd or IMDb). */
-  se?: 1
-  /** Letterboxd average (0–5) and IMDb average (0–10), from MDBList. */
-  lb?: number
+  /** IMDb average (/10) and votes, Letterboxd average (0–5) and votes, from MDBList. */
   ir?: number
+  iv?: number
+  lb?: number
+  lv?: number
   /** A film the provider has: its best copy's VOD id and container, which Play starts when the box can't answer (KTD13). */
   v?: number
   x?: string
-  /** TMDB popularity: picks each row's candidates in the build (library-full.json); not served. */
+  /** TMDB popularity: picks a row's candidates without a score in the build (library-full.json); not served. */
   pp?: number
 }
 export interface Row { id: string; n: string; /** Indexes into Library.titles. */ i: number[] }
@@ -141,7 +140,7 @@ function toLibrary(src: Library['src'], titles: Map<string, LibTitle>, rows: { i
   }
 }
 
-/** Candidates a row keeps, the most popular on TMDB first, before scoring cuts it to ROW_CAP (api/_scores.ts). */
+/** Candidates a row keeps, the most convincing first (api/_scores.ts [s]; TMDB popularity after, for titles without), before scoring cuts it to ROW_CAP. */
 export const ROW_CANDIDATES = 150
 
 /** One copy the provider has: a 4K or Blu-ray film, or a show, with the row it sits in today. */
@@ -149,16 +148,16 @@ export interface ProviderTitle { t: LibTitle; group: string }
 
 /**
  * The library from TMDB's rows ([seeds], one list per def) and the provider's titles (already given their TMDB
- * details where known), keeping tiers seen in the [prev] build.
+ * details where known), keeping tiers seen in the [prev] build; [scores] pick each row's candidates.
  */
-export function assemble(defs: RowDef[], seeds: LibTitle[][], provider: ProviderTitle[], prev: Library | null, gn: Record<string, string>): Library {
+export function assemble(defs: RowDef[], seeds: LibTitle[][], provider: ProviderTitle[], prev: Library | null, gn: Record<string, string>, scores = new Map<string, { s?: number }>()): Library {
   const titles = new Map<string, LibTitle>()
   for (const t of seeds.flat()) if (!titles.has(t.id)) titles.set(t.id, t)
   for (const { t } of provider) titles.set(t.id, titles.has(t.id) ? withTier(titles.get(t.id)!, t) : t)
   for (const p of prev?.titles ?? []) if (titles.has(p.id)) titles.set(p.id, withTier(titles.get(p.id)!, p))
   const all = [...titles.values()]
-  const pop = (id: string) => titles.get(id)!.pp ?? -1
-  const candidates = (ids: string[]) => [...new Set(ids)].sort((a, b) => pop(b) - pop(a)).slice(0, ROW_CANDIDATES)
+  const s = (id: string) => scores.get(id)?.s, key = (id: string) => s(id) ?? titles.get(id)!.pp ?? -1
+  const candidates = (ids: string[]) => [...new Set(ids)].sort((a, b) => Number(s(b) !== undefined) - Number(s(a) !== undefined) || key(b) - key(a)).slice(0, ROW_CANDIDATES)
   return toLibrary('tmdb', titles, defs.map((d, i) => ({ id: d.id, n: d.n, ids: candidates([...seeds[i].map((t) => t.id), ...(d.has ? all.filter(d.has).map((t) => t.id) : [])]) })), gn)
 }
 

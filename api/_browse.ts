@@ -5,7 +5,7 @@
 import { readFile } from 'node:fs/promises'
 import type { XtreamConfig } from './_lib.js'
 import { fromTmdb, LIBRARY_FILE, LIBRARY_FULL_FILE, type LibTitle, type Library, type TmdbItem } from './_library.js'
-import { loadScores, scoreNow, scoreTitles, type Score, type ScoreCache } from './_scores.js'
+import { due, loadScores, scoreNow, scoreTitles, type Score, type ScoreCache } from './_scores.js'
 import { showList } from './_shows.js'
 import { episodeTitle, parseTitleId, tmdbEpisodes, tmdbTitle } from './_tmdb.js'
 import type { VodItem } from './_vod.js'
@@ -35,8 +35,8 @@ export function decorate(k: Known, t: LibTitle): LibTitle {
   return { ...t, ...(base?.t && { t: base.t, ...(base.e && { e: base.e }) }), ...k.scores.get(t.id) }
 }
 
-/** Best score first; unscored titles keep their order after them. */
-export const byScore = <T extends LibTitle>(list: T[]) => list.map((t, i) => [t, i] as const).sort(([a, i], [b, j]) => (b.s ?? -Infinity) - (a.s ?? -Infinity) || i - j).map(([t]) => t)
+/** Best score first, then those with only [s10] by it; unscored titles keep their order after them. */
+export const byScore = <T extends LibTitle>(list: T[]) => list.map((t, i) => [t, i] as const).sort(([a, i], [b, j]) => (b.s ?? -Infinity) - (a.s ?? -Infinity) || (b.s10 ?? 0) - (a.s10 ?? 0) || i - j).map(([t]) => t)
 
 const IMG = 'https://image.tmdb.org/t/p/'
 
@@ -44,7 +44,7 @@ const IMG = 'https://image.tmdb.org/t/p/'
  * A film's or show's page beyond its card, in the app's MovieInfo shape: plot, runtime, genres, backdrop,
  * cast and director (and as people, for their pages), More like this, its score; a show the provider lists
  * gives its series id (episodes come from the provider), one it lacks its aired episodes from TMDB.
- * A title the APIs were never asked about is asked now ([scoreNow]): its scores join this answer if they come
+ * A title whose MDBList or IMDb answer is due asks now ([scoreNow]): its scores join this answer if they come
  * back before the rest of it, else the next one (the page never waits for them).
  * null for an id TMDB doesn't know (or without TMDB_TOKEN).
  */
@@ -55,11 +55,11 @@ export async function titleDetails(cfg: XtreamConfig, id: string) {
   const [t, k] = await Promise.all([tmdbTitle(kind, tmdb), knownTitles()])
   if (!t) return null
   const cache = k.cache
-  if (cache && !k.scores.has(id) && !cache[id]?.ta && !cache[id]?.ma) {
-    void scoreNow(id, t.imdb || undefined, { trakt: process.env.TRAKT_CLIENT_ID, mdblist: process.env.MDBLIST_KEY }).then((e) => {
+  if (cache && Object.values(due(cache[id])).some(Boolean)) {
+    void scoreNow(id, t.imdb || undefined, process.env.MDBLIST_KEY, cache[id]).then((e) => {
       if (!e) return
       cache[id] = { ...cache[id], ...e }
-      const s = scoreTitles(cache).get(id)
+      const s = scoreTitles({ [id]: cache[id] }).get(id)
       if (s) k.scores.set(id, s)
     })
   }
@@ -161,11 +161,11 @@ export async function searchTitles(query: string, d: SearchDeps): Promise<LibTit
   }
   for (const t of d.known.titles.values()) if (out.size < 60 && !out.has(t.id) && named(t.n)) out.set(t.id, t)
   // Titles: named like the search (whole name or its start), then by its words, then the rest; within each, the
-  // Watchlist first, then TMDB popularity (in doublings, so Dune: Part Two beats an obscure "Dune"), then a copy
+  // Watchlist first, then conviction ([LibTitle.s], else TMDB popularity; in doublings, so Dune: Part Two beats an obscure "Dune"), then a copy
   // known here, then TMDB's order; a title already watched drops below its equals.
   const match = (n: string) => (norm(n).startsWith(q) ? 0 : named(n) ? 1 : 2)
   const ranked = [...out.values()].slice(0, 60).map((t) => decorate(d.known, t)).map((t, i) => ({ t, i, key: [
-    match(t.n), d.history?.watchlist.has(t.id) ? 0 : 1, -Math.floor(Math.log2((t.pp ?? 0) + 1)),
+    match(t.n), d.history?.watchlist.has(t.id) ? 0 : 1, -Math.sign(t.s ?? 1) * Math.floor(Math.log2(Math.abs(t.s ?? t.pp ?? 0) + 1)),
     t.t || provider.has(t.id) ? 0 : 1, d.history?.watched.has(t.id) ? 1 : 0,
   ] }))
   const first = (a: number[], b: number[]) => a.map((v, j) => v - b[j]).find((d) => d !== 0) ?? 0

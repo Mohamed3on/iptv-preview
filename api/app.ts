@@ -11,6 +11,7 @@
 // POST /api/app/events?t=TOKEN — what happened while watching, for later analysis.
 // POST /api/app/title-ids?t=TOKEN — title ids for the provider ids the app saved marks under.
 // GET /api/app/library?t=TOKEN — Movies & Shows: titles and rows (see _library.ts).
+// GET /api/app/history?t=TOKEN — Trakt and Letterboxd marks, Watchlist, Recommended, followed shows' next episodes.
 // GET /api/app/copies?t=TOKEN&title=… — every copy of a film or episode, for the stick to rank.
 // POST /api/app/rd-infringing?t=TOKEN — torrents Real-Debrid refused, left out of copies from then on.
 // GET /api/app/subtitles?t=TOKEN&title=…&hash=…&size=…&name=… — English and Arabic subtitles for the copy playing.
@@ -23,6 +24,7 @@ import { dirname } from 'node:path'
 import { buildAppFeed, buildAppGuide } from './_app-feed.js'
 import { iptvCopies, markInfringing, titleCopies } from './_copies.js'
 import { appTokenOk, backupConfigFromEnv, configFromEnv, fetchCuratedChannels, saneFps, savedVodChannels, withBackupFeeds, withCompetitionGroups } from './_lib.js'
+import { currentHistory, historyAnswer } from './_history.js'
 import { providerLibrary, servedLibrary } from './_library.js'
 import { addBitrate, mergeAppReading, saveQuality, type Meta } from './_quality.js'
 import { QUALITY } from './quality-cache.js'
@@ -255,6 +257,23 @@ export async function library(req: Request): Promise<Response> {
     const { body, etag } = await servedLibrary(async () => ranked(await providerLibrary(configFromEnv()), scoreTitles(await loadScores())))
     const headers = { ETag: etag, 'Cache-Control': 'private, no-cache' }
     // Cloudflare weakens the ETag (W/) when it compresses the response.
+    if (req.headers.get('if-none-match')?.replace(/^W\//, '') === etag) return new Response(null, { status: 304, headers })
+    return new Response(body, { headers: { ...headers, 'Content-Type': 'application/json' } })
+  } catch (e) {
+    return new Response(e instanceof Error ? e.message : 'upstream error', { status: 502 })
+  }
+}
+
+// GET /api/app/history?t=TOKEN&shows=tv:N:sSeE@ms,… — the owner's history (see _history.ts): marks from Trakt and
+// Letterboxd, the Watchlist and Recommended rows, and the next episode of each followed show ([shows]: the stick's
+// own, the episode each last finished and when). Read again when over 10 minutes old; ETag/304 like the library.
+export async function history(req: Request): Promise<Response> {
+  if (!appTokenOk(req.url)) return forbidden()
+  try {
+    const local = new URL(req.url).searchParams.get('shows')?.split(',').filter(Boolean) ?? []
+    const body = JSON.stringify(await historyAnswer(await currentHistory(), local, await knownTitles()))
+    const etag = `"${Bun.hash(body).toString(36)}"`
+    const headers = { ETag: etag, 'Cache-Control': 'private, no-cache' }
     if (req.headers.get('if-none-match')?.replace(/^W\//, '') === etag) return new Response(null, { status: 304, headers })
     return new Response(body, { headers: { ...headers, 'Content-Type': 'application/json' } })
   } catch (e) {

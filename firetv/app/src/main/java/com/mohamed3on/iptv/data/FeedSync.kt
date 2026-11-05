@@ -63,6 +63,8 @@ class FeedSync(
     val movies = Library("movies") { text -> parseMovies(text).also { require(it.movies[0].titleId.isNotEmpty()) } }
     /** Movies & Shows (U11): title-first rows of films and shows, revalidated by its ETag (a 304 when unchanged). */
     val library = Library("library", ::parseCatalog)
+    /** The owner's history (U16): Trakt and Letterboxd marks, Watchlist, Recommended and followed shows' next episodes. */
+    val history = Library("history", ::parseHistory)
 
     /** Loads whatever is cached, without touching the network. */
     suspend fun loadCached() = withContext(Dispatchers.IO) {
@@ -97,12 +99,12 @@ class FeedSync(
             }
         }
 
-        /** Returns null when the list is current (fetched, unchanged, or younger than [maxAge]). */
-        suspend fun sync(maxAge: Duration): SyncError? = lock.withLock {
+        /** Returns null when the list is current (fetched, unchanged, or younger than [maxAge]); [query] goes on the URL ("&shows=…"). */
+        suspend fun sync(maxAge: Duration, query: String = ""): SyncError? = lock.withLock {
             withContext(Dispatchers.IO) {
                 if (age(file) < maxAge && _items.value != null) return@withContext null
                 val tmp = File(dir, "$kind.json.tmp")
-                val error = when (val d = download(kind, file, tmp)) {
+                val error = when (val d = download(kind, file, tmp, query)) {
                     Download.Unchanged -> null.also { file.setLastModified(now()) }
                     is Download.Failed -> d.error
                     is Download.Done -> try {
@@ -371,8 +373,8 @@ class FeedSync(
     }
 
     /** Fetches /api/app/[kind] into [to], sending the stored ETag when [cached] exists. */
-    private fun download(kind: String, cached: File, to: File): Download {
-        val request = Request.Builder().url("$baseUrl/api/app/$kind?t=$token").apply {
+    private fun download(kind: String, cached: File, to: File, query: String = ""): Download {
+        val request = Request.Builder().url("$baseUrl/api/app/$kind?t=$token$query").apply {
             if (cached.exists()) store.get("etag.$kind")?.let { header("If-None-Match", it) }
         }.build()
         return try {

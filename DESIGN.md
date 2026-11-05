@@ -159,7 +159,7 @@ Type is Inter at a refined ten-foot scale (nothing below 13sp), copy is plain se
 A cool blue-black neutral ramp with one clear blue accent and three status hues that only ever appear as meaning.
 
 ### Primary
-- **Signal Blue** (accent): what is playing, the selected group, the text caret, the "Watched" word and the watched check disc, the player's seek bar, the indeterminate activity segment, and the focus ring on posters, wide cards and multi-view tiles. Clears 3:1 on every surface it sits on.
+- **Signal Blue** (accent): what is playing, the selected group, the text caret, the "Watched" word and the watched check disc, the "New episode" caption in Up next, the player's seek bar, the indeterminate activity segment, and the focus ring on posters, wide cards and multi-view tiles. Clears 3:1 on every surface it sits on.
 
 ### Neutral
 - **Ink** (ink): the ground behind everything when no video plays, and the colour every library scrim is mixed from.

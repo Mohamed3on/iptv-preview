@@ -4,12 +4,20 @@
 // every TMDB list fails, nothing is written and the app keeps the last library (or the provider's rows).
 // Then it scores the titles (api/_scores.ts: Trakt, MDBList, and IMDb's histograms with SCRAPE_IMDB=1), sorts each
 // row by score and cuts it to 60. Each key is optional: without one its source is skipped, and rows keep their order.
+// First it reads the owner's Trakt and Letterboxd history into .cache/history.json (api/_history.ts).
 // Usage: bun scripts/build-library.ts   (XTREAM_*, TMDB_TOKEN, TRAKT_CLIENT_ID, MDBLIST_KEY from env / .env.local)
 import { readFile } from 'node:fs/promises'
 import { configFromEnv } from '../api/_lib.js'
 import { assemble, fromTmdb, LIBRARY_FILE, LIBRARY_FULL_FILE, providerTitles, rowDefs, saveLibrary, type Library, type LibTitle, type TmdbItem } from '../api/_library.js'
 import { loadScores, onScreen, ranked, refreshScores, saveScores, scoreTitles } from '../api/_scores.js'
 import { tmdbGet, type Kind } from '../api/_tmdb.js'
+import { loadHistory, refreshHistory, saveHistory } from '../api/_history.js'
+import { readOnlyTokens } from '../api/_trakt.js'
+
+// The owner's history first (seconds): Trakt read whole, recommendations included, and the Letterboxd feed.
+// Only the server refreshes Trakt's tokens.
+readOnlyTokens()
+await refreshHistory(await loadHistory(), { full: true }).then((h) => saveHistory(h)).catch((e) => console.log(`history not read: ${e}`))
 
 if (!process.env.TMDB_TOKEN) {
   console.log('TMDB_TOKEN unset: library not built')

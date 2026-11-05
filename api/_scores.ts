@@ -57,8 +57,9 @@ export function letterboxdHistograms(now = Date.now()) {
 /**
  * Every cached title's score: conviction from Letterboxd's histogram where TrueScore has one, else IMDb's (loved
  * 4½–5★ or 9–10, hated ½–1★ or 1–2: the same buckets), and each source's average shrunk toward 6.5 by its prior,
- * averaged by votes. Both convictions go through [netScore], which grows with the votes, so a Letterboxd-ranked film
- * sits on its (usually smaller) crowd's scale, not IMDb's.
+ * averaged by votes. The histogram gives the net share ((loved − hated) / total); its weight is the larger crowd of
+ * IMDb's votes and the histogram's, so a Letterboxd-ranked film sits on the same scale as an IMDb-ranked one
+ * (share × |share| × votes, which is [netScore] when the histogram is IMDb's own).
  */
 export function scoreTitles(cache: ScoreCache, lbxH = letterboxdHistograms()): Map<string, Score> {
   const out = new Map<string, Score>()
@@ -68,7 +69,10 @@ export function scoreTitles(cache: ScoreCache, lbxH = letterboxdHistograms()): M
     const raw = votes && sum(src.map(([r, v, m]) => (v * (v * r + m * 6.5)) / (v + m))) / votes
     const shown = { ...(e.ir && { ir: e.ir }), ...(e.iv && { iv: e.iv }), ...(e.lb && { lb: e.lb }), ...(e.lv && { lv: e.lv }) }
     const h = lbxH.get(id) ?? e.h, total = h ? sum(h) : 0
-    if (total) out.set(id, { s: netScore(h![8] + h![9] - h![0] - h![1], total) })
+    if (total) {
+      const share = (h![8] + h![9] - h![0] - h![1]) / total
+      out.set(id, { s: Math.round(share * Math.abs(share) * Math.max(total, e.iv ?? 0)) })
+    }
     if (raw || Object.keys(shown).length) out.set(id, { ...out.get(id), ...(raw && { s10: Math.round(raw * 10) / 10 }), ...shown })
   }
   return out

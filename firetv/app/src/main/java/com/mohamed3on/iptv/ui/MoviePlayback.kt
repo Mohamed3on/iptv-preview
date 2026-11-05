@@ -8,9 +8,15 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.text.style.TextAlign
 import androidx.media3.common.text.Cue
 import androidx.media3.common.text.CueGroup
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.media3.common.MediaItem
+import com.mohamed3on.iptv.data.FoundSubtitle
+import com.mohamed3on.iptv.player.SubtitleFetch
 import com.mohamed3on.iptv.player.SubtitleOption
 import com.mohamed3on.iptv.player.SubtitleState
 import com.mohamed3on.iptv.player.SubtitleTracks
+import com.mohamed3on.iptv.player.at
 import com.mohamed3on.iptv.player.qualityLine
 import androidx.activity.compose.LocalActivity
 import androidx.compose.animation.AnimatedContent
@@ -194,6 +200,12 @@ internal fun MoviePlayback(
     val session = remember {
         FilmSession(title, null, film, graph.copyChoices, { setup.profile.value }, meter, graph.debrid, iptvUrl, scope, System::currentTimeMillis, graph.telemetry::film)
     }
+    // A copy with no English subtitles gets them from the box (R30), drawn here over the picture.
+    val fetched = remember {
+        SubtitleFetch(exo, graph.http, graph.sync, scope, { graph.films.state(title).value.answer?.copies?.originalLanguage }) {
+            session.inform(Notice.Subtitles(it.lang))
+        }
+    }
 
     fun save() {
         if (ui.started) keep(exo.currentPosition, exo.duration.coerceAtLeast(0))
@@ -231,6 +243,13 @@ internal fun MoviePlayback(
             override fun onCues(cueGroup: CueGroup) {
                 cues = cueGroup.cues
             }
+
+            // A copy opens (the session has published it): its subtitle lookup starts at once.
+            override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+                val copy = session.state.value.copy ?: return
+                val url = mediaItem?.localConfiguration?.uri?.toString() ?: return
+                fetched.find(title, copy.id, url, graph.films.state(title).value.answer?.name(copy.id).orEmpty())
+            }
         }
         exo.addListener(listener)
         val frameRate = window?.let { FrameRate(it, exo, phase, scope) }
@@ -241,6 +260,7 @@ internal fun MoviePlayback(
             frameRate?.detach()
             audio.release()
             subtitles.release()
+            fetched.release()
             film.release()
             exo.removeListener(listener)
             exo.release()
@@ -423,7 +443,18 @@ internal fun MoviePlayback(
             factory = { SurfaceView(it).apply { keepScreenOn = true }.also(exo::setVideoSurfaceView) },
             modifier = Modifier.align(Alignment.Center).then(if (aspect > 0f) Modifier.aspectRatio(aspect) else Modifier.fillMaxSize()),
         )
-        Subtitles(cues)
+        // A fetched file's line at the player's place, ten times a second; a new timing applies at once.
+        val fetchedState by fetched.state.collectAsState()
+        var line by remember { mutableStateOf<String?>(null) }
+        LaunchedEffect(fetchedState.cues, fetchedState.offset) {
+            val (lines, offset) = fetchedState.cues to fetchedState.offset
+            if (lines.isEmpty()) line = null
+            else while (true) {
+                line = lines.at(exo.currentPosition, offset)
+                delay(100)
+            }
+        }
+        Subtitles(cues, line)
 
         var spinner by remember { mutableStateOf(false) }
         LaunchedEffect(ui.buffering, ui.error) {
@@ -469,8 +500,14 @@ internal fun MoviePlayback(
             MoviePanel(
                 audioState,
                 subtitleState,
+                fetchedState,
                 version = filmState.copy?.let { copyLine(it, prepared.answer) },
-                onSubtitle = { subtitles.select(it) },
+                onSubtitle = {
+                    fetched.select(null)
+                    subtitles.select(it)
+                },
+                onFetched = fetched::select,
+                onShift = fetched::shift,
                 open = panel,
                 onAudio = { audio.select(it) },
                 onFromStart = {
@@ -584,7 +621,8 @@ private enum class PanelPage { Main, Version, Audio, Subtitles }
  */
 @Composable
 private fun MoviePanel(
-    audio: AudioState, subtitles: SubtitleState, version: String?, onSubtitle: (SubtitleOption?) -> Unit, open: Boolean,
+    audio: AudioState, subtitles: SubtitleState, fetched: SubtitleFetch.State, version: String?, onSubtitle: (SubtitleOption?) -> Unit,
+    onFetched: (FoundSubtitle) -> Unit, onShift: (Long) -> Unit, open: Boolean,
     onAudio: (com.mohamed3on.iptv.player.AudioOption) -> Unit, onFromStart: () -> Unit, onNext: (() -> Unit)?, modifier: Modifier,
     versions: @Composable ColumnScope.(first: FocusRequester) -> Unit,
 ) {
@@ -625,7 +663,12 @@ private fun MoviePanel(
                 fun take() = (if (firstTaken) null else first).also { firstTaken = true }
                 PanelRow("Version", version ?: "Finding…", focus = take()) { page = PanelPage.Version }
                 if (audio.options.size > 1) PanelRow("Audio", audio.selected?.let(::languageName), focus = take()) { page = PanelPage.Audio }
-                if (subtitles.options.isNotEmpty()) PanelRow("Subtitles", subtitles.selected?.let(::subtitleName) ?: "Off", focus = take()) { page = PanelPage.Subtitles }
+                val searching = fetched.status == SubtitleFetch.Status.Searching
+                if (subtitles.options.isNotEmpty() || fetched.subs.isNotEmpty() || searching) PanelRow(
+                    "Subtitles",
+                    fetched.selected?.let { "${fetchedName(it.lang)} · OpenSubtitles" } ?: subtitles.selected?.let(::subtitleName) ?: if (searching) "Searching…" else "Off",
+                    focus = take(),
+                ) { page = PanelPage.Subtitles }
                 if (onNext != null) PanelRow("Next episode", focus = take(), onClick = onNext)
                 PanelRow("Play from beginning", focus = take(), onClick = onFromStart)
             }
@@ -635,9 +678,25 @@ private fun MoviePanel(
                 PanelRow(audioLabel(option), checked = option == audio.selected, focus = if (selected) first else null) { onAudio(option) }
             }
             PanelPage.Subtitles -> {
-                PanelRow("Off", checked = subtitles.selected == null, focus = if (subtitles.selected == null) first else null) { onSubtitle(null) }
-                subtitles.options.forEach { option ->
-                    PanelRow(subtitleName(option), checked = option == subtitles.selected, focus = if (option == subtitles.selected) first else null) { onSubtitle(option) }
+                // OpenSubtitles' state on top, then the timing of a fetched file, then every choice; scrolls when long.
+                fetchedNote(fetched)?.let { Text(it, style = Type.caption, modifier = Modifier.padding(start = Space.l, bottom = Space.s)) }
+                val list = rememberLazyListState()
+                LazyColumn(Modifier.weight(1f).scrollbar(list), state = list, verticalArrangement = Arrangement.spacedBy(Space.xs)) {
+                    if (fetched.selected != null) {
+                        item { PanelRow("Earlier", "−0.5 s") { onShift(-500) } }
+                        item { PanelRow("Later", "+0.5 s") { onShift(500) } }
+                    }
+                    val off = subtitles.selected == null && fetched.selected == null
+                    item { PanelRow("Off", checked = off, focus = if (off) first else null) { onSubtitle(null) } }
+                    items(subtitles.options.size) { i ->
+                        val option = subtitles.options[i]
+                        val on = fetched.selected == null && option == subtitles.selected
+                        PanelRow(subtitleName(option), checked = on, focus = if (on) first else null) { onSubtitle(option) }
+                    }
+                    items(fetched.subs.size) { i ->
+                        val sub = fetched.subs[i]
+                        PanelRow("${fetchedName(sub.lang)} · ${if (sub.hash) "matches this file" else sub.release}", checked = sub == fetched.selected, focus = if (sub == fetched.selected) first else null) { onFetched(sub) }
+                    }
                 }
             }
         }
@@ -679,12 +738,23 @@ private fun subtitleName(option: SubtitleOption): String {
     return listOfNotNull(language, option.label?.takeIf { it.isNotBlank() && !it.equals(language, ignoreCase = true) }).joinToString(" · ").ifEmpty { "Unknown language" }
 }
 
-/** The film's subtitles over the picture: text cues low and centred, picture cues (PGS) where the file puts them. */
+/** "English", "Arabic": a fetched file's language. */
+private fun fetchedName(lang: String) = java.util.Locale.forLanguageTag(lang).getDisplayLanguage(java.util.Locale.ENGLISH).ifBlank { lang }
+
+/** What OpenSubtitles gave, over the Subtitles page: the search, nothing, today's limit, or how far the lines are moved. */
+private fun fetchedNote(f: SubtitleFetch.State) = when (f.status) {
+    SubtitleFetch.Status.Searching -> "Searching OpenSubtitles…"
+    SubtitleFetch.Status.None -> "None found on OpenSubtitles"
+    SubtitleFetch.Status.NoneToday -> "No subtitles today"
+    else -> f.selected?.let { if (f.offset == 0L) "From OpenSubtitles" else "From OpenSubtitles · moved %+.1f s".format(java.util.Locale.ROOT, f.offset / 1000.0) }
+}
+
+/** The film's subtitles over the picture: text cues low and centred, picture cues (PGS) where the file puts them, and a fetched file's [line]. */
 @Composable
-private fun Subtitles(cues: List<Cue>) {
-    if (cues.isEmpty()) return
+private fun Subtitles(cues: List<Cue>, line: String?) {
+    if (cues.isEmpty() && line == null) return
     BoxWithConstraints(Modifier.fillMaxSize()) {
-        val text = cues.mapNotNull { it.text?.toString()?.takeIf(String::isNotBlank) }
+        val text = cues.mapNotNull { it.text?.toString()?.takeIf(String::isNotBlank) } + listOfNotNull(line)
         for (cue in cues) {
             val bitmap = cue.bitmap ?: continue
             val w = maxWidth * (if (cue.size != Cue.DIMEN_UNSET) cue.size else 0.5f)
@@ -756,6 +826,7 @@ private fun noticeText(n: Notice) = when (n) {
     is Notice.SteppedDown -> NoticeText("Stalls: now on ${short(n.copy)} · Versions can reverse it")
     is Notice.PinCleared -> NoticeText("Your pinned version won’t play here, so it’s unpinned")
     is Notice.TrialResult -> NoticeText(if (n.works) "${short(n.copy)} works here" else "${short(n.copy)} didn’t play here · back to the last version")
+    is Notice.Subtitles -> NoticeText("${fetchedName(n.language)} subtitles from OpenSubtitles · timing in Options")
 }
 
 private val NOTICE_WIDTH = 420.dp

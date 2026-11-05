@@ -209,6 +209,28 @@ class FeedSync(
         }
     }
 
+    /** English, then Arabic, subtitles for the copy playing (/api/app/subtitles): its OpenSubtitles [hash] ("" unknown) and release [name] pick the best. */
+    suspend fun subtitles(title: TitleId, hash: String, size: Long, name: String): Result<SubtitlesAnswer> = withContext(Dispatchers.IO) {
+        runCatching {
+            fun q(s: String) = java.net.URLEncoder.encode(s, "UTF-8")
+            client.newCall(Request.Builder().url("$baseUrl/api/app/subtitles?t=$token&title=${q(title)}&hash=$hash&size=$size&name=${q(name)}").build()).execute().use { res ->
+                if (!res.isSuccessful) throw IOException("HTTP ${res.code}")
+                json.decodeFromString(SubtitlesAnswer.serializer(), res.body.string())
+            }
+        }
+    }
+
+    /** One subtitle file as SRT text; null when today's downloads are spent (HTTP 429). */
+    suspend fun subtitle(id: String): Result<String?> = withContext(Dispatchers.IO) {
+        runCatching {
+            client.newCall(Request.Builder().url("$baseUrl/api/app/subtitle?t=$token&id=$id").build()).execute().use { res ->
+                if (res.code == 429) return@use null
+                if (!res.isSuccessful) throw IOException("HTTP ${res.code}")
+                res.body.string()
+            }
+        }
+    }
+
     /** Torrents Real-Debrid refused (infringing_file), so the box drops them from every title's copies; best effort. */
     suspend fun rdInfringing(hashes: List<String>) = withContext(Dispatchers.IO) {
         runCatching {
@@ -324,6 +346,14 @@ class FeedSync(
 /** `/api/app/copies`: a title's copies, its original language (ISO 639-1, "" unknown) and each source's state ("ok", "pending", "unavailable"). */
 @Serializable
 data class CopiesAnswer(val titleId: String = "", val originalLanguage: String = "", val runtime: Int = 0, val sources: CopySources = CopySources(), val copies: List<ServerCopy> = emptyList())
+
+/** `/api/app/subtitles`: [status] "ok", "none" or "quota" (no subtitles today); [subs] best first, English before Arabic. */
+@Serializable
+data class SubtitlesAnswer(val status: String = "none", val subs: List<FoundSubtitle> = emptyList())
+
+/** A subtitle file the box found: [lang] "en" or "ar"; [hash] when it was made for this very file. */
+@Serializable
+data class FoundSubtitle(val id: String, val lang: String, val hash: Boolean = false, val release: String = "")
 
 @Serializable
 data class CopySources(val iptv: String = "ok", val rd: String = "ok")

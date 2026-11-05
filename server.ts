@@ -11,7 +11,7 @@ import proxy from './api/proxy'
 type Handler = (req: Request) => Promise<Response>
 type Entry = { body: Blob; init: ResponseInit; fresh: number; stale: number }
 
-const routes: Record<string, Handler> = { '/api/epg': epg, '/api/playlist': playlist, '/api/app/channels': app.channels, '/api/app/guide': app.guide, '/api/app/movies': app.movies, '/api/app/shows': app.shows, '/api/app/episodes': app.episodes, '/api/app/movie': app.movie, '/api/app/vod-search': app.vodSearch, '/api/app/copies': app.copies }
+const routes: Record<string, Handler> = { '/api/epg': epg, '/api/playlist': playlist, '/api/app/channels': app.channels, '/api/app/guide': app.guide, '/api/app/movies': app.movies, '/api/app/shows': app.shows, '/api/app/episodes': app.episodes, '/api/app/movie': app.movie, '/api/app/vod-search': app.vodSearch, '/api/app/copies': app.copies, '/api/app/subtitles': app.subtitles, '/api/app/subtitle': app.subtitle }
 const cache = new Map<string, Entry>()
 const building = new Map<string, Promise<Entry>>()
 

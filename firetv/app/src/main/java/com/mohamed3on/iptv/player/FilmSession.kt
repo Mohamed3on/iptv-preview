@@ -60,6 +60,8 @@ sealed interface Notice {
     /** A pinned copy failed for good, so its pin was cleared (KTD12). */
     data class PinCleared(val copy: Copy) : Notice
     data class TrialResult(val copy: Copy, val works: Boolean) : Notice
+    /** Subtitles in [language] ("en", "ar") came from OpenSubtitles and show (R30). */
+    data class Subtitles(val language: String) : Notice
 }
 
 /** For telemetry (/api/app/events). */
@@ -250,6 +252,9 @@ class FilmSession(
         if (copy.source != Source.RealDebrid || phase != FilmPhase.Playing) return
         if (pausedAt != null) stale = true else reopen(copy, player.place)
     }
+
+    /** A word from outside the session (fetched subtitles), queued with its own notices. */
+    fun inform(n: Notice) = notify(n)
 
     /** Options or Versions is open: no offer is raised meanwhile. */
     fun panel(open: Boolean) {

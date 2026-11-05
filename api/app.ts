@@ -13,6 +13,8 @@
 // GET /api/app/library?t=TOKEN — Movies & Shows: titles and rows (see _library.ts).
 // GET /api/app/copies?t=TOKEN&title=… — every copy of a film or episode, for the stick to rank.
 // POST /api/app/rd-infringing?t=TOKEN — torrents Real-Debrid refused, left out of copies from then on.
+// GET /api/app/subtitles?t=TOKEN&title=…&hash=…&size=…&name=… — English and Arabic subtitles for the copy playing.
+// GET /api/app/subtitle?t=TOKEN&id=… — one of them as SRT.
 import { appendFile, mkdir, rename, stat } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import { buildAppFeed, buildAppGuide } from './_app-feed.js'
@@ -23,6 +25,7 @@ import { addBitrate, mergeAppReading, saveQuality, type Meta } from './_quality.
 import { QUALITY } from './quality-cache.js'
 import { curatedGuide } from './epg.js'
 import { movieInfo, saveMeasuredFilm, showEpisodes, showList, titleIds as mapTitleIds } from './_shows.js'
+import { subtitleFile, subtitlesFor } from './_subtitles.js'
 import { tmdbFacts } from './_tmdb.js'
 import { blurayMovies, filmTitleOf, searchVod } from './_vod.js'
 
@@ -295,4 +298,33 @@ export async function rdInfringing(req: Request): Promise<Response> {
     return new Response('Bad hashes', { status: 400 })
   }
   return Response.json({ stored: await markInfringing(hashes) }, { headers: { 'Cache-Control': 'no-store' } })
+}
+
+// GET /api/app/subtitles?t=TOKEN&title=TITLE_ID&hash=OSHASH&size=BYTES&name=RELEASE — English, then Arabic, subtitles for a
+// film or episode, best first for the copy playing (its OpenSubtitles hash and release name; see _subtitles.ts).
+export async function subtitles(req: Request): Promise<Response> {
+  if (!appTokenOk(req.url)) return forbidden()
+  const q = new URL(req.url).searchParams
+  const title = q.get('title') ?? ''
+  const hash = q.get('hash') ?? ''
+  const size = Number(q.get('size') ?? 0)
+  if (!COPY_TITLE.test(title) || !/^(?:[0-9a-f]{16})?$/.test(hash) || !Number.isSafeInteger(size) || size < 0) return new Response('Bad title', { status: 400 })
+  const { imdb } = await tmdbFacts(title)
+  const ep = title.match(/:s(\d+)e(\d+)$/)
+  const answer = imdb ? await subtitlesFor(ep ? `${imdb}:${+ep[1]}:${+ep[2]}` : imdb, hash, size, (q.get('name') ?? '').slice(0, 300)) : { status: 'none', subs: [] }
+  return Response.json(answer, { headers: { 'Cache-Control': 'no-store' } })
+}
+
+// GET /api/app/subtitle?t=TOKEN&id=ID — a subtitle file from /api/app/subtitles, as UTF-8 SRT; 429 when today's downloads are spent.
+export async function subtitle(req: Request): Promise<Response> {
+  if (!appTokenOk(req.url)) return forbidden()
+  const id = new URL(req.url).searchParams.get('id') ?? ''
+  if (!/^(?:os)?\d{1,12}$/.test(id)) return new Response('Bad id', { status: 400 })
+  try {
+    const srt = await subtitleFile(id)
+    if (srt === 'quota') return new Response('No subtitles today', { status: 429 })
+    return new Response(srt, { headers: { 'Content-Type': 'application/x-subrip; charset=utf-8', 'Cache-Control': 'no-store' } })
+  } catch (e) {
+    return new Response(e instanceof Error ? e.message : 'upstream error', { status: 502 })
+  }
 }

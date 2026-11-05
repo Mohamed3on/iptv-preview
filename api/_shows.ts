@@ -55,7 +55,7 @@ const NAME_PREFIX = /^(?:4K-)?[A-Z0-9+]{1,6}(?:-SUBS)?\s+-\s+/
 /** Language order: English, Arabic, then German, Spanish, Italian. */
 const LANGS = ['en', 'ar', 'de', 'es', 'it'] as const
 
-function language(cat: string): (typeof LANGS)[number] | null {
+export function language(cat: string): (typeof LANGS)[number] | null {
   if (SKIP.test(cat)) return null
   if (cat.startsWith('GERMANY')) return 'de'
   if (cat.startsWith('ESPAÑA')) return 'es'
@@ -155,6 +155,20 @@ export async function showEpisodes(cfg: XtreamConfig, seriesId: number, show?: s
     .sort((a, b) => a.season - b.season || a.episode - b.episode)
   const i = info.info ?? {}
   return { titleId, plot: String(i.plot ?? '').trim(), backdrop: firstBackdrop(i.backdrop_path), genre: String(i.genre ?? '').trim(), cast: castOf(i.cast), rating: ratingOf(i.rating), episodes }
+}
+
+/**
+ * Every copy of an episode the provider has, one per language the show is listed in: stream id,
+ * container, its probe, its category and the language that category is in.
+ */
+export async function episodeEntries(cfg: XtreamConfig, show: string, season: number, episode: number) {
+  const lists = (await showList(cfg)).movies.filter((m) => m.titleId === show)
+  const found = await Promise.all(lists.map(async (m) => {
+    const info = await apiGet<SeriesInfo>(cfg, `get_series_info&series_id=${m.id}`).catch(() => null)
+    const e = Object.entries(info?.episodes ?? {}).flatMap(([s, eps]) => eps.filter((e) => Number(e.season ?? s) === season && Number(e.episode_num) === episode))[0]
+    return e && Number(e.id) > 0 ? { id: Number(e.id), ext: e.container_extension || 'mkv', probe: e.info, category: m.group, lang: language(m.group) ?? '' } : null
+  }))
+  return found.filter((e) => e !== null)
 }
 
 interface VodInfo {

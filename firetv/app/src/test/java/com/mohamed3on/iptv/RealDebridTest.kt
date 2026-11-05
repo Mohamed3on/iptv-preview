@@ -1,10 +1,13 @@
 package com.mohamed3on.iptv
 
+import com.mohamed3on.iptv.data.AddGate
 import com.mohamed3on.iptv.data.RdCandidate
 import com.mohamed3on.iptv.data.RdCheck
 import com.mohamed3on.iptv.data.RdError
 import com.mohamed3on.iptv.data.RdStatus
 import com.mohamed3on.iptv.data.RealDebrid
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runTest
 import mockwebserver3.Dispatcher
 import mockwebserver3.MockResponse
@@ -18,17 +21,24 @@ import org.junit.Before
 import org.junit.Test
 import java.util.concurrent.TimeUnit
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class RealDebridTest {
     private val server = MockWebServer()
     // fileIdx 0 would be the sample (id 1); the file name picks the film (id 2).
-    private val film = RdCandidate("ABC123", 0, "Film.mkv")
+    private val film = RdCandidate("ABC123", 0, "Film.mkv", cached = true)
 
     @Before fun setUp() = server.start()
     @After fun tearDown() = server.close()
 
-    private fun rd() = RealDebrid(OkHttpClient(), { "tok" }, server.url("/rest").toString())
+    private fun rd(gate: AddGate = AddGate(), now: () -> Long = System::currentTimeMillis, onInfringing: (String) -> Unit = {}) =
+        RealDebrid(OkHttpClient(), { "tok" }, server.url("/rest").toString(), now, gate, onInfringing)
+    private fun TestScope.clock(): () -> Long = { 1_000_000 + testScheduler.currentTime }
     private fun response(code: Int, body: String = "") = MockResponse.Builder().code(code).body(body).build()
     private fun reply(code: Int, body: String = "") = server.enqueue(response(code, body))
+    private fun addsAnswer(code: Int, body: String) = object : Dispatcher() {
+        override fun dispatch(request: RecordedRequest) =
+            if (request.url.encodedPath.endsWith("addMagnet")) response(code, body) else response(204)
+    }
     private fun info(status: String) {
         val done = status == "downloaded"
         reply(200, """{"status":"$status","files":[{"id":1,"path":"/Sample.mkv","bytes":1,"selected":0},
@@ -53,10 +63,14 @@ class RealDebridTest {
         info("waiting_files_selection")
         reply(204)
         info("downloaded")
-        assertEquals(RdCheck.Ready("N1", "https://real-debrid.com/d/L1"), rd().check(listOf(film))[film])
+        val rd = rd()
+        assertEquals(RdCheck.Ready("N1", "https://real-debrid.com/d/L1"), rd.check(listOf(film))[film])
         val sent = requests()
         assertEquals("files=2", sent[3].body?.utf8())
         assertEquals(5, sent.size) // no delete
+        // Prewarmed: Play finds it with no calls, so only the unrestrict is left.
+        assertTrue(rd.check(listOf(film))[film] is RdCheck.Ready)
+        assertEquals(emptyList<String>(), paths())
 
         reply(204)
         reply(201, """{"id":"N2"}""")
@@ -69,9 +83,11 @@ class RealDebridTest {
     }
 
     @Test fun `errors map to permanent or transient and set the source status`() = runTest {
+        val infringing = mutableListOf<String>()
         reply(204)
         reply(451, """{"error":"infringing_file","error_code":35}""")
-        assertTrue((rd().check(listOf(film))[film] as RdCheck.Failed).error.permanent)
+        assertTrue((rd(onInfringing = { infringing += it }).check(listOf(film))[film] as RdCheck.Failed).error.permanent)
+        assertEquals(listOf("ABC123"), infringing) // for the box's list
 
         var rd = rd()
         reply(204)
@@ -89,18 +105,37 @@ class RealDebridTest {
         assertEquals(false, e.permanent)
     }
 
-    @Test fun `a rate-limited addMagnet stops adding instead of hammering`() = runTest {
-        server.dispatcher = object : Dispatcher() {
-            override fun dispatch(request: RecordedRequest) =
-                if (request.url.encodedPath.endsWith("addMagnet")) response(429, """{"error":"too_many_requests","error_code":34}""") else response(204)
-        }
-        val rd = rd()
-        val six = List(6) { RdCandidate("h$it", 0) }
-        val first = rd.check(six)
-        assertEquals(3, first.size)
-        assertTrue(first.values.all { it is RdCheck.Failed && !it.error.permanent })
+    @Test fun `a rate-limited addMagnet stops every add in the process for a minute`() = runTest {
+        server.dispatcher = addsAnswer(429, """{"error":"too_many_requests","error_code":34}""")
+        val gate = AddGate()
+        val rd = rd(gate, clock())
+        val six = List(6) { RdCandidate("h$it", 0, cached = true) }
+        assertTrue(rd.check(six).values.single().let { it is RdCheck.Failed && !it.error.permanent })
         assertEquals(RdStatus.RateLimited, rd.status.value)
-        rd.check(six) // still within the pause: no adds at all
-        assertEquals(3, paths().count { it.endsWith("addMagnet") })
+        rd.check(six) // still within the pause: no adds, from this client or another
+        rd(gate, clock()).check(six)
+        assertEquals(1, paths().count { it.endsWith("addMagnet") })
+    }
+
+    @Test fun `only cached copies are added, one at a time 4 s apart, at most 3`() = runTest {
+        server.dispatcher = addsAnswer(451, """{"error":"infringing_file","error_code":35}""")
+        val infringing = mutableListOf<String>()
+        val copies = listOf(RdCandidate("u0", 0)) + List(4) { RdCandidate("c$it", 0, cached = true) }
+        val out = rd(now = clock(), onInfringing = { infringing += it }).check(copies)
+        assertEquals(listOf("c0", "c1", "c2"), infringing)
+        assertEquals(copies.subList(1, 4).toSet(), out.keys)
+        assertEquals(8_000L, testScheduler.currentTime)
+    }
+
+    @Test fun `an account copy plays at once instead of waiting for an add's turn`() = runTest {
+        val gate = AddGate()
+        val now = clock()
+        gate.lastAdd = now() // another title's add just happened
+        reply(200, """[{"id":"T1","hash":"abc123","status":"downloaded"}]""")
+        info("downloaded")
+        val top = RdCandidate("TOP", 0, cached = true)
+        assertEquals(setOf(film), rd(gate, now).check(listOf(top, film)).keys)
+        assertEquals(0L, testScheduler.currentTime)
+        assertTrue(paths().none { it.endsWith("addMagnet") })
     }
 }

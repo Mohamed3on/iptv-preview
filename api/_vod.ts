@@ -56,6 +56,15 @@ export async function filmTitleOf(cfg: XtreamConfig): Promise<(id: number) => st
   return (id) => filmTitle(c.tmdb!.get(id), id)
 }
 
+/** Every catalogue copy of a film: each entry with its TMDB id (`movie:<tmdb>`), or the one entry of an `iptv:<id>` title. Raw names keep the provider's tags. */
+export async function filmEntries(cfg: XtreamConfig, title: string): Promise<{ id: number; name: string; category: string; ext: string }[]> {
+  const tmdb = title.match(/^movie:(\d+)$/)?.[1]
+  const vodId = Number(title.match(/^iptv:(\d+)$/)?.[1])
+  if (!tmdb && !vodId) return []
+  const { cats, vod } = await catalogue(cfg)
+  return vod.filter((r) => (tmdb ? r[6] === tmdb : r[0] === vodId)).map(([id, name, , cat, ext]) => ({ id, name, category: cats[cat] ?? '', ext }))
+}
+
 /** A VOD category's name, "" when unknown. */
 export async function vodCategoryName(cfg: XtreamConfig, id: number): Promise<string> {
   return (await catalogue(cfg)).cats[id] ?? ''

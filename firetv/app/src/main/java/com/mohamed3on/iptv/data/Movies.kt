@@ -47,7 +47,7 @@ val Scored.known get() = sn != null || lb != null || ir != null || s10 != null
 /**
  * A library title (`/api/app/library`, `/api/app/search`, More like this): its id, 'm' film or 't' show, name, year,
  * poster and backdrop (a TMDB path, or a full URL), genre ids, best known tier ([e] 1 when estimated) and scores;
- * a film the provider has, its best copy's VOD id [v] and container [x] (Play starts it when the box can't answer).
+ * a film the provider has, its best copy's VOD id [v] and container [x] (Play starts it when the box can't answer); its runtime [rt] in minutes (a show's: an episode's), 0 unknown.
  */
 @Serializable
 data class LibTitle(
@@ -55,7 +55,7 @@ data class LibTitle(
     val t: String = "", val e: Int = 0,
     override val s: Int? = null, override val sn: Int? = null, override val se: Int = 0, override val lb: Double? = null, override val ir: Double? = null,
     override val lv: Int? = null, override val iv: Int? = null, override val s10: Double? = null,
-    val v: Int = 0, val x: String = "",
+    val v: Int = 0, val x: String = "", val rt: Int = 0,
 ) : Scored {
     /** On screen, [genres] its first two genres' names. */
     fun toMovie(genres: String = ""): Movie {
@@ -261,7 +261,7 @@ fun movieTitle(raw: String): MovieTitle {
 private val GROUP_LANGUAGE = Regex("""^([A-Z]{2})\s+-\s+""")
 private val GROUP_NOISE = Regex("""\s*\(VOD\)|\s+4K$""")
 /** Words kept as their makers spell them; everything else reads in sentence case. */
-private val BRANDS = listOf("UFC", "PPV", "Netflix", "Amazon", "Disney+", "Apple+", "Marvel", "OSN+", "HDR", "HBO", "Max", "FIFA+", "WWE").associateBy { it.uppercase() }
+private val BRANDS = listOf("UFC", "PPV", "Netflix", "Amazon", "Disney+", "Apple+", "Marvel", "OSN+", "HDR", "HBO", "Max", "FIFA+", "WWE", "TrueScore").associateBy { it.uppercase() }
 private val groupLabels = java.util.concurrent.ConcurrentHashMap<String, GroupLabel>()
 
 fun groupLabel(raw: String): GroupLabel = groupLabels.getOrPut(raw) {

@@ -44,6 +44,8 @@ export interface LibTitle {
   /** A film the provider has: its best copy's VOD id and container, which Play starts when the box can't answer (KTD13). */
   v?: number
   x?: string
+  /** Runtime in minutes (a show's: an episode's), from TMDB's kept details; absent when unknown. */
+  rt?: number
   /** TMDB popularity: picks a row's candidates without a score in the build (library-full.json); not served. */
   pp?: number
 }
@@ -105,6 +107,8 @@ export function rowDefs(today = new Date()): RowDef[] {
   const films = (q: string): [Kind, string] => ['movie', `discover/movie?${pop}&${q}`]
   const shows = (q: string): [Kind, string] => ['tv', `discover/tv?${pop}&${q}&${NO_TALK}`]
   return [
+    // The best conviction of every scored film and show, filled by scripts/build-library.ts.
+    { id: 'top', n: 'Top TrueScore', q: [] },
     { id: 'trending', n: 'Trending', q: [['movie', 'trending/movie/week'], ['tv', 'trending/tv/week']] },
     // Films out on digital or disc in the last 60 days; shows with an episode out in them.
     { id: 'new', n: 'New releases', q: [films(`with_release_type=4%7C5&release_date.gte=${day(60)}&release_date.lte=${day(0)}&vote_count.gte=20`), shows(`air_date.gte=${day(60)}&air_date.lte=${day(0)}&vote_count.gte=100`)] },

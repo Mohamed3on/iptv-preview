@@ -149,6 +149,19 @@ export async function tmdbTitle(kind: Kind, id: string | number): Promise<TmdbTi
   return job
 }
 
+/** Runtimes in minutes (a show's: an episode's) from the kept details, whatever their age, by title id; never asks TMDB. */
+export const keptRuntimes = async () => {
+  const all = await loaded()
+  return (id: string) => all[id]?.t?.runtime || undefined
+}
+
+/** [id]'s runtime: the kept one, else TMDB's details asked now; 0 when unknown. Nightly. */
+export async function runtimeOf(id: string): Promise<number> {
+  const p = parseTitleId(id)
+  if (!p || p.season != null) return 0
+  return (await keptRuntimes())(id) || (await tmdbTitle(p.kind, p.tmdb))?.runtime || 0
+}
+
 /** A title id's IMDb id and original language, to spread into a response; {} when TMDB has nothing. */
 export async function tmdbFacts(title: string): Promise<{ imdb?: string; originalLanguage?: string }> {
   const p = parseTitleId(title)

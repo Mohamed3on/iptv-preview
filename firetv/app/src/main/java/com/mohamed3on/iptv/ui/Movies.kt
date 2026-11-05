@@ -211,8 +211,10 @@ private val PROGRESS_WIDTH = 200.dp
 /** Up next's cards: 16:9, so a backdrop fits whole. */
 private val WIDE = DpSize(184.dp, 104.dp)
 private val STILL = DpSize(128.dp, 72.dp)
-/** Room kept at the hero's right for the Search button. */
-private val SEARCH_ROOM = 120.dp
+/** Room kept at the hero's right for the Search and Hide watched buttons. */
+private val SEARCH_ROOM = 168.dp
+/** Prefs key: "1" while the rows leave watched titles out. */
+private const val HIDE_WATCHED = "movies.hideWatched"
 /** Backdrops decode at 720p: darkened behind text, more pixels show nothing and cost the stick's memory. */
 private val BACKDROP_PX = 1280 to 720
 private const val BACKDROP_FADE_MS = 400
@@ -555,20 +557,22 @@ private class MovieRow(val key: String, val title: String, val badge: String?, v
 
 /**
  * The owner's Watchlist and Recommended (watched titles left out), each only when it has titles (R26), then the library's rows
- * (trending, new, genres, languages; the provider's groups when TMDB's are missing); what is part-way through lives in Up next, not here.
+ * (Top TrueScore, trending, new, genres, languages; the provider's groups when TMDB's are missing); what is part-way through lives in
+ * Up next, not here. [hideWatched] leaves watched titles out of every row (a row left empty goes).
  */
-private fun rowsOf(library: Catalog?, resume: List<Resume>, history: History?, watched: Set<TitleId>): List<MovieRow> {
+private fun rowsOf(library: Catalog?, resume: List<Resume>, history: History?, watched: Set<TitleId>, hideWatched: Boolean): List<MovieRow> {
     library ?: return emptyList()
     val progress = resume.filter { it.dur > 0 }.associate { it.title to it.pos.toFloat() / it.dur }
+    fun shown(movies: List<Movie>) = if (hideWatched) movies.filter { it.titleId !in watched } else movies
     // The library's own card for a title it has (its genres), else the history's.
-    fun own(movies: List<Movie>) = movies.map { library.find(it.titleId) ?: it }
+    fun own(movies: List<Movie>) = shown(movies).map { library.find(it.titleId) ?: it }
     val mine = listOfNotNull(
-        history?.watchlist?.takeIf { it.isNotEmpty() }?.let { MovieRow("h|watchlist", "Watchlist", null, own(it), progress) },
+        history?.watchlist?.let(::own)?.takeIf { it.isNotEmpty() }?.let { MovieRow("h|watchlist", "Watchlist", null, it, progress) },
         history?.recommended?.filter { it.titleId !in watched }?.takeIf { it.isNotEmpty() }?.let { MovieRow("h|recommended", "Recommended", null, own(it), progress) },
     )
-    return mine + library.rows.map { row ->
+    return mine + library.rows.mapNotNull { row ->
         val label = groupLabel(row.name)
-        MovieRow("r|${row.id}", label.name, label.badge, row.movies, progress)
+        shown(row.movies).takeIf { it.isNotEmpty() }?.let { MovieRow("r|${row.id}", label.name, label.badge, it, progress) }
     }
 }
 
@@ -602,7 +606,9 @@ private fun MoviesBrowse(
     onBack: () -> Unit,
 ) {
     val reduced = LocalReducedMotion.current
-    val rows = remember(library, resume, history, watched) { rowsOf(library, resume, history, watched) }
+    val prefs = LocalContext.current.graph.prefs
+    var hideWatched by remember { mutableStateOf(prefs.get(HIDE_WATCHED) == "1") }
+    val rows = remember(library, resume, history, watched, hideWatched) { rowsOf(library, resume, history, watched, hideWatched) }
     // Each saved place with its title as last played (its provider id, for its episodes and IPTV copy) and as the
     // library has it now (tier and score), newest first; one played only from Real-Debrid from its own name and poster (R21).
     // Then followed shows' next episodes, latest aired first: one takes the hero only when nothing is part-way through.
@@ -755,14 +761,21 @@ private fun MoviesBrowse(
                     }
                 }
             }
-            if (kind == 2 && shownPage != BrowsePage.Search) PageButton(
-                "Search", ::openSearch,
-                Modifier
-                    .align(Alignment.TopEnd)
-                    .padding(top = Space.safeY, end = EDGE)
-                    .focusRequester(searchButton)
-                    .onFocusChanged { if (it.isFocused) at = FocusAt.SearchButton },
-            )
+            if (kind == 2 && shownPage != BrowsePage.Search) Column(
+                Modifier.align(Alignment.TopEnd).padding(top = Space.safeY, end = EDGE),
+                horizontalAlignment = Alignment.End,
+                verticalArrangement = Arrangement.spacedBy(Space.s),
+            ) {
+                PageButton(
+                    "Search", ::openSearch,
+                    Modifier.focusRequester(searchButton).onFocusChanged { if (it.isFocused) at = FocusAt.SearchButton },
+                )
+                // Watched titles in the rows, or not (Up next and search keep them); kept across launches.
+                PageButton(if (hideWatched) "Show watched" else "Hide watched", {
+                    hideWatched = !hideWatched
+                    prefs.put(HIDE_WATCHED, if (hideWatched) "1" else null)
+                })
+            }
         }
     }
 }
@@ -821,9 +834,16 @@ private fun Backdrop(url: String?, solidFrom: Dp?, modifier: Modifier = Modifier
     var under by remember { mutableStateOf<ImageBitmap?>(null) }
     val fade = remember { Animatable(1f) }
     val lastSolid = remember { arrayOf(0.dp) }
+    val drawn = remember { booleanArrayOf(false) }
     LaunchedEffect(url) {
         val next = if (url.isNullOrEmpty()) null else bakedBackdrop(context, url, topShare) ?: return@LaunchedEffect
         if (next == shown) return@LaunchedEffect
+        // The first picture is there at once: fading it in made a title page's opening frames drop.
+        if (next != null && !drawn[0]) {
+            drawn[0] = true
+            shown = next
+            return@LaunchedEffect
+        }
         under = shown
         shown = next
         fade.snapTo(0f)
@@ -1057,7 +1077,7 @@ private val NEW_STYLE = Type.caption.copy(color = Palette.accent, fontWeight = F
 @Composable
 private fun MetaLine(movie: Movie, info: MovieInfo?, extra: String? = null, tier: Boolean = true) {
     val genre = info?.genre?.split(',', '/')?.map(String::trim)?.filter(String::isNotEmpty)?.take(2)?.joinToString(", ")?.ifEmpty { null }
-    val runtime = info?.secs?.takeIf { it > 0 }?.let { runtimeLabel(it * 1000L) }
+    val runtime = (info?.secs?.takeIf { it > 0 }?.let { it * 1000L } ?: movie.lib?.rt?.takeIf { it > 0 }?.let { it * 60_000L })?.let(::runtimeLabel)
     val scored: Scored? = movie.lib?.takeIf { it.known } ?: info
     val rating = info?.rating?.ifEmpty { null }?.takeIf { scored?.lb == null && scored?.ir == null }?.let { "$it/10" }
     val yours = LocalContext.current.graph.marks.ratings.collectAsState().value[movie.titleId]

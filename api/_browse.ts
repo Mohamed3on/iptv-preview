@@ -7,11 +7,11 @@ import type { XtreamConfig } from './_lib.js'
 import { fromTmdb, LIBRARY_FILE, LIBRARY_FULL_FILE, type LibTitle, type Library, type TmdbItem } from './_library.js'
 import { due, loadScores, scoreNow, scoreTitles, type Score, type ScoreCache } from './_scores.js'
 import { showList } from './_shows.js'
-import { episodeTitle, parseTitleId, tmdbEpisodes, tmdbTitle } from './_tmdb.js'
+import { episodeTitle, keptRuntimes, parseTitleId, tmdbEpisodes, tmdbTitle } from './_tmdb.js'
 import type { VodItem } from './_vod.js'
 
-/** The built library (null when missing), every title it has seen with its tier (the uncut build), and scores (with what the APIs said). */
-export interface Known { lib: Library | null; titles: Map<string, LibTitle>; scores: Map<string, Score>; cache?: ScoreCache }
+/** The built library (null when missing), every title it has seen with its tier (the uncut build), scores (with what the APIs said) and kept runtimes. */
+export interface Known { lib: Library | null; titles: Map<string, LibTitle>; scores: Map<string, Score>; cache?: ScoreCache; rt?: (id: string) => number | undefined }
 
 const KNOWN_MS = 10 * 60e3
 let known: { at: number; job: Promise<Known> } | null = null
@@ -20,19 +20,19 @@ let known: { at: number; job: Promise<Known> } | null = null
 export function knownTitles(): Promise<Known> {
   if (known && Date.now() - known.at < KNOWN_MS) return known.job
   const read = (f: string) => readFile(f, 'utf8').then((s) => JSON.parse(s) as Library, () => null)
-  const job = Promise.all([read(LIBRARY_FILE), read(LIBRARY_FULL_FILE), loadScores()]).then(([lib, full, cache]) => {
+  const job = Promise.all([read(LIBRARY_FILE), read(LIBRARY_FULL_FILE), loadScores(), keptRuntimes()]).then(([lib, full, cache, rt]) => {
     const titles = new Map<string, LibTitle>()
     for (const t of [...(full?.titles ?? []), ...(lib?.titles ?? [])]) titles.set(t.id, { ...titles.get(t.id), ...t })
-    return { lib, titles, scores: scoreTitles(cache), cache }
+    return { lib, titles, scores: scoreTitles(cache), cache, rt }
   })
   known = { at: Date.now(), job }
   return job
 }
 
-/** [t] with the tier and score the library knows for it. */
+/** [t] with the tier, score and runtime the library knows for it. */
 export function decorate(k: Known, t: LibTitle): LibTitle {
-  const base = k.titles.get(t.id)
-  return { ...t, ...(base?.t && { t: base.t, ...(base.e && { e: base.e }) }), ...k.scores.get(t.id) }
+  const base = k.titles.get(t.id), rt = t.rt ?? base?.rt ?? k.rt?.(t.id)
+  return { ...t, ...(base?.t && { t: base.t, ...(base.e && { e: base.e }) }), ...k.scores.get(t.id), ...(rt && { rt }) }
 }
 
 /** Best score first, then those with only [s10] by it; unscored titles keep their order after them. */

@@ -322,9 +322,9 @@ export async function lovedPicks(h: Kept, scores: Map<string, { s?: number; s10?
   return [...rank].filter(([id]) => !skip.has(id) && seenWidely(id)).sort(([a, p], [b, q]) => q - p || (scores.get(b)?.s ?? 0) - (scores.get(a)?.s ?? 0)).slice(0, ROW_CAP * 2).map(([id]) => id)
 }
 
-/** Each Watchlist title's runtime in minutes, as TMDB's kept details give it (looked up when missing); 0 unknown. Nightly. */
+/** Each Watchlist and Recommended title's runtime in minutes, as TMDB's kept details give it (looked up when missing); 0 unknown. Nightly. */
 export async function watchlistRuntimes(h: Kept): Promise<Record<string, number>> {
-  return Object.fromEntries(await pool(watchlistOf(h), 4, async (id) => {
+  return Object.fromEntries(await pool([...new Set([...watchlistOf(h), ...h.recs, ...(h.picks ?? [])])], 4, async (id) => {
     const [kind, tmdb] = id.split(':') as [Kind, string]
     return [id, h.runtimes?.[id] || ((await tmdbTitle(kind, tmdb))?.runtime ?? 0)] as const
   }))
@@ -360,7 +360,7 @@ export async function historyAnswer(h: Kept | null, local: string[], k: Known) {
     const [kind, tmdb] = id.split(':') as [Kind, string]
     const t = k.titles.has(id) ? null : await tmdbTitle(kind, tmdb)
     const base = k.titles.get(id) ?? (t && { id, k: kind === 'tv' ? 't' : 'm', n: t.name, ...(Number(t.year) && { y: Number(t.year) }), ...(t.poster && { p: t.poster }), ...(t.backdrop && { b: t.backdrop }), ...(t.originalLanguage && { l: t.originalLanguage }) })
-    const out = base ? decorate(k, base as LibTitle) : null
+    const out = base ? decorate(k, { ...base, ...(h?.runtimes?.[id] && { rt: h.runtimes[id] }) } as LibTitle) : null
     titles.set(id, out)
     return out
   }

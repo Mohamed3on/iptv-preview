@@ -4,16 +4,17 @@
 // every TMDB list fails, nothing is written and the app keeps the last library (or the provider's rows).
 // Every row title, provider title and the owner's Watchlist and Recommended are scored first (api/_scores.ts:
 // MDBList and IMDb's histograms), then each row keeps its 150 most convincing candidates (TMDB's most popular
-// where no score is known), sorted by score and cut to 60. Each key is optional: without one its source is skipped, and rows keep their order.
+// where no score is known), sorted by score and cut to 60. Top TrueScore leads the rows: the 150 best [s] of every scored
+// title, looked up on TMDB where new. Titles on show carry their runtime (TMDB's kept details, looked up where none are kept). Each key is optional: without one its source is skipped, and rows keep their order.
 // First it reads the owner's Trakt and Letterboxd history into .cache/history.json (api/_history.ts), and builds
 // Recommended from the titles the owner loved (lovedPicks: TMDB's recommendations, mostly kept with their details)
 // and the Watchlist's runtimes (it is shown shortest first).
 // Usage: bun scripts/build-library.ts   (XTREAM_*, TMDB_TOKEN, TRAKT_CLIENT_ID, MDBLIST_KEY from env / .env.local)
 import { readFile } from 'node:fs/promises'
 import { configFromEnv } from '../api/_lib.js'
-import { assemble, fromTmdb, LIBRARY_FILE, LIBRARY_FULL_FILE, providerTitles, rowDefs, saveLibrary, withProviderCopies, type Library, type LibTitle, type TmdbItem } from '../api/_library.js'
+import { assemble, fromTmdb, LIBRARY_FILE, LIBRARY_FULL_FILE, providerTitles, ROW_CANDIDATES, rowDefs, saveLibrary, withProviderCopies, type Library, type LibTitle, type TmdbItem } from '../api/_library.js'
 import { loadScores, onScreen, ranked, refreshScores, saveScores, scoreTitles, unscored } from '../api/_scores.js'
-import { parseTitleId, tmdbGet, type Kind } from '../api/_tmdb.js'
+import { parseTitleId, runtimeOf, tmdbGet, type Kind } from '../api/_tmdb.js'
 import { historyTitles, loadHistory, lovedPicks, refreshHistory, saveHistory, watchlistRuntimes } from '../api/_history.js'
 import { readOnlyTokens } from '../api/_trakt.js'
 
@@ -29,7 +30,8 @@ if (!process.env.TMDB_TOKEN) {
 }
 
 if (history) {
-  const [picks, runtimes] = await Promise.all([lovedPicks(history, scoreTitles(await loadScores())), watchlistRuntimes(history)])
+  const picks = await lovedPicks(history, scoreTitles(await loadScores()))
+  const runtimes = await watchlistRuntimes({ ...history, picks })
   // Onto the history as it is now: the server may have written it meanwhile.
   history = { ...((await loadHistory()) ?? history), picks, runtimes }
   await saveHistory(history)
@@ -74,12 +76,14 @@ for (const { t: _t, e: _e, ...rest } of [...seeds.flat(), ...(prev?.titles ?? []
 }
 const cfg = configFromEnv()
 const provider = await providerTitles(cfg)
-const missing = [...new Set(provider.map((p) => p.t.id))].filter((id) => parseTitleId(id) && !known.has(id))
-await pool(missing, 6, async (id) => {
+/** Looks up on TMDB the titles in [ids] the build doesn't know yet. */
+const lookUp = (ids: string[]) => pool(ids.filter((id) => parseTitleId(id) && !known.has(id)), 6, async (id) => {
   const { kind, tmdb } = parseTitleId(id)!
   const r = await tmdbGet<TmdbItem>(`${kind}/${tmdb}`).catch(() => null)
-  if (r) known.set(id, fromTmdb(kind, r))
+  if (r && !r.adult) known.set(id, fromTmdb(kind, r))
 })
+const missing = [...new Set(provider.map((p) => p.t.id))].filter((id) => parseTitleId(id) && !known.has(id))
+await lookUp(missing)
 
 // Scores first, the owner's titles and what is on screen now ahead of the rest (a few hundred batched requests at most).
 const scores = await loadScores()
@@ -88,8 +92,14 @@ const asked = await refreshScores([...new Set([...historyTitles(history), ...(pr
   fresh, scores, process.env.MDBLIST_KEY, { save: () => saveScores(scores) })
 await saveScores(scores)
 const scored = scoreTitles(scores)
-const full = await withProviderCopies(assemble(defs, seeds, provider.map(({ t, group }) => ({ group, t: known.has(t.id) ? { ...known.get(t.id)!, ...(t.t && { t: t.t }), ...(t.e && { e: t.e }) } : t })), prev, gn, scored), cfg)
+// Top TrueScore: the best [s] of every scored film and show TMDB knows, wherever the build met it.
+const top = [...scored].filter(([id, x]) => x.s !== undefined && parseTitleId(id) && parseTitleId(id)!.season === undefined).sort(([, a], [, b]) => b.s! - a.s!).slice(0, ROW_CANDIDATES).map(([id]) => id)
+await lookUp(top)
+seeds[defs.findIndex((d) => d.id === 'top')] = top.flatMap((id) => (known.get(id)?.p ? [known.get(id)!] : []))
+const full =await withProviderCopies(assemble(defs, seeds, provider.map(({ t, group }) => ({ group, t: known.has(t.id) ? { ...known.get(t.id)!, ...(t.t && { t: t.t }), ...(t.e && { e: t.e }) } : t })), prev, gn, scored), cfg)
 await saveLibrary(full, LIBRARY_FULL_FILE)
-const lib = ranked(full, scored)
+const shown = ranked(full, scored)
+// Each title on show with its runtime: TMDB's kept details, looked up only where none are kept.
+const lib = { ...shown, titles: await pool(shown.titles, 6, async (t) => ({ ...t, ...(await runtimeOf(t.id).then((rt) => rt && { rt })) })) }
 await saveLibrary(lib)
 console.log(`library: ${full.titles.length} titles in ${full.rows.length} rows, ${lib.titles.length} on show; ${missing.length} provider titles looked up; ${failed} TMDB pages failed; asked MDBList about ${asked.mdblist}, IMDb about ${asked.imdb}`)

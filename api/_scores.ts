@@ -6,12 +6,14 @@
 // MDBList monthly (200 titles a request at night; it also gives the IMDb id), IMDb's GraphQL weekly (100 a request),
 // both daily for new releases; a title page asks whatever is due at once ([scoreNow]). scripts/build-library.ts
 // runs the nightly part.
-import { readFileSync } from 'node:fs'
+import { readFileSync, statSync, watch } from 'node:fs'
 import { readFile } from 'node:fs/promises'
+import { basename, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { writeAtomic } from './_fs.js'
-import { ordered, type LibTitle, type Library } from './_library.js'
-import { parseTitleId } from './_tmdb.js'
+import type { Kept } from './_history.js'
+import { fromTmdb, LIBRARY_FULL_FILE, ordered, rowDefs, type LibTitle, type Library, type TmdbItem } from './_library.js'
+import { keptRuntimes, parseTitleId, tmdbGet } from './_tmdb.js'
 
 /**
  * What was said about one title, times in ms: IMDb average (/10) and votes, Letterboxd average (0–5) and votes,
@@ -37,16 +39,24 @@ export const netScore = (net: number, total: number) => (total > 0 ? Math.sign(n
 
 const LBX_FILE = process.env.LETTERBOXD_HISTOGRAMS || '/var/lib/truescore/letterboxd.json'
 type LbxFilm = { h?: number[]; score?: number; adjusted?: number; ratio?: number }
-const lbx = { at: 0, byId: new Map<string, LbxFilm>() }
+const lbx = { at: 0, mtime: 0, watched: false, byId: new Map<string, LbxFilm>() }
 /**
  * TrueScore's score and Letterboxd's histogram (½★ to 5★) by movie:<tmdb>, from TrueScore's store on this box (what
- * its extension saw on letterboxd.com), the busiest histogram per id; read again after 5 minutes, the last one kept
- * while the file can't be read.
+ * its extension saw on letterboxd.com), the busiest histogram per id; read again when the store changes ([watchStore],
+ * else looked at once a minute), the last one kept while the file can't be read.
  */
 export function letterboxdFilms(now = Date.now()) {
-  if (now - lbx.at < 5 * 60e3) return lbx.byId
-  lbx.at = now
+  if (!lbx.watched && now - lbx.at >= 60e3) (lbx.at = now), readStore()
+  return lbx.byId
+}
+/** When the store [letterboxdFilms] holds was written (ms; 0 before any). */
+export const storeAt = () => (letterboxdFilms(), lbx.mtime)
+
+/** Reads the store when it changed since the last read; true when it did. */
+function readStore() {
   try {
+    const mtime = statSync(LBX_FILE).mtimeMs
+    if (mtime === lbx.mtime) return false
     const byId = new Map<string, LbxFilm>()
     for (const { h, score, adjusted, ratio, tmdb } of Object.values(JSON.parse(readFileSync(LBX_FILE, 'utf8')) as Record<string, LbxFilm & { tmdb?: number | null }>)) {
       if (!tmdb) continue
@@ -54,8 +64,78 @@ export function letterboxdFilms(now = Date.now()) {
       byId.set(id, { score: score ?? was.score, adjusted: adjusted ?? was.adjusted, ratio: ratio ?? was.ratio, h: h && sum(h) > sum(was.h ?? []) ? h : was.h })
     }
     lbx.byId = byId
-  } catch { /* the last read stands */ }
-  return lbx.byId
+    lbx.mtime = mtime
+    return true
+  } catch { return false /* the last read stands */ }
+}
+
+/**
+ * Reads TrueScore's store 1 s after each change (its folder watched, as a write may replace the file by a rename),
+ * then calls [changed]; when the watch fails, [letterboxdFilms] looks at the file once a minute instead. Server only.
+ */
+export function watchStore(changed: () => void) {
+  letterboxdFilms()
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    const w = watch(dirname(LBX_FILE), (_, name) => {
+      if (name && name !== basename(LBX_FILE)) return
+      clearTimeout(timer)
+      timer = setTimeout(() => readStore() && changed(), 1000)
+    })
+    w.on('error', () => ((lbx.watched = false), w.close()))
+    w.unref?.()
+    lbx.watched = true
+  } catch { /* the minute look stands */ }
+}
+
+/** One title's score as it is now (TrueScore's store as last read). */
+export function scoreOf(id: string, cache: ScoreCache = {}) {
+  const f = letterboxdFilms().get(id)
+  return scoreTitles({ [id]: cache[id] ?? {} }, new Map(f ? [[id, f]] : [])).get(id)
+}
+
+/**
+ * TrueScore's rows by id: the films its store has that exact score for (recent-adjusted, all-time), best first, until
+ * 90 the owner hasn't watched are in (the rows keep this order and length, so the app can leave watched titles out, its
+ * own new marks too, and still show 60).
+ */
+export function trueScoreRows(h: Kept | null, films = letterboxdFilms()): [string, string[]][] {
+  const seen = new Set([...(h?.movies ?? []), ...(h?.lb ?? []), ...Object.keys(h?.imdb ?? {})])
+  return ([['ts-recent', 'adjusted'], ['ts-all', 'score']] as const).map(([row, by]) => {
+    const ids: string[] = []
+    let unseen = 0
+    for (const [id] of [...films].filter(([, f]) => f[by] !== undefined).sort(([, a], [, b]) => b[by]! - a[by]!)) {
+      if (unseen >= 90) break
+      ids.push(id)
+      if (!seen.has(id)) unseen++
+    }
+    return [row, ids]
+  })
+}
+
+const lookedUp = new Map<string, LibTitle | null>()
+/**
+ * The nightly build's library (library-full.json) with TrueScore's rows and every score as its store and the score
+ * cache have them now, ranked and cut as the build does: what the server serves between builds once the store changes.
+ * A film new to the rows is looked up on TMDB once; titles carry their kept runtimes.
+ */
+export async function rescoredLibrary(h: Kept | null): Promise<Library> {
+  const [full, cache, rt] = await Promise.all([readFile(LIBRARY_FULL_FILE, 'utf8').then((s) => JSON.parse(s) as Library), loadScores(), keptRuntimes()])
+  const titles = [...full.titles], index = new Map(titles.map((t, i) => [t.id, i]))
+  const ts = trueScoreRows(h)
+  await Promise.all(ts.flatMap(([, ids]) => ids).filter((id) => !index.has(id) && !lookedUp.has(id)).map((id) =>
+    tmdbGet<TmdbItem>(`movie/${parseTitleId(id)!.tmdb}`).then((r) => lookedUp.set(id, r.adult ? null : fromTmdb('movie', r)), () => {})))
+  const names = new Map(rowDefs().map((d) => [d.id, d.n]))
+  const rows = [
+    ...ts.map(([id, ids]) => ({ id, n: names.get(id)!, i: [...new Set(ids.flatMap((x) => {
+      const t = lookedUp.get(x)
+      if (!index.has(x) && t?.p) index.set(x, titles.push(t) - 1)
+      return titles[index.get(x) ?? -1]?.p ? [index.get(x)!] : []
+    }))] })).filter((r) => r.i.length),
+    ...full.rows.filter((r) => !ordered(r.id)),
+  ]
+  const shown = ranked({ ...full, titles, rows }, scoreTitles(cache))
+  return { ...shown, titles: shown.titles.map((t) => ({ ...t, ...(rt(t.id) && { rt: rt(t.id) }) })) }
 }
 
 /**

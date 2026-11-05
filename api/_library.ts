@@ -218,15 +218,25 @@ const STALE_MS = 3 * 864e5
 const PROVIDER_MS = 30 * 60e3
 export interface Served { body: Uint8Array; etag: string }
 const served = (body: Uint8Array): Served => ({ body, etag: `"${Bun.hash(body).toString(36)}"` })
-let fromFile: (Served & { mtime: number }) | null = null
+let fromFile: { key: string; job: Promise<Served> } | null = null
 let fallback: { at: number; job: Promise<Served> } | null = null
 
-/** The library's bytes: library.json, read again only when it changes; else [provider]'s, rebuilt at most every 30 minutes. */
-export async function servedLibrary(provider: () => Promise<Library>, file = LIBRARY_FILE): Promise<Served> {
+/**
+ * The library's bytes: library.json, or [rescored]'s once TrueScore's store has changed since it was built ([storeAt],
+ * when the store was written), each made again only when one of them changes; else [provider]'s, rebuilt at most every
+ * 30 minutes.
+ */
+export async function servedLibrary(provider: () => Promise<Library>, rescored: () => Promise<Library>, storeAt: () => number, file = LIBRARY_FILE): Promise<Served> {
   const mtime = (await stat(file).catch(() => null))?.mtimeMs ?? 0
   if (Date.now() - mtime < STALE_MS) {
-    if (fromFile?.mtime !== mtime) fromFile = { mtime, ...served(await readFile(file)) }
-    return fromFile
+    const at = storeAt(), key = at > mtime ? `${mtime}:${at}` : `${mtime}`
+    if (fromFile?.key !== key) {
+      const job = (at > mtime ? rescored().then((lib) => served(Buffer.from(JSON.stringify(lib)))) : Promise.reject())
+        .catch((e) => (e && console.log(`library not rescored: ${e}`), readFile(file).then(served)))
+      fromFile = { key, job }
+      job.catch(() => fromFile?.job === job && (fromFile = null))
+    }
+    return fromFile.job
   }
   fromFile = null
   if (!fallback || Date.now() - fallback.at > PROVIDER_MS) {

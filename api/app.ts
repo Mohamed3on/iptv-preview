@@ -33,7 +33,7 @@ import { curatedGuide } from './epg.js'
 import { movieInfo, saveMeasuredFilm, showEpisodes, showList, titleIds as mapTitleIds } from './_shows.js'
 import { subtitleFile, subtitlesFor } from './_subtitles.js'
 import { knownTitles, personTitles, searchTitles, titleDetails } from './_browse.js'
-import { loadScores, ranked, scoreTitles } from './_scores.js'
+import { loadScores, ranked, rescoredLibrary, scoreTitles, storeAt, watchStore } from './_scores.js'
 import { episodeTitle, parseTitleId, tmdbEpisodes, tmdbFacts, tmdbGet, tmdbTitle } from './_tmdb.js'
 import * as trakt from './_trakt.js'
 import { blurayMovies, filmTitleOf, searchVod } from './_vod.js'
@@ -256,13 +256,18 @@ export async function episodes(req: Request): Promise<Response> {
   }
 }
 
-// GET /api/app/library?t=TOKEN — the Movies & Shows library the nightly job builds (see _library.ts), held in
-// memory; a request whose If-None-Match names the current ETag gets an empty 304.
+// The provider's rows are cut and sorted like the built library's, so the fallback stays small.
+const libraryNow = () => servedLibrary(async () => ranked(await providerLibrary(configFromEnv()), scoreTitles(await loadScores())), async () => rescoredLibrary(await loadHistory()), storeAt)
+// A score TrueScore's extension adds reaches the library's rows a second or so after it lands in the store.
+watchStore(() => void libraryNow().catch(() => {}))
+
+// GET /api/app/library?t=TOKEN — the Movies & Shows library the nightly job builds (see _library.ts), redone from
+// TrueScore's store and the scores whenever the store changes, held in memory; a request whose If-None-Match names
+// the current ETag gets an empty 304.
 export async function library(req: Request): Promise<Response> {
   if (!appTokenOk(req.url)) return forbidden()
   try {
-    // The provider's rows are cut and sorted like the built library's, so the fallback stays small.
-    const { body, etag } = await servedLibrary(async () => ranked(await providerLibrary(configFromEnv()), scoreTitles(await loadScores())))
+    const { body, etag } = await libraryNow()
     return etagged(req, body, etag)
   } catch (e) {
     return new Response(e instanceof Error ? e.message : 'upstream error', { status: 502 })

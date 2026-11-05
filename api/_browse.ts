@@ -5,7 +5,7 @@
 import { readFile } from 'node:fs/promises'
 import type { XtreamConfig } from './_lib.js'
 import { fromTmdb, LIBRARY_FILE, LIBRARY_FULL_FILE, type LibTitle, type Library, type TmdbItem } from './_library.js'
-import { due, loadScores, scoreNow, scoreTitles, type Score, type ScoreCache } from './_scores.js'
+import { due, loadScores, scoreNow, scoreOf, scoreTitles, type Score, type ScoreCache } from './_scores.js'
 import { showList } from './_shows.js'
 import { episodeTitle, keptRuntimes, parseTitleId, tmdbEpisodes, tmdbTitle } from './_tmdb.js'
 import type { VodItem } from './_vod.js'
@@ -78,7 +78,7 @@ export async function titleDetails(cfg: XtreamConfig, id: string) {
     director: t.directors.map((d) => d.name).join(', '),
     people: [...people.values()],
     more: t.recommendations.map((r) => decorate(k, { id: r.title, k: r.title.startsWith('tv:') ? 't' : 'm', n: r.name, ...(Number(r.year) && { y: Number(r.year) }), ...(r.poster && { p: r.poster }) })),
-    ...k.scores.get(id),
+    ...scoreOf(id, cache),
     ...(t.trailer && { trailer: t.trailer }),
     ...(series && { series }),
     ...(episodes.length && {

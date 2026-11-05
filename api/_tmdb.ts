@@ -47,7 +47,8 @@ export interface TmdbTitle {
   cast: { id: number; name: string; character: string }[]
   /** A film's directors, a show's creators. */
   directors: { id: number; name: string }[]
-  recommendations: { title: string; name: string; year: string; poster: string }[]
+  /** TMDB's own, with its average vote (0–10) and vote count. */
+  recommendations: { title: string; name: string; year: string; poster: string; vote?: number; votes?: number }[]
 }
 
 interface Raw {
@@ -68,7 +69,7 @@ interface Raw {
   created_by?: { id: number; name: string }[]
   external_ids?: { imdb_id?: string | null }
   credits?: { cast?: { id: number; name: string; character?: string }[]; crew?: { id: number; name: string; job?: string }[] }
-  recommendations?: { results?: (Raw & { id: number; media_type?: string })[] }
+  recommendations?: { results?: (Raw & { id: number; media_type?: string; vote_average?: number; vote_count?: number })[] }
 }
 
 const poster = (p: string | null | undefined) => (p ? `https://image.tmdb.org/t/p/w342${p}` : '')
@@ -95,6 +96,8 @@ function trim(kind: Kind, r: Raw): TmdbTitle {
       name: x.title ?? x.name ?? '',
       year: yearOf(x),
       poster: poster(x.poster_path),
+      vote: x.vote_average ?? 0,
+      votes: x.vote_count ?? 0,
     })),
   }
 }
@@ -125,8 +128,8 @@ export async function tmdbTitle(kind: Kind, id: string | number): Promise<TmdbTi
   if (!key || !tmdb) return null
   const k = `${kind}:${tmdb}`
   const all = await loaded()
-  // An entry kept before plots and backdrops were is fetched again.
-  if (all[k] && Date.now() - all[k].at < MAX_AGE_MS && (!all[k].t || all[k].t!.plot !== undefined)) return all[k].t ?? null
+  // An entry kept before plots and backdrops, or recommendations' votes, were is fetched again.
+  if (all[k] && Date.now() - all[k].at < MAX_AGE_MS && (!all[k].t || (all[k].t!.plot !== undefined && (all[k].t!.recommendations[0] ?? { votes: 0 }).votes !== undefined))) return all[k].t ?? null
   let job = pending.get(k)
   if (!job) {
     job = tmdbGet<Raw>(`${kind}/${tmdb}?append_to_response=external_ids,credits,recommendations`, key)

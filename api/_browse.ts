@@ -86,7 +86,7 @@ export async function titleDetails(cfg: XtreamConfig, id: string) {
   }
 }
 
-interface Credit extends TmdbItem { vote_count?: number; job?: string }
+interface Credit extends TmdbItem { vote_count?: number; job?: string; profile_path?: string | null }
 const NOT_THEIR_WORK = new Set([10763, 10764, 10767]) // news, reality, talk: appearances
 
 /** A person's films and shows (acted in, directed or created), best score first, then the most voted; at most 60. */
@@ -112,6 +112,8 @@ export interface SearchDeps {
   tmdb?: <T>(path: string) => Promise<T>
   /** The provider's catalogue search. */
   vod?: (q: string) => Promise<VodItem[]>
+  /** The owner's Watchlist (lifted) and watched titles (lowered a little). */
+  history?: { watchlist: Set<string>; watched: Set<string> }
 }
 
 const norm = (s: string) => s.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase().replace(/\s+/g, ' ').trim()
@@ -142,9 +144,30 @@ export async function searchTitles(query: string, d: SearchDeps): Promise<LibTit
     d.vod?.(query).catch(() => []) ?? [],
   ])
   const out = new Map<string, LibTitle>()
-  for (const r of found) if ((r.media_type === 'movie' || r.media_type === 'tv') && r.poster_path) out.set(fromTmdb(r.media_type, r).id, fromTmdb(r.media_type, r))
-  for (const v of vod) if (!out.has(v.titleId)) out.set(v.titleId, { id: v.titleId, k: 'm', n: v.name, ...(v.poster && { p: v.poster }) })
   const words = q.split(' ')
-  for (const t of d.known.titles.values()) if (out.size < 60 && !out.has(t.id) && words.every((w) => norm(t.n).includes(w))) out.set(t.id, t)
-  return [...out.values()].slice(0, 60).map((t) => decorate(d.known, t))
+  const named = (n: string) => words.every((w) => norm(n).includes(w))
+  // People whose name matches ("nolan", "zendaya"), as cards that open their page: after any title named like the
+  // search (searches are mostly for a film or show), first when none is.
+  const people = found
+    .filter((r) => r.media_type === 'person' && r.profile_path && named(r.name ?? ''))
+    .slice(0, 3)
+    .map((r): LibTitle => ({ id: `person:${r.id}`, k: 'p', n: r.name ?? '', p: r.profile_path! }))
+  for (const r of found) if ((r.media_type === 'movie' || r.media_type === 'tv') && r.poster_path) out.set(fromTmdb(r.media_type, r).id, fromTmdb(r.media_type, r))
+  const provider = new Set<string>()
+  for (const v of vod) {
+    provider.add(v.titleId)
+    if (!out.has(v.titleId)) out.set(v.titleId, { id: v.titleId, k: 'm', n: v.name, ...(v.poster && { p: v.poster }) })
+  }
+  for (const t of d.known.titles.values()) if (out.size < 60 && !out.has(t.id) && named(t.n)) out.set(t.id, t)
+  // Titles: the name matching best, then on the Watchlist, then playable for sure (a copy known here), then TMDB's
+  // own order (relevance and popularity); a title already watched drops below its equals.
+  const match = (n: string) => (norm(n) === q ? 0 : norm(n).startsWith(q) ? 1 : named(n) ? 2 : 3)
+  const ranked = [...out.values()].slice(0, 60).map((t) => decorate(d.known, t)).map((t, i) => ({ t, i, key: [
+    match(t.n), d.history?.watchlist.has(t.id) ? 0 : 1, t.t || provider.has(t.id) ? 0 : 1, d.history?.watched.has(t.id) ? 1 : 0,
+  ] }))
+  const first = (a: number[], b: number[]) => a.map((v, j) => v - b[j]).find((d) => d !== 0) ?? 0
+  ranked.sort((a, b) => first(a.key, b.key) || a.i - b.i)
+  const strong = ranked.filter((r) => r.key[0] <= 1).length
+  const titles = ranked.map((r) => r.t)
+  return [...titles.slice(0, strong), ...people, ...titles.slice(strong)]
 }

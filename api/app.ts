@@ -382,7 +382,9 @@ export async function search(req: Request): Promise<Response> {
   const q = (new URL(req.url).searchParams.get('q') ?? '').trim().slice(0, 100)
   if (!q) return Response.json({ titles: [] })
   const cfg = configFromEnv()
+  const h = await currentHistory().catch(() => null)
   const titles = await searchTitles(q, {
+    history: h ? { watchlist: new Set(h.watchlist), watched: new Set([...h.movies, ...(h.lb ?? [])]) } : undefined,
     known: await knownTitles(),
     tmdb: process.env.TMDB_TOKEN ? (path) => tmdbGet(path) : undefined,
     vod: (q) => searchVod(cfg, q, 20),

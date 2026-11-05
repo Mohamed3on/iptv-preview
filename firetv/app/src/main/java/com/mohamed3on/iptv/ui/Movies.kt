@@ -462,7 +462,8 @@ fun MoviesLayer(
                 active = open && playing == null && pages.isEmpty(),
                 hidden = playing != null || pages.isNotEmpty(),
                 shown = shown,
-                onOpen = { push(LibraryPage.Title(it)) },
+                // A person found by search opens their page; anything else its title page.
+                onOpen = { m -> m.titleId.removePrefix("person:").takeIf { m.titleId.startsWith("person:") }?.toIntOrNull()?.let { push(LibraryPage.Cast(Person(it, m.name))) } ?: push(LibraryPage.Title(m)) },
                 onResume = { resumeTitle(it, fromStart = false) },
                 onStartOver = { resumeTitle(it, fromStart = true) },
                 onBack = ::leave,

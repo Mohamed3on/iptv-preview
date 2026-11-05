@@ -2175,6 +2175,7 @@ private fun ShowPage(
     LaunchedEffect(Unit) {
         withFrameNanos {}
         Check.log("title_shown", "title" to show.titleId)
+        graph.prefs.put(Check.LAST_SCREEN, "title:${show.titleId}")
     }
     var attempt by remember { mutableStateOf(0) }
     LaunchedEffect(attempt) {

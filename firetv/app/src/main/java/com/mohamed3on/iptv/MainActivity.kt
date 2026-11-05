@@ -100,6 +100,8 @@ class MainActivity : ComponentActivity() {
     /** The main player's picture shape (width / height, pixel aspect included); 0 until known. */
     private val aspect = MutableStateFlow(0f)
     private val telemetry get() = graph.telemetry
+    /** Past the first start: onCreate already asked for the last screen. */
+    private var restarted = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -173,6 +175,10 @@ class MainActivity : ComponentActivity() {
                     val feed = graph.lineup.applyTo(sync.state.filterIsInstance<FeedState.Ready>().first().feed)
                     startChannel(feed)?.let { s.zap(it, feed) }
                 }
+                // Back from another app (a trailer in SmartTube, Home and back): the screen comes back as a launch would
+                // reopen it, since the player's chrome (Movies & Shows with it) is rebuilt with the new session.
+                if (restarted) Check.request(graph.prefs.get(Check.LAST_SCREEN))
+                restarted = true
                 session.value = s
                 audio.value = tracks
                 try {

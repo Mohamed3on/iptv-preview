@@ -7,8 +7,8 @@ const votes = (total: number, loved: number, hated = 0) => [hated, 0, 0, 0, 0, 0
 
 test('IMDb histogram scores (loved − hated) × net share; averages shrink toward 6.5 by their priors, weighted by votes', () => {
   const d = [50, 50, 20, 20, 20, 20, 20, 0, 300, 500]
-  // IMDb 8 on 3,000 votes → 7.25; Letterboxd 4 (8/10) on 1,000 → 7.25.
-  expect(scoreTitles({ a: { h: d, ir: 8, iv: 3000, lb: 4, lv: 1000 } }).get('a')).toEqual({ s: 490, s10: 7.3, ir: 8, iv: 3000, lb: 4, lv: 1000 })
+  // Net share 0.7 weighted by the larger crowd (3,000 IMDb votes): 0.49 × 3,000; IMDb 8 on 3,000 → 7.25, Letterboxd 4 (8/10) on 1,000 → 7.25.
+  expect(scoreTitles({ a: { h: d, ir: 8, iv: 3000, lb: 4, lv: 1000 } }).get('a')).toEqual({ s: 1470, s10: 7.3, ir: 8, iv: 3000, lb: 4, lv: 1000 })
   expect(scoreTitles({ b: { ir: 9, iv: 3000 } }).get('b')).toEqual({ s10: 7.8, ir: 9, iv: 3000 })
 })
 

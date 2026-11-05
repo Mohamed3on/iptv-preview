@@ -87,6 +87,15 @@ class Ranking internal constructor(
     /** R10: the best working copy that only the bandwidth ruled out. */
     val heavier: Ranked?,
 ) {
+    /**
+     * [r]'s reason worded against [plays], the copy Play opens, when that isn't [pick]
+     * (a Real-Debrid copy ranked above it isn't ready): else it would read "lower bitrate" on what plays.
+     */
+    fun reasonFor(r: Ranked, plays: String?): String {
+        val p = copies.firstOrNull { it.copy.id == plays }?.takeIf { it !== pick } ?: return r.reason
+        return reason(r, p)
+    }
+
     /** R9: the best-ranked working copy lighter than [current], for a step-down. */
     fun lighter(current: Copy): Ranked? = copies.firstOrNull {
         it.support == Support.Works && it.copy.id != current.id &&

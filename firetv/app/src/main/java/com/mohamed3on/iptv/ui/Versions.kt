@@ -97,6 +97,10 @@ internal fun Versions(title: String, data: VersionsData, first: FocusRequester, 
     val rows = remember(ranking, data.rd) {
         ranking?.copies.orEmpty().map { it to standing(it, data.rd) }.sortedBy { it.second.ordinal }
     }
+    // Reasons are worded against the copy Play opens, as the Plays line names it: the best one ready.
+    val plays = ranking?.copies?.firstOrNull {
+        (it.support != Support.Wont || it.pinned) && (it.copy.source == Source.Iptv || data.rd[it.copy.id] is RdCheck.Ready)
+    }?.copy?.id
     val state = rememberLazyListState()
     LazyColumn(modifier.scrollbar(state), state = state, verticalArrangement = Arrangement.spacedBy(Space.xs)) {
         if (ranking == null) {
@@ -114,7 +118,7 @@ internal fun Versions(title: String, data: VersionsData, first: FocusRequester, 
         shown.forEachIndexed { i, (r, s) ->
             if (i == 0 || shown[i - 1].second != s) item(key = "h${s.name}") { Heading(s.heading) }
             item(key = r.copy.id) {
-                VersionRow(r, data, focus = if (i == 0) first else if (i == FIRST_ROWS) more else null, onClick = { onChoose(r.copy) }, onClear = if (r.pinned || r.mark != null) ({
+                VersionRow(r, ranking!!.reasonFor(r, plays), data, focus = if (i == 0) first else if (i == FIRST_ROWS) more else null, onClick = { onChoose(r.copy) }, onClear = if (r.pinned || r.mark != null) ({
                     if (r.pinned) choices.pin(title, null) else choices.clearMark(setup, r.copy.id)
                     onChanged()
                 }) else null)
@@ -192,10 +196,10 @@ private fun Heading(text: String) {
 
 /** A copy: tier and labels, then why it ranks where it does, then source, size and release name. */
 @Composable
-private fun VersionRow(r: Ranked, data: VersionsData, focus: FocusRequester?, onClick: () -> Unit, onClear: (() -> Unit)?) {
+private fun VersionRow(r: Ranked, reason: String, data: VersionsData, focus: FocusRequester?, onClick: () -> Unit, onClear: (() -> Unit)?) {
     val c = r.copy
     val status = listOfNotNull(
-        r.reason.ifEmpty { null },
+        reason.ifEmpty { null },
         rdState(c, data.rd),
         onClear?.let { "Menu clears" },
     ).joinToString(" · ")

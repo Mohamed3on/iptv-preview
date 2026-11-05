@@ -1462,7 +1462,9 @@ private fun SearchGrid(
     onPlay: (Movie) -> Unit,
 ) {
     var found by remember { mutableStateOf<List<Movie>?>(null) }
-    val sync = LocalContext.current.graph.sync
+    val graph = LocalContext.current.graph
+    val sync = graph.sync
+    val recent by graph.recentSearches.all.collectAsState()
     // Runs once typing pauses (the box keeps each answer, and so does the app); the last results stay
     // meanwhile. Offline, the library's own titles.
     LaunchedEffect(query, library) {
@@ -1506,11 +1508,17 @@ private fun SearchGrid(
         }
         val list = found
         when {
+            query.isBlank() && recent.isNotEmpty() -> item(key = "recent", span = { GridItemSpan(maxLineSpan) }) {
+                // Past searches that led to a title: OK searches again.
+                Row(Modifier.focusGroup(), horizontalArrangement = Arrangement.spacedBy(Space.s)) {
+                    recent.forEachIndexed { i, q -> ActionButton(q, { onQuery(q) }, if (i == 0) Modifier.focusRequester(first) else Modifier) }
+                }
+            }
             query.isBlank() -> item(key = "hint", span = { GridItemSpan(maxLineSpan) }) { HintLine("Type a title, or a genre or language such as comedy or Arabic") }
             list == null -> {}
             list.isEmpty() -> item(key = "none", span = { GridItemSpan(maxLineSpan) }) { HintLine("No ${LocalLibrary.current.noun} match “${query.trim()}”") }
             else -> itemsIndexed(list, key = { _, m -> m.key }) { i, movie ->
-                PosterCard(movie, null, focus = if (i == 0) first else null, back = back?.takeIf { it.first == movie.id }?.second, onFocused = { onFocused(movie) }, onClick = { onPlay(movie) })
+                PosterCard(movie, null, focus = if (i == 0) first else null, back = back?.takeIf { it.first == movie.id }?.second, onFocused = { onFocused(movie) }, onClick = { graph.recentSearches.add(query); onPlay(movie) })
             }
         }
     }

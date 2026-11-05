@@ -12,6 +12,7 @@ import com.mohamed3on.iptv.data.Lineup
 import com.mohamed3on.iptv.data.PrefsStore
 import com.mohamed3on.iptv.data.Route
 import com.mohamed3on.iptv.data.LIBRARY_CHECK
+import com.mohamed3on.iptv.data.RecentSearches
 import com.mohamed3on.iptv.data.ResumeStore
 import com.mohamed3on.iptv.data.TitleMigration
 import com.mohamed3on.iptv.data.TraktSync
@@ -96,6 +97,8 @@ class AppGraph(context: Context) {
     val migration = TitleMigration(prefs, resume, showResume, watchedMovies, watchedEpisodes)
     /** Typical film bandwidth per source, hour band and route (VPN on or off). */
     val capacity = Capacity(prefs, vpn = { vpnActive.value })
+    /** Movies & Shows searches that led to a title, offered under an empty search box. */
+    val recentSearches = RecentSearches(prefs)
     /** Marks, corrections and pins the copy ranker reads. */
     val copyChoices = CopyChoices(prefs)
     val sync = FeedSync(http, BuildConfig.SERVER_URL, BuildConfig.APP_TOKEN, context.filesDir, prefs, onEpisodes = migration::adoptEpisodes)

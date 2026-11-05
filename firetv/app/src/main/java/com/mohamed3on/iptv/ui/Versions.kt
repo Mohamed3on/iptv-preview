@@ -150,7 +150,14 @@ internal fun Versions(title: String, data: VersionsData, first: FocusRequester, 
         }
         item(key = "corrections") { Heading("Corrections") }
         items(Correction.entries, key = { it.name }) { c ->
-            PanelRow(CORRECTIONS.getValue(c), if (c in corrections) "On" else "Off") {
+            // What the TV and soundbar already report needs no correction: the row says so instead of "Off".
+            val reported = when (c) {
+                Correction.PassesTrueHd -> Passthrough.TrueHd in setup.passthrough
+                Correction.PassesDts -> Passthrough.Dts in setup.passthrough
+                Correction.IgnoreBandwidth -> false
+            }
+            PanelRow(CORRECTIONS.getValue(c), when { reported -> "Yes, reported"; c in corrections -> "Yes, set by you"; else -> "No" }) {
+                if (reported) return@PanelRow
                 choices.correct(setup, c, c !in corrections)
                 corrections = choices.corrections(setup)
                 onChanged()

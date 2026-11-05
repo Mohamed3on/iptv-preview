@@ -297,15 +297,17 @@ const SEED_CAP = 60
  * by 1,000 votes, so a little-seen title counts little) less 5, at least 0.5, so a niche making-of many seeds name stays below a great film. Seen titles and the
  * Watchlist are left out. Nightly only.
  */
-export async function lovedPicks(h: Kept, scores: Map<string, { s?: number; s10?: number; ir?: number; lb?: number }>): Promise<string[]> {
+export async function lovedPicks(h: Kept, scores: Map<string, { s?: number; s10?: number; ir?: number; lb?: number; iv?: number }>): Promise<string[]> {
   const seeds = [...yours(h)].filter(([id, r]) => r >= 8 && /^(movie|tv):\d+$/.test(id)).sort((a, b) => b[1] - a[1]).slice(0, SEED_CAP)
   const pts = new Map(h.recs.map((id) => [id, 0.5]))
   const tmdbScore = new Map<string, number>()
+  const tmdbVotes = new Map<string, number>()
   await pool(seeds, 4, async ([id, r]) => {
     const [kind, tmdb] = id.split(':') as [Kind, string]
     for (const x of (await tmdbTitle(kind, tmdb))?.recommendations ?? []) {
       pts.set(x.title, (pts.get(x.title) ?? 0) + (r >= 9 ? 2 : 1))
       if (x.votes) tmdbScore.set(x.title, (x.votes * x.vote! + 1000 * 5.5) / (x.votes + 1000))
+      if (x.votes) tmdbVotes.set(x.title, x.votes)
     }
   })
   const skip = new Set([...seenOf(h), ...watchlistOf(h)])
@@ -314,8 +316,10 @@ export async function lovedPicks(h: Kept, scores: Map<string, { s?: number; s10?
     const out10 = sc?.s10 ?? sc?.ir ?? (sc?.lb && sc.lb * 2) ?? tmdbScore.get(id) ?? 5.5
     return Math.max(out10 - 5, 0.5)
   }
+  // Widely seen only (20k IMDb votes, else 500 on TMDB): no making-ofs, specials or one-off episodes of anthology series.
+  const seenWidely = (id: string) => (scores.get(id)?.iv ?? 0) >= 20_000 || (tmdbVotes.get(id) ?? 0) >= 500
   const rank = new Map([...pts].map(([id, p]) => [id, p * quality(id)]))
-  return [...rank].filter(([id]) => !skip.has(id)).sort(([a, p], [b, q]) => q - p || (scores.get(b)?.s ?? 0) - (scores.get(a)?.s ?? 0)).slice(0, ROW_CAP * 2).map(([id]) => id)
+  return [...rank].filter(([id]) => !skip.has(id) && seenWidely(id)).sort(([a, p], [b, q]) => q - p || (scores.get(b)?.s ?? 0) - (scores.get(a)?.s ?? 0)).slice(0, ROW_CAP * 2).map(([id]) => id)
 }
 
 /** Each Watchlist title's runtime in minutes, as TMDB's kept details give it (looked up when missing); 0 unknown. Nightly. */

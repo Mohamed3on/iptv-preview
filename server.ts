@@ -16,6 +16,9 @@ const routes: Record<string, Handler> = { '/api/epg': epg, '/api/playlist': play
 const cache = new Map<string, Entry>()
 const building = new Map<string, Promise<Entry>>()
 
+/** Forgets the kept answers whose URL [drop] matches. */
+const forget = (drop: (u: URL) => boolean) => { for (const url of cache.keys()) if (drop(new URL(url))) cache.delete(url) }
+
 const ms = (cacheControl: string, directive: string) =>
   Number(cacheControl.match(new RegExp(`\\b${directive}=(\\d+)`))?.[1] ?? 0) * 1000
 
@@ -71,7 +74,7 @@ export async function handle(req: Request): Promise<Response> {
     const res = await app.filmQuality(req)
     // A new reading changes that film's info and copies: their cached answers go.
     const body = res.ok ? await res.clone().json() : null
-    if (body?.stored) for (const url of cache.keys()) { const u = new URL(url); if ((u.pathname === '/api/app/movie' && u.searchParams.get('id') === String(body.id)) || u.pathname === '/api/app/copies') cache.delete(url) }
+    if (body?.stored) forget((u) => (u.pathname === '/api/app/movie' && u.searchParams.get('id') === String(body.id)) || u.pathname === '/api/app/copies')
     return res
   }
   if (pathname === '/api/app/events' && req.method === 'POST') return app.events(req)
@@ -81,7 +84,7 @@ export async function handle(req: Request): Promise<Response> {
   if (pathname === '/api/app/rd-infringing' && req.method === 'POST') {
     const res = await app.rdInfringing(req)
     // A refused torrent leaves every title's copies at once.
-    if (res.ok && (await res.clone().json()).stored) for (const url of cache.keys()) if (new URL(url).pathname === '/api/app/copies') cache.delete(url)
+    if (res.ok && (await res.clone().json()).stored) forget((u) => u.pathname === '/api/app/copies')
     return res
   }
   const handler = routes[pathname]

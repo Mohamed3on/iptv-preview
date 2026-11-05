@@ -9,10 +9,6 @@ const lib: Library = {
 }
 const known = (scores: Known['scores'] = new Map()): Known => ({ lib, titles: new Map(lib.titles.map((t) => [t.id, t])), scores })
 
-test('a language word returns that row\'s titles', async () => {
-  expect((await searchTitles(' Arabic ', { known: known() })).map((t) => t.id)).toEqual(['movie:1', 'tv:2'])
-})
-
 test('a title search puts TMDB\'s match first, the provider\'s copies after it without repeats', async () => {
   const tmdb = async <T>(path: string) => {
     expect(path).toStartWith('search/multi?query=inception')

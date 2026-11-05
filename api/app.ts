@@ -39,12 +39,19 @@ import { blurayMovies, filmTitleOf, searchVod } from './_vod.js'
 
 const forbidden = () => new Response('Forbidden', { status: 403 })
 
+/** [body] as JSON with its ETag, or an empty 304 when If-None-Match names it (Cloudflare weakens it, W/, when it compresses). */
+function etagged(req: Request, body: string, etag = `"${Bun.hash(body).toString(36)}"`): Response {
+  const headers = { ETag: etag, 'Cache-Control': 'private, no-cache' }
+  if (req.headers.get('if-none-match')?.replace(/^W\//, '') === etag) return new Response(null, { status: 304, headers })
+  return new Response(body, { headers: { ...headers, 'Content-Type': 'application/json' } })
+}
+
 export async function channels(req: Request): Promise<Response> {
   if (!appTokenOk(req.url)) return forbidden()
   try {
     const cfg = configFromEnv()
     const backup = backupConfigFromEnv()
-    const feed = buildAppFeed(cfg, withCompetitionGroups(await withBackupFeeds(await fetchCuratedChannels(cfg, false), backup)), backup)
+    const feed = buildAppFeed(cfg, withCompetitionGroups(await withBackupFeeds(await fetchCuratedChannels(cfg, false), backup)), backup, process.env.REAL_DEBRID_TOKEN)
     return Response.json(feed, {
       headers: { 'Cache-Control': 'private, s-maxage=1800, stale-while-revalidate=3600' },
     })
@@ -255,10 +262,7 @@ export async function library(req: Request): Promise<Response> {
   try {
     // The provider's rows are cut and sorted like the built library's, so the fallback stays small.
     const { body, etag } = await servedLibrary(async () => ranked(await providerLibrary(configFromEnv()), scoreTitles(await loadScores())))
-    const headers = { ETag: etag, 'Cache-Control': 'private, no-cache' }
-    // Cloudflare weakens the ETag (W/) when it compresses the response.
-    if (req.headers.get('if-none-match')?.replace(/^W\//, '') === etag) return new Response(null, { status: 304, headers })
-    return new Response(body, { headers: { ...headers, 'Content-Type': 'application/json' } })
+    return etagged(req, body, etag)
   } catch (e) {
     return new Response(e instanceof Error ? e.message : 'upstream error', { status: 502 })
   }
@@ -271,11 +275,7 @@ export async function history(req: Request): Promise<Response> {
   if (!appTokenOk(req.url)) return forbidden()
   try {
     const local = new URL(req.url).searchParams.get('shows')?.split(',').filter(Boolean) ?? []
-    const body = JSON.stringify(await historyAnswer(await currentHistory(), local, await knownTitles()))
-    const etag = `"${Bun.hash(body).toString(36)}"`
-    const headers = { ETag: etag, 'Cache-Control': 'private, no-cache' }
-    if (req.headers.get('if-none-match')?.replace(/^W\//, '') === etag) return new Response(null, { status: 304, headers })
-    return new Response(body, { headers: { ...headers, 'Content-Type': 'application/json' } })
+    return etagged(req, JSON.stringify(await historyAnswer(await currentHistory(), local, await knownTitles())))
   } catch (e) {
     return new Response(e instanceof Error ? e.message : 'upstream error', { status: 502 })
   }
@@ -310,9 +310,13 @@ export async function copies(req: Request): Promise<Response> {
   if (!appTokenOk(req.url)) return forbidden()
   const title = new URL(req.url).searchParams.get('title') ?? ''
   if (!COPY_TITLE.test(title)) return new Response('Bad title', { status: 400 })
-  const c = await titleCopies(title, iptvCopies(configFromEnv(), title))
-  const settled = c.sources.iptv === 'ok' && c.sources.rd === 'ok'
-  return Response.json(c, { headers: { 'Cache-Control': settled ? 'private, s-maxage=3600, stale-while-revalidate=86400' : 'no-store' } })
+  try {
+    const c = await titleCopies(title, iptvCopies(configFromEnv(), title))
+    const settled = c.sources.iptv === 'ok' && c.sources.rd === 'ok'
+    return Response.json(c, { headers: { 'Cache-Control': settled ? 'private, s-maxage=3600, stale-while-revalidate=86400' : 'no-store' } })
+  } catch (e) {
+    return new Response(e instanceof Error ? e.message : 'upstream error', { status: 502 })
+  }
 }
 
 // POST /api/app/rd-infringing?t=TOKEN — { hashes: [infoHash] } Real-Debrid refused here (451): no title
@@ -334,7 +338,8 @@ export async function subtitles(req: Request): Promise<Response> {
   const title = q.get('title') ?? ''
   const hash = q.get('hash') ?? ''
   const size = Number(q.get('size') ?? 0)
-  if (!COPY_TITLE.test(title) || !/^(?:[0-9a-f]{16})?$/.test(hash) || !Number.isSafeInteger(size) || size < 0) return new Response('Bad title', { status: 400 })
+  if (!COPY_TITLE.test(title)) return new Response('Bad title', { status: 400 })
+  if (!/^(?:[0-9a-f]{16})?$/.test(hash) || !Number.isSafeInteger(size) || size < 0) return new Response('Bad hash or size', { status: 400 })
   const { imdb } = await tmdbFacts(title)
   const ep = parseTitleId(title)
   const answer = imdb ? await subtitlesFor(ep?.season != null ? `${imdb}:${ep.season}:${ep.episode}` : imdb, hash, size, (q.get('name') ?? '').slice(0, 300)) : { status: 'none', subs: [] }

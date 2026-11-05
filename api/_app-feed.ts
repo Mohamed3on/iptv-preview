@@ -56,7 +56,7 @@ function badges(streamId: number): string[] {
   return out
 }
 
-export function buildAppFeed(cfg: XtreamConfig, channels: Channel[], backup?: BackupConfig): AppFeed {
+export function buildAppFeed(cfg: XtreamConfig, channels: Channel[], backup?: BackupConfig, realDebrid?: string): AppFeed {
   const live = channels.filter((c) => !c.vodExt)
   const home = new Map<number, string>()
   for (const c of live) if (!isComp(c.group) && !home.has(c.streamId)) home.set(c.streamId, c.group)
@@ -73,7 +73,7 @@ export function buildAppFeed(cfg: XtreamConfig, channels: Channel[], backup?: Ba
     groups: [...new Set(live.map((c) => c.group))],
     route: { plain: cfg.host, vpn: VPN_HOST, user: cfg.user, pass: cfg.pass },
     ...(backup && { backup: { plain: backup.host, vpn: backup.vpnHost, user: backup.user, pass: backup.pass } }),
-    ...(process.env.REAL_DEBRID_TOKEN && { realDebrid: process.env.REAL_DEBRID_TOKEN }),
+    ...(realDebrid && { realDebrid }),
     channels: live.map((c) => {
       const family = familyOf(c)
       return {

@@ -1,11 +1,39 @@
+import fs from 'fs'
 import path from 'path'
-import { defineConfig } from 'vite'
+import { defineConfig, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import { Readable } from 'stream'
 
+// dev-only: the /lab/sofa/ logo generator saves and lists configs in lab/sofa/saved
+function labSave(): Plugin {
+  const dir = path.resolve(__dirname, 'lab/sofa/saved')
+  return {
+    name: 'lab-save',
+    apply: 'serve',
+    configureServer(server) {
+      server.middlewares.use('/__lab/sofa', async (req, res) => {
+        fs.mkdirSync(dir, { recursive: true })
+        res.setHeader('content-type', 'application/json')
+        if (req.method === 'POST') {
+          let body = ''
+          for await (const chunk of req) body += chunk
+          const cfg = JSON.parse(body)
+          const mode = String(cfg.mode).replace(/[^a-z]/g, ''), seed = Number(cfg.seed) | 0
+          const file = path.join(dir, `${Date.now()}-${mode}-${seed}.json`)
+          fs.writeFileSync(file, JSON.stringify(cfg, null, 2) + '\n')
+          res.end(JSON.stringify({ path: path.relative(__dirname, file) }))
+          return
+        }
+        const names = fs.readdirSync(dir).filter(f => f.endsWith('.json')).sort()
+        res.end(JSON.stringify(names.map(name => ({ name, config: JSON.parse(fs.readFileSync(path.join(dir, name), 'utf8')) }))))
+      })
+    },
+  }
+}
+
 export default defineConfig({
-  plugins: [react(), tailwindcss()],
+  plugins: [react(), tailwindcss(), labSave()],
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),

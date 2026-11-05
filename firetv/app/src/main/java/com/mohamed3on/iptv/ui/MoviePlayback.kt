@@ -134,7 +134,8 @@ private class MovieState {
  * A movie full screen (v2): starts at [from] (ms) and keeps its place every 10s and on the way out.
  * Any key shows the controls (title, progress, elapsed and remaining), which hide 4s after the last
  * key while it plays. OK pauses and plays; Left/Right step 10s (30s once held for a second), ⏪/⏩ 30s,
- * and a run of steps seeks once it stops; Menu has audio and Play from beginning; Back returns.
+ * and a run of steps seeks once it stops; Menu has audio and Play from beginning; Back drops a
+ * pending seek, else hides the controls, else returns.
  * [onSave] keeps the place (ms); [onEnded] follows the end, after the place is saved as finished.
  */
 @Composable
@@ -301,9 +302,20 @@ internal fun MoviePlayback(movie: Movie, from: Long, url: String, onSave: (pos: 
                 }
                 if (ui.error) return@onKeyEvent false
                 when (code) {
-                    AndroidKeyEvent.KEYCODE_BACK -> if (down) {
-                        save()
-                        close()
+                    // As in other streaming apps, Back peels a layer: a seek not yet made, then the controls, then the film.
+                    AndroidKeyEvent.KEYCODE_BACK -> {
+                        if (down) when {
+                            target != null -> {
+                                commit[0]?.cancel()
+                                target = null
+                            }
+                            controls -> controls = false
+                            else -> {
+                                save()
+                                close()
+                            }
+                        }
+                        return@onKeyEvent true
                     }
                     AndroidKeyEvent.KEYCODE_MENU -> if (down) panel = true
                     AndroidKeyEvent.KEYCODE_DPAD_CENTER, AndroidKeyEvent.KEYCODE_ENTER, AndroidKeyEvent.KEYCODE_NUMPAD_ENTER,

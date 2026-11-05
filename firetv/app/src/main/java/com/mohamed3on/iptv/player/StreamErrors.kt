@@ -14,6 +14,8 @@ sealed interface StreamFailure {
     data object Unreachable : StreamFailure
     /** Anything else: an empty or garbled body, a decoder failure. */
     data object Unplayable : StreamFailure
+    /** This file can't play here at all: an unsupported container or format, no playable audio, Dolby Vision profile 7. Permanent (KTD7). */
+    data object Unsupported : StreamFailure
 }
 
 /** What a session does about a failure (KTD8). */
@@ -27,11 +29,14 @@ object StreamErrors {
             in 500..599 -> Recovery.Backoff
             else -> Recovery.NextFeed
         }
-        StreamFailure.Timeout, StreamFailure.Unplayable -> Recovery.NextFeed
+        StreamFailure.Timeout, StreamFailure.Unplayable, StreamFailure.Unsupported -> Recovery.NextFeed
         // The network, not the channel: another feed would fail the same way. Retrying lets
         // playback come back by itself when the network does.
         StreamFailure.Unreachable -> Recovery.Backoff
     }
+
+    /** Only these faults mark a film copy as failing on this setup; the rest may pass (KTD7). */
+    fun permanent(failure: StreamFailure) = failure == StreamFailure.Unsupported
 
     /** Delay before 5xx retry number [attempt] (0-based): 1s, 2s, 4s, then 8s. */
     fun backoff(attempt: Int): Duration = (1 shl attempt.coerceAtMost(3)).seconds
@@ -42,7 +47,15 @@ object StreamErrors {
             http != null -> StreamFailure.Http(http.responseCode)
             error.errorCode == PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT -> StreamFailure.Timeout
             error.errorCode == PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED -> StreamFailure.Unreachable
+            error.errorCode in UNSUPPORTED -> StreamFailure.Unsupported
             else -> StreamFailure.Unplayable
         }
     }
+
+    // Not decoder init: that also fails while another player still holds the decoder.
+    private val UNSUPPORTED = setOf(
+        PlaybackException.ERROR_CODE_DECODING_FORMAT_UNSUPPORTED,
+        PlaybackException.ERROR_CODE_DECODING_FORMAT_EXCEEDS_CAPABILITIES,
+        PlaybackException.ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED,
+    )
 }

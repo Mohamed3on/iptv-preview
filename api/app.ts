@@ -138,9 +138,9 @@ export async function bitrate(req: Request): Promise<Response> {
 }
 
 // POST /api/app/events?t=TOKEN — a batch of what happened while watching (tunes and their time to
-// picture, stalls, rebuffers, feed switches, busy/wrong-route/offline). Appended to a capped log on
+// picture, stalls, rebuffers, feed switches, busy/wrong-route/offline; a film's copy failovers, step-downs, offers and trials). Appended to a capped log on
 // the box for later analysis: which feeds actually hold up, and real zap times.
-const EVENT_TYPES = new Set(['tune', 'stall', 'rebuffer', 'failover', 'problem'])
+const EVENT_TYPES = new Set(['tune', 'stall', 'rebuffer', 'failover', 'problem', 'stepdown', 'offer', 'trial'])
 const EVENTS_MAX_BYTES = 20 * 1024 * 1024
 export async function events(req: Request): Promise<Response> {
   if (!appTokenOk(req.url)) return forbidden()

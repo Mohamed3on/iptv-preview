@@ -321,12 +321,12 @@ class FilmSession(
         if (copy.id !in rd) {
             // While an IPTV copy could play instead, Real-Debrid gets no longer than copies do (KTD13).
             val other = !iptvBusy && copies.any { it.source == Source.Iptv && it.id !in tried }
-            if (other) withTimeoutOrNull(WAIT_MS) { await(copy) } else await(copy)
+            if (other) withTimeoutOrNull(WAIT_MS) { checked(copy) } else checked(copy)
         }
         return rd[copy.id] as? RdCheck.Ready
     }
 
-    private suspend fun await(copy: Copy) {
+    private suspend fun checked(copy: Copy) {
         checking?.await()
         if (copy.id in rd) return
         check()

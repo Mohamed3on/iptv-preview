@@ -42,6 +42,8 @@ class FeedSync(
     private val dir: File,
     private val store: KeyValueStore,
     private val now: () -> Long = System::currentTimeMillis,
+    /** Each show's episodes as they arrive (old watched marks move to title ids then). */
+    private val onEpisodes: (List<Episode>) -> Unit = {},
 ) {
     private val feedFile = File(dir, "feed.json")
     private val guideFile = File(dir, "guide.db")
@@ -85,8 +87,10 @@ class FeedSync(
         suspend fun loadCached() = lock.withLock {
             withContext(Dispatchers.IO) {
                 if (_items.value == null && file.exists()) {
-                    // An unreadable copy goes, so the next sync downloads it whole instead of hearing "unchanged".
-                    runCatching { parseMovies(file.readText()) }.onSuccess { _items.value = it }.onFailure { file.delete() }
+                    // An unreadable copy goes, so the next sync downloads it whole instead of hearing "unchanged";
+                    // so does one saved before titles had ids (resume and watched marks are keyed by them).
+                    runCatching { parseMovies(file.readText()).also { require(it.movies[0].titleId.isNotEmpty()) } }
+                        .onSuccess { _items.value = it }.onFailure { file.delete() }
                 }
             }
         }
@@ -174,10 +178,25 @@ class FeedSync(
             val request = Request.Builder().url("$baseUrl/api/app/episodes?t=$token&id=$seriesId").build()
             client.newCall(request).execute().use { res ->
                 if (!res.isSuccessful) throw IOException("HTTP ${res.code}")
-                parseEpisodes(res.body.string()).also { showCache[seriesId] = System.currentTimeMillis() to it }
+                parseEpisodes(res.body.string()).also {
+                    showCache[seriesId] = System.currentTimeMillis() to it
+                    onEpisodes(it.episodes)
+                }
             }
         }
     }
+
+    /** Title ids for the provider ids marks were saved under (the one-time move to title ids); throws on failure. */
+    suspend fun titleIds(request: TitleIdRequest): TitleIdMap = withContext(Dispatchers.IO) {
+        val body = json.encodeToString(TitleIdRequest.serializer(), request)
+        val call = Request.Builder().url("$baseUrl/api/app/title-ids?t=$token")
+            .post(okhttp3.RequestBody.create("application/json".toMediaTypeOrNull(), body)).build()
+        client.newCall(call).execute().use { res ->
+            if (!res.isSuccessful) throw IOException("HTTP ${res.code}")
+            json.decodeFromString(TitleIdMap.serializer(), res.body.string())
+        }
+    }
+    private val json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
     private val showCache = java.util.concurrent.ConcurrentHashMap<Int, Pair<Long, ShowEpisodes>>()
     private val SHOW_KEEP_MS = 30 * 60_000L
 

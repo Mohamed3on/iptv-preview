@@ -12,6 +12,7 @@ import com.mohamed3on.iptv.data.Lineup
 import com.mohamed3on.iptv.data.PrefsStore
 import com.mohamed3on.iptv.data.Route
 import com.mohamed3on.iptv.data.ResumeStore
+import com.mohamed3on.iptv.data.TitleMigration
 import com.mohamed3on.iptv.data.VpnMonitor
 import com.mohamed3on.iptv.data.WatchedStore
 import com.mohamed3on.iptv.data.WatchHistory
@@ -43,6 +44,7 @@ class App : Application(), SingletonImageLoader.Factory {
             delay(5.seconds)
             graph.sync.movies.loadCached()
             withContext(Dispatchers.Main) { graph.setup } // its callbacks land on the main thread too
+            graph.migration.run(graph.sync::titleIds)
         }
         graph.scope.launch { VoiceFix.onceThisBoot(this@App) }
     }
@@ -66,16 +68,18 @@ class AppGraph(context: Context) {
     val history = WatchHistory(prefs)
     /** Favourites and each group's own channel order. */
     val lineup = Lineup(prefs)
-    /** Where each movie was left (v2). */
-    val resume = ResumeStore(prefs)
+    /** Where each film was left, by title id (the provider-id keys before them, "movies.resume" and co, are left alone). */
+    val resume = ResumeStore(prefs, "titles.movies.resume")
     /** Where each show was left: its episode and place. */
-    val showResume = ResumeStore(prefs, "shows.resume")
+    val showResume = ResumeStore(prefs, "titles.shows.resume")
     /** Films and episodes watched to the end. */
-    val watchedMovies = WatchedStore(prefs, "movies.watched")
-    val watchedEpisodes = WatchedStore(prefs, "shows.watched")
+    val watchedMovies = WatchedStore(prefs, "titles.movies.watched")
+    val watchedEpisodes = WatchedStore(prefs, "titles.shows.watched")
+    /** Carries the marks saved under provider ids over to title ids, once. */
+    val migration = TitleMigration(prefs, resume, showResume, watchedMovies, watchedEpisodes)
     /** Typical film bandwidth per source and hour band. */
     val capacity = Capacity(prefs)
-    val sync = FeedSync(http, BuildConfig.SERVER_URL, BuildConfig.APP_TOKEN, context.filesDir, prefs)
+    val sync = FeedSync(http, BuildConfig.SERVER_URL, BuildConfig.APP_TOKEN, context.filesDir, prefs, onEpisodes = migration::adoptEpisodes)
     /** What the TV, stick and soundbar can show and play; built off the launch path. */
     val setup by lazy { Setup(context) }
     val updater = Updater(context, http, BuildConfig.SERVER_URL, BuildConfig.APP_TOKEN, scope)

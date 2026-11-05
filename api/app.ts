@@ -370,7 +370,8 @@ export async function title(req: Request): Promise<Response> {
   try {
     const t = await titleDetails(configFromEnv(), id)
     if (!t) return new Response('Unknown title', { status: 404 })
-    return Response.json(t, { headers: { 'Cache-Control': 'private, s-maxage=21600, stale-while-revalidate=86400' } })
+    // Kept 6 hours once IMDb's histogram is in; until then each ask builds it again, so scores asked now show up.
+    return Response.json(t, { headers: { 'Cache-Control': t.s !== undefined ? 'private, s-maxage=21600, stale-while-revalidate=86400' : 'private, no-store' } })
   } catch (e) {
     return new Response(e instanceof Error ? e.message : 'upstream error', { status: 502 })
   }

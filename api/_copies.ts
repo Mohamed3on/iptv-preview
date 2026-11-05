@@ -197,6 +197,7 @@ async function torrentio(path: string): Promise<Candidate[]> {
 
 // Torrent hashes Real-Debrid refused here (451 infringing_file), posted by the stick: dropped from every
 // title's candidates for 60 days, so no prewarm tries them again.
+const DISC = /complete[ ._-]*(?:uhd[ ._-]*)?blu-?ray\b|\bbdmv\b|\.iso\b|\bbd-?(?:25|50|66|100)\b/i
 const INFRINGING_MS = 60 * 864e5
 const infringingFile = () => process.env.RD_INFRINGING_FILE ?? fileURLToPath(new URL('../.cache/rd-infringing.json', import.meta.url))
 let refused: Promise<Record<string, number>> | null = null
@@ -228,6 +229,8 @@ export async function titleCopies(title: string, iptv: Promise<IptvCopy[]>, wait
     const now = Date.now()
     return copies
       .filter((c) => !(now - (refused[c.hash] ?? 0) < INFRINGING_MS))
+      // A full disc ("COMPLETE.BLURAY", BDMV, ISO) is a folder of disc files, not one video the stick can stream.
+      .filter((c) => !DISC.test(`${c.name} ${c.filename ?? ''}`))
       .map((c) => ({ ...c, kbps: t.runtime > 0 ? Math.round((c.size * 8) / (t.runtime * 60) / 1000) : 0 }))
   })
   const intro = p?.season != null ? meta.then((t) => introFor(title, t?.imdb)) : Promise.resolve(null)

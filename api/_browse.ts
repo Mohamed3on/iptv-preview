@@ -79,6 +79,7 @@ export async function titleDetails(cfg: XtreamConfig, id: string) {
     people: [...people.values()],
     more: t.recommendations.map((r) => decorate(k, { id: r.title, k: r.title.startsWith('tv:') ? 't' : 'm', n: r.name, ...(Number(r.year) && { y: Number(r.year) }), ...(r.poster && { p: r.poster }) })),
     ...k.scores.get(id),
+    ...(t.trailer && { trailer: t.trailer }),
     ...(series && { series }),
     ...(episodes.length && {
       episodes: episodes.map((e) => ({ id: -(e.season * 10_000 + e.episode), titleId: episodeTitle(id, e.season, e.episode), ...e })),

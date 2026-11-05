@@ -74,6 +74,12 @@ fun ActionButton(label: String, onClick: () -> Unit, modifier: Modifier = Modifi
 val LocalFocused = compositionLocalOf { false }
 
 /**
+ * True under a screen that is composed but undrawn (a page or a film over it): its text stops scrolling, so it never
+ * asks for frames the screen on top then has to draw.
+ */
+val LocalStill = compositionLocalOf { false }
+
+/**
  * One line that never ends in "…". Past its edge it clips behind a short fade; while [active] (its row or
  * card has focus, or a fixed slot on a page at rest) it scrolls the rest into view after a second's pause,
  * and starts over from the beginning when focus leaves. Only a line that overflows draws the fade, in a
@@ -92,7 +98,7 @@ fun FitText(text: String, style: TextStyle, modifier: Modifier = Modifier, color
         onTextLayout = { width.floatValue = it.multiParagraph.width },
         modifier = modifier
             .fadeEnd(width)
-            .then(if (active && !reduced) Modifier.basicMarquee(iterations = Int.MAX_VALUE, initialDelayMillis = 1000, velocity = 30.dp) else Modifier),
+            .then(if (active && !reduced && !LocalStill.current) Modifier.basicMarquee(iterations = Int.MAX_VALUE, initialDelayMillis = 1000, velocity = 30.dp) else Modifier),
     )
 }
 
@@ -108,9 +114,10 @@ fun ScrollText(text: String, style: TextStyle, lines: Int, modifier: Modifier = 
     if (LocalReducedMotion.current) return Text(text, style = style, color = color, minLines = minLines, modifier = modifier)
     val slot = with(LocalDensity.current) { style.lineHeight.toDp() } * lines
     val scroll = rememberScrollState()
-    LaunchedEffect(text) {
+    val still = LocalStill.current
+    LaunchedEffect(text, still) {
         scroll.scrollTo(0)
-        while (true) {
+        while (!still) {
             delay(1_500)
             val end = scroll.maxValue.takeIf { it in 1 until Int.MAX_VALUE } ?: return@LaunchedEffect
             scroll.animateScrollTo(end, tween((end * SCROLL_MS_PER_PX).toInt(), easing = LinearEasing))

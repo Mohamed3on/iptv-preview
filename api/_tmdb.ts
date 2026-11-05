@@ -49,6 +49,8 @@ export interface TmdbTitle {
   directors: { id: number; name: string }[]
   /** TMDB's own, with its average vote (0–10) and vote count. */
   recommendations: { title: string; name: string; year: string; poster: string; vote?: number; votes?: number }[]
+  /** The best YouTube trailer's key ("JE9z-gy4De4"); "" when TMDB lists none. */
+  trailer: string
 }
 
 interface Raw {
@@ -70,6 +72,21 @@ interface Raw {
   external_ids?: { imdb_id?: string | null }
   credits?: { cast?: { id: number; name: string; character?: string }[]; crew?: { id: number; name: string; job?: string }[] }
   recommendations?: { results?: (Raw & { id: number; media_type?: string; vote_average?: number; vote_count?: number })[] }
+  videos?: { results?: Video[] }
+}
+
+interface Video { key: string; site?: string; type?: string; official?: boolean; iso_639_1?: string; published_at?: string }
+
+/** Video languages asked for: English, none, and common original languages (TMDB otherwise lists the request's language only). */
+const VIDEO_LANGUAGES = 'en,null,fr,de,es,it,ja,ko,zh,hi,ar,pt,ru,tr,sv,da,no,fi,nl,pl'
+
+/** The best YouTube trailer: official first, then English or the title's own language, then the newest; "" when none. */
+export function pickTrailer(videos: Video[], originalLanguage: string): string {
+  const rank = (v: Video) => (v.official ? 2 : 0) + (v.iso_639_1 === 'en' || v.iso_639_1 === originalLanguage ? 1 : 0)
+  const best = videos
+    .filter((v) => v.site === 'YouTube' && v.type === 'Trailer' && v.key)
+    .sort((a, b) => rank(b) - rank(a) || (b.published_at ?? '').localeCompare(a.published_at ?? ''))[0]
+  return best?.key ?? ''
 }
 
 const poster = (p: string | null | undefined) => (p ? `https://image.tmdb.org/t/p/w342${p}` : '')
@@ -99,6 +116,7 @@ function trim(kind: Kind, r: Raw): TmdbTitle {
       vote: x.vote_average ?? 0,
       votes: x.vote_count ?? 0,
     })),
+    trailer: pickTrailer(r.videos?.results ?? [], r.original_language ?? ''),
   }
 }
 
@@ -128,11 +146,11 @@ export async function tmdbTitle(kind: Kind, id: string | number): Promise<TmdbTi
   if (!key || !tmdb) return null
   const k = `${kind}:${tmdb}`
   const all = await loaded()
-  // An entry kept before plots and backdrops, or recommendations' votes, were is fetched again.
-  if (all[k] && Date.now() - all[k].at < MAX_AGE_MS && (!all[k].t || (all[k].t!.plot !== undefined && (all[k].t!.recommendations[0] ?? { votes: 0 }).votes !== undefined))) return all[k].t ?? null
+  // An entry kept before plots and backdrops, recommendations' votes, or trailers were is fetched again.
+  if (all[k] && Date.now() - all[k].at < MAX_AGE_MS && (!all[k].t || (all[k].t!.plot !== undefined && (all[k].t!.recommendations[0] ?? { votes: 0 }).votes !== undefined && all[k].t!.trailer !== undefined))) return all[k].t ?? null
   let job = pending.get(k)
   if (!job) {
-    job = tmdbGet<Raw>(`${kind}/${tmdb}?append_to_response=external_ids,credits,recommendations`, key)
+    job = tmdbGet<Raw>(`${kind}/${tmdb}?append_to_response=external_ids,credits,recommendations,videos&include_video_language=${VIDEO_LANGUAGES}`, key)
       .then((r) => trim(kind, r))
       .catch((e) => {
         if (e instanceof HttpError && e.status === 404) return null

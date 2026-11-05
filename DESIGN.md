@@ -196,7 +196,7 @@ A cool blue-black neutral ramp with one clear blue accent and three status hues 
 - **Display** (600, 30sp, 36sp): the channel name in the banner, the library hero's focused title.
 - **Title** (600, 22sp, 28sp): screen and section headings (details, search, errors); monograms on posters and stills without art.
 - **Headline** (500, 16sp, 21sp): channel row names, row titles, button labels, episode titles, season headings.
-- **Body** (400, 15sp, 20sp, text-secondary): now/next lines, schedule rows, meta lines, plot (capped at 720dp in the library hero).
+- **Body** (400, 15sp, 20sp, text-secondary): now/next lines, schedule rows, meta lines, plot (as wide as the library hero, up to the Search button).
 - **Caption** (500, 13sp, 17sp, +0.01em, text-tertiary): times, quality badges, key hints, cast and director lines.
 
 ### Named Rules
@@ -210,7 +210,7 @@ A cool blue-black neutral ramp with one clear blue accent and three status hues 
 
 A fixed 960x540 dp canvas with a 5% overscan-safe inset (48dp horizontal, 27dp vertical); chrome never sits closer to the edge. Spacing comes from one step scale (4, 8, 12, 16, 24, 32, 48) and nothing ad hoc. Rhythm is tight inside a group (4dp between a title and its meta, 8dp inside a card) and opens between groups (16-24dp between hero, buttons and the next row).
 
-Over live video, chrome takes the edges: the channel list slides in from the left over a flat scrim that covers its columns (to 91% of the width) and eases off past them; the banner rises from the bottom over a bottom-up scrim. In the library, text sits low-left at the safe inset in a column (520dp on Up next, 560dp on a film page, 380dp beside a show's episode panel) over a full-bleed backdrop, with the episode list on material to its right. Rows of cards scroll horizontally; lists fade into what they sit on at their top and bottom edges (edgeFade) rather than meeting a divider. Content blocks have fixed line counts where a change would shift focus targets, so buttons never move as a hero changes title.
+Over live video, chrome takes the edges: the channel list slides in from the left over a flat scrim that covers its columns (to 91% of the width) and eases off past them; the banner rises from the bottom over a bottom-up scrim. In the library, text sits low-left at the safe inset in a column (760dp on Up next and a film page, so meta lines and plots rarely scroll; 420dp beside a show's episode panel) over a full-bleed backdrop, with the episode list on material to its right. Rows of cards scroll horizontally; lists fade into what they sit on at their top and bottom edges (edgeFade) rather than meeting a divider. Content blocks have fixed line counts where a change would shift focus targets, so buttons never move as a hero changes title.
 
 ## Elevation & Depth
 
@@ -223,7 +223,7 @@ No drop shadows exist in the system. Depth comes from three things: translucent 
 
 **The Flat Scrim Rule.** Behind full-height chrome over video, prefer a flat tint under the content and a gradient only where content never reaches; a full-screen gradient cost the stick four times the frame time of a flat tint.
 
-**The Readable Over White Rule.** Every scrim is dense enough where text sits that body text clears 4.5:1 over a white sky: the library backdrop holds 94% to 86% ink across the text column (to 60% width) before falling off by 88%, plus a 70% ink band at the top behind Search.
+**The Readable Over White Rule.** Every scrim is dense enough where text sits that body text clears 4.5:1 over a white sky: the library backdrop holds 94% to 86% ink across the text column (to 75% width) before falling off by 95%, plus a 70% ink band at the top behind Search.
 
 ## Shapes
 

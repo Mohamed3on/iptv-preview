@@ -226,6 +226,8 @@ data class MovieInfo(
     val more: List<LibTitle> = emptyList(),
     val series: Int = 0,
     val episodes: List<Episode> = emptyList(),
+    /** TMDB's best YouTube trailer ("JE9z-gy4De4"); "" when there is none. */
+    val trailer: String = "",
     override val s: Int? = null, override val sn: Int? = null, override val se: Int = 0, override val lb: Double? = null, override val ir: Double? = null,
     override val lv: Int? = null, override val iv: Int? = null, override val s10: Double? = null,
     override val ta: Int? = null, override val tr: Double? = null, override val tq: Double? = null,

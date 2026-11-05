@@ -391,7 +391,8 @@ private fun bandwidthLine(typical: (Source, Long) -> Float?): String {
     return "Typical " + Source.entries.joinToString(" · ") { s -> "${sourceName(s)} " + (typical(s, now)?.let { "${it.roundToInt()} Mbps" } ?: "not measured yet") }
 }
 
-private val TIERS = listOf("Reference", "Great", "OK", "Soft")
+/** The picture of a copy, best first (the server calls them Reference, Great, OK and Soft). */
+private val TIERS = listOf("Best", "High", "Medium", "Low")
 private val GAIN = mapOf("h264" to 1f, "hevc" to 2f, "vp9" to 1.8f, "av1" to 2.4f, "mpeg2video" to 0.6f)
 private val VIDEO = mapOf("hevc" to "HEVC", "h264" to "H.264", "av1" to "AV1", "vp9" to "VP9", "mpeg2video" to "MPEG-2", "vc1" to "VC-1")
 private val AUDIO_LABEL = mapOf(

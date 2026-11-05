@@ -79,6 +79,12 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.foundation.layout.FlowRow
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import com.mohamed3on.iptv.ui.theme.LocalStill
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
@@ -134,7 +140,6 @@ import com.mohamed3on.iptv.data.isShow
 import com.mohamed3on.iptv.data.isTmdb
 import com.mohamed3on.iptv.data.known
 import com.mohamed3on.iptv.data.tmdbImage
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.mutableStateListOf
@@ -191,8 +196,6 @@ private val CARD_SHAPE = RoundedCornerShape(Radius.row)
 private val RING = 3.dp
 private val EDGE = 48.dp
 private val HERO_HEIGHT = 128.dp
-/** A film's plot in the hero: two lines at a readable measure. */
-private val PLOT_WIDTH = 720.dp
 /** Type.headline's line: a row's title above its cards. */
 private val ROW_TITLE = 27.dp
 /** Where a card's top sits inside its row: under the title and the row's lift room. */
@@ -205,9 +208,9 @@ private const val HERO_REST_MS = 90L
 private const val FOCUS_FRAMES = 30
 /** Title pages and Up next set the name larger than anywhere else: the title is the screen's subject. */
 private val BIG_TITLE = Type.display.copy(fontSize = 36.sp, lineHeight = 42.sp)
-private val UPNEXT_WIDTH = 520.dp
-private val PAGE_WIDTH = 560.dp
-private val SHOW_INFO_WIDTH = 380.dp
+/** Up next's and a film page's text column: to 84% of the screen, where the backdrop's dense scrim reaches, so meta lines and plots rarely scroll. */
+private val PAGE_WIDTH = 760.dp
+private val SHOW_INFO_WIDTH = 420.dp
 private val PROGRESS_WIDTH = 200.dp
 /** Up next's cards: 16:9, so a backdrop fits whole. */
 private val WIDE = DpSize(184.dp, 104.dp)
@@ -729,7 +732,7 @@ private fun MoviesBrowse(
                 true // the key-up too, so Back never reaches the player or leaves the app
             }
             .focusGroup(),
-    ) {
+    ) { CompositionLocalProvider(LocalStill provides hidden) {
         Backdrop(backdropOf(rested, heroInfo), solidFrom = if (shownPage == BrowsePage.UpNext) null else Space.safeY + HERO_HEIGHT, modifier = Modifier.graphicsLayer { alpha = shown().coerceIn(0f, 1f) })
         Box(Modifier.fillMaxSize().slideFade(shown, Edge.Bottom, reduced)) {
             when {
@@ -811,7 +814,7 @@ private fun MoviesBrowse(
                 modifier = Modifier.align(Alignment.CenterEnd).padding(Space.safe),
             )
         }
-    }
+    } }
 }
 
 /** ☰'s panel on the browsing screen: for [movie], from Up next or Continue watching ([removable]) or the rows ([rows]). */
@@ -956,8 +959,8 @@ private val baked = LruCache<String, ImageBitmap>(3)
 
 /**
  * [url]'s still at 720p with the scrims drawn in, on the CPU off the main thread, and handed to the GPU
- * early: ink across the text column, dense enough to the left (~60% of the width) that plot text clears
- * 4.5:1 over a white sky, then off by 88%; a bottom scrim; a top band ([topShare] of the height) so Search
+ * early: ink across the text column, dense enough to the left (~75% of the width) that plot text
+ * clears 4.5:1 over a white sky, then off by 95%; a bottom scrim; a top band ([topShare] of the height) so Search
  * reads. Null when it doesn't load.
  */
 private suspend fun bakedBackdrop(context: PlatformContext, url: String, topShare: Float): ImageBitmap? {
@@ -981,12 +984,12 @@ private suspend fun bakedBackdrop(context: PlatformContext, url: String, topShar
             paint.shader = LinearGradient(0f, 0f, x1, y1, colors, stops, Shader.TileMode.CLAMP)
             canvas.drawRect(0f, 0f, w.toFloat(), bottom, paint)
         }
-        scrim(w.toFloat(), 0f, intArrayOf(ink(0.94f), ink(0.86f), ink(0f)), floatArrayOf(0f, 0.6f, 0.88f))
+        scrim(w.toFloat(), 0f, intArrayOf(ink(0.94f), ink(0.86f), ink(0f)), floatArrayOf(0f, 0.75f, 0.95f))
         scrim(0f, h.toFloat(), intArrayOf(ink(0f), ink(0.96f)), floatArrayOf(0.4f, 1f))
         scrim(0f, h * topShare, intArrayOf(ink(0.7f), ink(0f)), floatArrayOf(0f, 1f), bottom = h * topShare)
         bitmap.setHasAlpha(false)
-        bitmap.prepareToDraw()
-        bitmap.asImageBitmap()
+        // A hardware copy uploads here, off the main and render threads: drawn fresh, the upload cost a title page's second frame ~20 ms.
+        (bitmap.copy(Bitmap.Config.HARDWARE, false)?.also { bitmap.recycle() } ?: bitmap.apply { prepareToDraw() }).asImageBitmap()
     }
     baked.put(url, out)
     return out
@@ -1031,7 +1034,7 @@ private fun UpNextPage(
             transitionSpec = { fadeIn(Motion.spring(0.3f)) togetherWith fadeOut(Motion.spring(0.2f)) },
             label = "upnext",
         ) { (m, r, i) ->
-            Column(Modifier.padding(start = EDGE).widthIn(max = UPNEXT_WIDTH), verticalArrangement = Arrangement.spacedBy(Space.xs)) {
+            Column(Modifier.padding(start = EDGE).widthIn(max = PAGE_WIDTH), verticalArrangement = Arrangement.spacedBy(Space.xs)) {
                 FitText(m.title.title, style = BIG_TITLE, active = true)
                 MetaLine(m, i)
                 Row(Modifier.padding(top = Space.xs), horizontalArrangement = Arrangement.spacedBy(Space.m), verticalAlignment = Alignment.CenterVertically) {
@@ -1039,7 +1042,7 @@ private fun UpNextPage(
                     if (r.dur > 0) ProgressLine({ r.pos.toFloat() / r.dur }, Modifier.width(PROGRESS_WIDTH))
                     if (r.at == 0L && m.titleId in newShows) Text(NEW_EPISODE, style = NEW_STYLE, maxLines = 1)
                 }
-                ScrollText(i?.plot.orEmpty(), style = Type.body, lines = 3, minLines = 3, modifier = Modifier.padding(top = Space.xs))
+                ScrollText(i?.plot.orEmpty(), style = Type.body, lines = 4, minLines = 4, modifier = Modifier.padding(top = Space.xs))
             }
         }
         val alone = entries.size == 1
@@ -1104,7 +1107,7 @@ private fun UpNextPage(
 }
 
 /**
- * The picture in a word, read by colour first: Reference (green), Great (accent), OK (plain), Soft (amber).
+ * The picture in a word, read by colour first: Best (green), High (bright), Medium (plain), Low (amber).
  * From resolution and codec-adjusted bits per pixel (server, api/_quality-labels.ts).
  */
 @Composable
@@ -1120,9 +1123,9 @@ internal fun TierChip(tier: String) {
 
 
 private fun tierColor(tier: String) = when (tier) {
-    "Reference" -> Palette.good
-    "Great" -> Palette.textPrimary
-    "Soft" -> Palette.warning
+    "Best" -> Palette.good
+    "High" -> Palette.textPrimary
+    "Low" -> Palette.warning
     else -> Palette.textSecondary
 }
 
@@ -1133,8 +1136,7 @@ private const val NEW_EPISODE = "New episode"
 private val NEW_STYLE = Type.caption.copy(color = Palette.accent, fontWeight = FontWeight.SemiBold)
 
 /**
- * Tier (unless [tier] is off: a film's page names the copy's on its Plays line), IMDb's and Letterboxd's averages and
- * the owner's rating ([scoresLine]), then year, running time and genres (the provider's rating when
+ * IMDb's and Letterboxd's averages (or TrueScore's) and the owner's rating ([scoresLine]), then year, running time and genres (the provider's rating when
  * no average is known); the group when nothing names genres.
  */
 @Composable
@@ -1145,7 +1147,8 @@ private fun MetaLine(movie: Movie, info: MovieInfo?, extra: String? = null) {
     val rating = info?.rating?.ifEmpty { null }?.takeIf { scored?.lb == null && scored?.ir == null }?.let { "$it/10" }
     val yours = LocalContext.current.graph.marks.ratings.collectAsState().value[movie.titleId]
     val scores = remember(scored, yours) { scoresLine(scored, yours) }
-    Row(horizontalArrangement = Arrangement.spacedBy(Space.m), verticalAlignment = Alignment.CenterVertically) {
+    // The facts go under the scores when both don't fit on one line (beside a show's episodes); only then does a line scroll.
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(Space.m), itemVerticalAlignment = Alignment.CenterVertically) {
         if (scores != null) Text(scores, style = SCORE_STYLE, maxLines = 1)
         movie.title.badge?.let { Badges(remember(it) { listOf(it) }) }
         val group = movie.group.takeIf { movie.lib != null } ?: groupLabel(movie.group).name
@@ -1223,15 +1226,12 @@ private fun cardChip(scored: Scored): AnnotatedString? {
 
 /** Dark enough under the chip's 13 sp text to clear 4.5:1 over any poster. */
 private val CHIP_GROUND = Color(0xE00B0E12)
-private val CHIP_SHAPE = RoundedCornerShape(Radius.chip)
+/** Nested in the card's corner at a 4 dp inset: its radius is the card's less the inset. */
+private val CHIP_SHAPE = RoundedCornerShape(Radius.row - Space.xs)
 private val CHIP_TEXT = Type.caption.copy(color = Palette.textPrimary)
 
-/**
- * A title page's or Up next's button: a quiet translucent pill that turns solid light when focused, so
- * the one OK will press reads from across the room.
- */
-@Composable
 /** "+ Watchlist" / "✓ Watchlist" on a title page: OK puts the film or show on the Trakt watchlist or takes it off (not one only Letterboxd's list holds). */
+@Composable
 private fun WatchlistButton(title: TitleId) {
     val watchlist = LocalContext.current.graph.watchlist
     if (!watchlist.canHold(title)) return
@@ -1248,9 +1248,32 @@ private fun watchlistLabel(on: Boolean, letterboxd: Boolean, told: Boolean) = wh
     else -> "+ Watchlist"
 }
 
+/** A [PageButton]'s height: a headline line and its padding. */
+private val BUTTON_HEIGHT = 21.dp + Space.m * 2
+
 /** A toggle on a title only Letterboxd's watchlist holds: there is no API to take it off. */
 private const val LETTERBOXD_ONLY = "Only Letterboxd can remove it"
 
+/** "Trailer" on a title page when TMDB names one ([key], a YouTube video): OK plays it in SmartTube, else YouTube; Back comes back here. */
+@Composable
+private fun TrailerButton(key: String?) {
+    if (key.isNullOrEmpty()) return
+    val context = LocalContext.current
+    PageButton("Trailer", { playTrailer(context, key) })
+}
+
+/** Ad-free SmartTube first, then Amazon's YouTube app, then whatever opens YouTube links. */
+private val TRAILER_APPS = listOf("org.smarttube.stable", "com.amazon.firetv.youtube", null)
+
+private fun playTrailer(context: Context, key: String) {
+    val uri = Uri.parse("https://www.youtube.com/watch?v=$key")
+    TRAILER_APPS.firstOrNull { runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, uri).setPackage(it)) }.isSuccess }
+}
+
+/**
+ * A title page's or Up next's button: a quiet translucent pill that turns solid light when focused, so
+ * the one OK will press reads from across the room.
+ */
 @Composable
 private fun PageButton(label: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
     val reduced = LocalReducedMotion.current
@@ -1362,7 +1385,7 @@ private fun Hero(movie: Movie?, info: MovieInfo?, resume: List<Resume>, placehol
                 }
             }
             MetaLine(m, i, extra = left)
-            i?.plot?.ifBlank { null }?.let { ScrollText(it, style = Type.body, lines = 2, modifier = Modifier.widthIn(max = PLOT_WIDTH)) }
+            i?.plot?.ifBlank { null }?.let { ScrollText(it, style = Type.body, lines = 2) }
         }
     }
 }
@@ -1617,7 +1640,7 @@ private fun PosterCard(movie: Movie, progress: Float?, watched: Boolean = false,
         if (progress != null) {
             ProgressLine({ progress }, Modifier.align(Alignment.BottomCenter).padding(horizontal = Space.s, vertical = Space.s))
         }
-        if (watched) WatchedMark(Modifier.align(Alignment.TopEnd).padding(Space.s))
+        if (watched) WatchedMark(Modifier.align(Alignment.TopEnd).padding(Space.xs))
         // How long it runs, where no progress line takes the bottom.
         val rt = movie.lib?.rt ?: 0
         if (rt > 0 && progress == null) Text(
@@ -1790,8 +1813,11 @@ private fun FilmPage(
     val closedVersions = remember { booleanArrayOf(false) }
     // ☰'s marks panel.
     var marking by remember { mutableStateOf(false) }
+    // The Plays line and the buttons come a frame after the rest (their slots held), so the opening frame stays under budget.
+    var buttons by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) {
         withFrameNanos {}
+        buttons = true
         Check.log("title_shown", "title" to film.titleId)
         graph.prefs.put(Check.LAST_SCREEN, "title:${film.titleId}")
     }
@@ -1829,7 +1855,7 @@ private fun FilmPage(
                         Text(leftLabel(resume.dur - resume.pos), style = Type.headline, maxLines = 1)
                         ProgressLine({ resume.pos.toFloat() / resume.dur }, Modifier.width(PROGRESS_WIDTH))
                     }
-                    info?.plot?.ifBlank { null }?.let { ScrollText(it, style = Type.body, lines = if (unavailable) 4 else 6) }
+                    info?.plot?.ifBlank { null }?.let { ScrollText(it, style = Type.body, lines = if (unavailable) 8 else 10) }
                     // The provider's facts name people only as text; TMDB's are the row below.
                     if (info?.people.isNullOrEmpty()) {
                         info?.cast?.ifBlank { null }?.let { Text("Starring $it", style = Type.caption, maxLines = 2) }
@@ -1840,15 +1866,16 @@ private fun FilmPage(
                         Text("Neither IPTV nor Real-Debrid has one that plays here. It stays in the library for when one turns up.", style = Type.caption)
                     } else {
                         // The Plays line may run past the column, across the page's whole width.
-                        PlaysLine(
+                        if (!buttons) Box(Modifier.padding(top = Space.s).height(PLAYS_HEIGHT)) else PlaysLine(
                             film.titleId, fallback = if (iptv) listOf("IPTV") + info?.quality.orEmpty() else null,
                             Modifier.padding(top = Space.s).wrapContentWidth(Alignment.Start, unbounded = true).widthIn(max = LocalConfiguration.current.screenWidthDp.dp - EDGE * 2),
                         )
-                        Row(horizontalArrangement = Arrangement.spacedBy(Space.m)) {
+                        if (!buttons) Box(Modifier.height(BUTTON_HEIGHT)) else Row(horizontalArrangement = Arrangement.spacedBy(Space.m)) {
                             PageButton(if (started) "Resume" else "Play", { onPlay(false) }, Modifier.focusRequester(primary))
                             if (started) PageButton("Start over", { onPlay(true) })
                             PageButton("Versions", { versions = true }, Modifier.focusRequester(versionsButton))
                             WatchlistButton(film.titleId)
+                            TrailerButton(info?.trailer)
                         }
                     }
                 }
@@ -1921,8 +1948,10 @@ private fun TitleFrame(backdrop: String?, hidden: Boolean, onBack: () -> Unit, o
             }
             .focusGroup(),
     ) {
-        Backdrop(backdrop, solidFrom = null)
-        content()
+        CompositionLocalProvider(LocalStill provides hidden) {
+            Backdrop(backdrop, solidFrom = null)
+            content()
+        }
     }
 }
 
@@ -1946,14 +1975,15 @@ private fun TitleScroll(main: @Composable BoxScope.() -> Unit, extras: @Composab
     val scope = rememberCoroutineScope()
     val inherited = LocalBringIntoViewSpec.current
     val keepClear = rememberKeepClear()
-    // The extras come a frame after the page, so its opening frame lays out only what shows.
+    // The extras come two frames after the page (a film page's buttons take the second), so its opening frames lay out only what shows.
     var below by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) {
-        withFrameNanos {}
+        repeat(2) { withFrameNanos {} }
         below = true
     }
-    BoxWithConstraints(Modifier.fillMaxSize()) {
-        val screen = maxHeight
+    // The page fills the screen: its height is known without a subcomposition pass on the opening frame.
+    val screen = LocalConfiguration.current.screenHeightDp.dp
+    Box(Modifier.fillMaxSize()) {
         CompositionLocalProvider(LocalBringIntoViewSpec provides NO_SCROLL) {
             Column(Modifier.fillMaxSize().verticalScroll(scroll)) {
                 CompositionLocalProvider(LocalBringIntoViewSpec provides inherited) {
@@ -1981,12 +2011,17 @@ private fun TitleExtras(info: MovieInfo?, watched: Set<TitleId>, focus: ExtrasFo
     val more = info?.moreMovies.orEmpty()
     if (people.isEmpty() && more.isEmpty()) return
     val focusManager = LocalFocusManager.current
-    // More like this a frame after the cast: laying out both in one frame took ~30 ms on the stick.
-    var posters by remember { mutableStateOf(false) }
-    LaunchedEffect(Unit) {
-        withFrameNanos {}
-        posters = true
+    // Two items a frame, cast first: a row's visible cards built in one frame took 10-21 ms on the stick, on top of the page's.
+    var built by remember { mutableIntStateOf(0) }
+    val total = people.size + more.size
+    LaunchedEffect(total) {
+        while (built < total) {
+            withFrameNanos {}
+            built += 2
+        }
     }
+    val cast = people.take(built)
+    val posters = more.take((built - people.size).coerceAtLeast(0))
     Column(Modifier.padding(bottom = Space.xl), verticalArrangement = Arrangement.spacedBy(Space.s)) {
         if (people.isNotEmpty()) {
             Text("Cast and crew", style = Type.headline, maxLines = 1, modifier = Modifier.padding(start = EDGE))
@@ -1995,7 +2030,7 @@ private fun TitleExtras(info: MovieInfo?, watched: Set<TitleId>, focus: ExtrasFo
                 contentPadding = PaddingValues(horizontal = EDGE, vertical = Space.m),
                 horizontalArrangement = Arrangement.spacedBy(Space.m),
             ) {
-                itemsIndexed(people, key = { _, p -> p.id }) { i, p ->
+                itemsIndexed(cast, key = { _, p -> p.id }) { i, p ->
                     val first = i == 0 && more.isEmpty()
                     val back = focus.opened == "p:${p.id}"
                     PageButton(
@@ -2009,10 +2044,10 @@ private fun TitleExtras(info: MovieInfo?, watched: Set<TitleId>, focus: ExtrasFo
                 }
             }
         }
-        if (more.isNotEmpty() && posters) {
+        if (posters.isNotEmpty()) {
             val opened = focus.opened?.removePrefix("m:")
             PosterRow(
-                remember(more) { MovieRow("more", "More like this", null, more, emptyMap()) },
+                remember(more, posters.size) { MovieRow("more", "More like this", null, posters, emptyMap()) },
                 watched = watched,
                 rowFocus = remember { FocusRequester() },
                 entry = focus.first,
@@ -2201,18 +2236,20 @@ private fun ShowPage(
                         ScrollText(show.title.title, style = BIG_TITLE, lines = 2)
                         val seasons = episodes?.map { it.season }?.distinct()?.size
                         MetaLine(show, info ?: data?.info, extra = seasons?.let { if (it == 1) "1 season" else "$it seasons" })
-                        (info?.plot?.ifBlank { null } ?: data?.plot?.ifBlank { null })?.let { ScrollText(it, style = Type.body, lines = 6) }
+                        (info?.plot?.ifBlank { null } ?: data?.plot?.ifBlank { null })?.let { ScrollText(it, style = Type.body, lines = 10) }
                         if (info?.people.isNullOrEmpty()) data?.cast?.ifBlank { null }?.let { Text("Starring $it", style = Type.caption, maxLines = 2) }
                         val next = target?.let { episodes[it] }
                         // The copy the episode up next plays on, prepared as the page opens; TMDB's episodes have no IPTV copy of their own.
                         if (next != null) key(next.titleId) { PlaysLine(next.titleId, fallback = if (next.id > 0) listOf("IPTV") + next.quality else null) }
                         val started = next != null && resume?.episode == next.titleId && resume.pos > 0
-                        Row(Modifier.padding(top = Space.m), horizontalArrangement = Arrangement.spacedBy(Space.m)) {
+                        // Buttons that don't fit beside the episode list go on a second line, never cut.
+                        FlowRow(Modifier.padding(top = Space.m), horizontalArrangement = Arrangement.spacedBy(Space.m), verticalArrangement = Arrangement.spacedBy(Space.m)) {
                             when {
                                 next != null -> {
                                     PageButton("${if (started) "Resume" else "Play"} ${next.code}", { onPlay(episodes, target, false) }, Modifier.focusRequester(primary))
                                     if (started) PageButton("Start over", { onPlay(episodes, target, true) })
                                     WatchlistButton(show.titleId)
+                                    TrailerButton(info?.trailer)
                                 }
                                 failed -> PageButton("Try again", { attempt++ }, Modifier.focusRequester(primary))
                                 // Something holds focus meanwhile, so Back still answers.
@@ -2310,7 +2347,7 @@ private fun EpisodeRow(episode: Episode, watched: Boolean, rating: Int?, progres
         episode.image.ifEmpty { null }?.let { with(density) { ImageRequest.Builder(context).data(tmdbAt(it, "w300")).size(STILL.width.roundToPx(), STILL.height.roundToPx()).crossfade(POSTER_FADE_MS).build() } }
     }
     // "Episode 4" says nothing a number doesn't.
-    val title = episode.title.takeUnless { it.isEmpty() || GENERIC_EPISODE.matches(it) }
+    val title = episode.title.takeUnless { it.isEmpty() || GENERIC_EPISODE.matches(it) }?.replace("...", "…")
     Row(
         Modifier
             .fillMaxWidth()

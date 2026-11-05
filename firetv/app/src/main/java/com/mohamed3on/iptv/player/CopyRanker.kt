@@ -39,6 +39,8 @@ data class Copy(
     val englishSubs: Boolean = false,
     /** Average bitrate (size over runtime, or measured); 0 when unknown. */
     val mbps: Float = 0f,
+    /** Torrent seeders (Real-Debrid copies): popularity, a last tiebreak only, since a ready copy streams from Real-Debrid. */
+    val seeds: Int = 0,
 )
 
 /** KTD6's sort; the order is the ranking's. */
@@ -204,6 +206,7 @@ private fun versus(a: Ranked, b: Ranked, fit: Boolean = true): Int = when {
     a.sound != b.sound -> if (a.sound > b.sound) -5 else 5
     a.subs != b.subs -> if (a.subs) -6 else 6
     a.copy.source != b.copy.source -> if (a.copy.source == Source.RealDebrid) -7 else 7
+    a.copy.seeds != b.copy.seeds -> if (a.copy.seeds > b.copy.seeds) -8 else 8
     else -> 0
 }
 
@@ -230,6 +233,7 @@ private fun reason(r: Ranked, pick: Ranked?): String = when {
         5 -> if (r.sound == 0) r.why else if (pick.sound == 3) "no Atmos" else "fewer channels"
         6 -> "no English subtitles"
         7 -> "same on IPTV"
+        8 -> "same, less popular release"
         0 -> "same as the pick"
         else -> if (pick.pinned) "another copy is pinned" else ""
     }

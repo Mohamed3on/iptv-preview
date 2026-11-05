@@ -404,7 +404,7 @@ data class CopySources(val iptv: String = "ok", val rd: String = "ok")
 @Serializable
 data class ServerCopy(
     val src: String, val id: Int = 0, val ext: String = "mkv", val name: String = "",
-    val hash: String = "", val file: Int? = null, val filename: String? = null, val size: Long = 0, val cached: Boolean = false,
+    val hash: String = "", val seeds: Int = 0, val file: Int? = null, val filename: String? = null, val size: Long = 0, val cached: Boolean = false,
     val res: Int = 0, val hdr: List<String> = emptyList(), val dvProfile: Int? = null, val codec: String = "", val audio: String = "",
     val ch: Int = 0, val atmos: Boolean = false, val langs: List<String> = emptyList(), val subs: List<String> = emptyList(), val kbps: Double = 0.0,
 )

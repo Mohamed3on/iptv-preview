@@ -207,6 +207,7 @@ private fun copyOf(id: String, s: ServerCopy) = Copy(
     languages = s.langs,
     englishSubs = "en" in s.subs,
     mbps = (s.kbps / 1000).toFloat(),
+    seeds = s.seeds,
 )
 
 private val HDR = mapOf("dv" to "DV", "hdr10+" to "HDR10+", "hdr10" to "HDR10", "hlg" to "HLG")

@@ -11,7 +11,7 @@ import proxy from './api/proxy'
 type Handler = (req: Request) => Promise<Response>
 type Entry = { body: Blob; init: ResponseInit; fresh: number; stale: number }
 
-const routes: Record<string, Handler> = { '/api/epg': epg, '/api/playlist': playlist, '/api/app/channels': app.channels, '/api/app/guide': app.guide, '/api/app/movies': app.movies, '/api/app/shows': app.shows, '/api/app/episodes': app.episodes, '/api/app/movie': app.movie, '/api/app/vod-search': app.vodSearch }
+const routes: Record<string, Handler> = { '/api/epg': epg, '/api/playlist': playlist, '/api/app/channels': app.channels, '/api/app/guide': app.guide, '/api/app/movies': app.movies, '/api/app/shows': app.shows, '/api/app/episodes': app.episodes, '/api/app/movie': app.movie, '/api/app/vod-search': app.vodSearch, '/api/app/copies': app.copies }
 const cache = new Map<string, Entry>()
 const building = new Map<string, Promise<Entry>>()
 
@@ -67,13 +67,19 @@ export async function handle(req: Request): Promise<Response> {
   if (pathname === '/api/app/bitrate' && req.method === 'POST') return app.bitrate(req)
   if (pathname === '/api/app/film-quality' && req.method === 'POST') {
     const res = await app.filmQuality(req)
-    // A new reading changes that film's info: its cached copy goes.
+    // A new reading changes that film's info and copies: their cached answers go.
     const body = res.ok ? await res.clone().json() : null
-    if (body?.stored) for (const url of cache.keys()) { const u = new URL(url); if (u.pathname === '/api/app/movie' && u.searchParams.get('id') === String(body.id)) cache.delete(url) }
+    if (body?.stored) for (const url of cache.keys()) { const u = new URL(url); if ((u.pathname === '/api/app/movie' && u.searchParams.get('id') === String(body.id)) || u.pathname === '/api/app/copies') cache.delete(url) }
     return res
   }
   if (pathname === '/api/app/events' && req.method === 'POST') return app.events(req)
   if (pathname === '/api/app/title-ids' && req.method === 'POST') return app.titleIds(req)
+  if (pathname === '/api/app/rd-infringing' && req.method === 'POST') {
+    const res = await app.rdInfringing(req)
+    // A refused torrent leaves every title's copies at once.
+    if (res.ok && (await res.clone().json()).stored) for (const url of cache.keys()) if (new URL(url).pathname === '/api/app/copies') cache.delete(url)
+    return res
+  }
   const handler = routes[pathname]
   if (handler) return cached(req, handler)
   const file = Bun.file(dist + (pathname === '/' ? '/index.html' : pathname))

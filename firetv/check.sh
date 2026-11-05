@@ -71,7 +71,9 @@ for p in "$IPTV_FILM Iptv" "$FILM RealDebrid"; do
   open "play:$1"
   l=$(event "play:$1" first_frame 20); src=$(val src "$l")
   [[ -n $l && $src != "$2" ]] && l="" # the other source played: the title no longer tests this one
-  row "First frame $2 (ms)" "$(val ms "$l")" $FRAME_MS "$1 · ${src:-?} $(val copy "$l" | cut -c1-24)"
+  # Where the time went: the player opened (copy and link known), then ready (connected, start buffer full).
+  o=$(event "play:$1" film_open 1); r=$(event "play:$1" film_ready 1)
+  row "First frame $2 (ms)" "$(val ms "$l")" $FRAME_MS "$1 · ${src:-?} $(val copy "$l" | cut -c1-16) · open $(val ms "$o") ready $(val ms "$r")"
 done
 sleep 5; table+=$(printf '%-26s %8s' "Java heap playing" "$(heap)")$'\n'
 

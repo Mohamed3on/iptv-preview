@@ -24,6 +24,7 @@ import com.mohamed3on.iptv.data.WatchHistory
 import com.mohamed3on.iptv.player.Capacity
 import com.mohamed3on.iptv.player.CopyChoices
 import com.mohamed3on.iptv.player.FilmCopies
+import com.mohamed3on.iptv.player.FilmHeads
 import com.mohamed3on.iptv.player.Telemetry
 import com.mohamed3on.iptv.data.RealDebrid
 import com.mohamed3on.iptv.player.Setup
@@ -119,7 +120,9 @@ class AppGraph(context: Context) {
     /** "Real-Debrid premium has ended" shows once an app session. */
     val premiumEndedShown = java.util.concurrent.atomic.AtomicBoolean()
     /** Each title's copies, ranked and checked ahead of Play. Touch [setup] on the main thread first. */
-    val films by lazy { FilmCopies(sync::copies, debrid, copyChoices, capacity, { setup.profile.value }, scope) }
+    val films by lazy { FilmCopies(sync::copies, debrid, copyChoices, capacity, { setup.profile.value }, scope, ip = { vpnActive.value }, linked = filmHeads::fetch) }
+    /** The head and index of a Real-Debrid file whose link was fetched ahead, served to the film player from memory. */
+    val filmHeads by lazy { FilmHeads(http) }
 
     /** The owner's history from the box, telling it the shows finished here in the last 6 months ("tv:N:sSeE@ms"). */
     suspend fun syncHistory(maxAge: Duration = LIBRARY_CHECK) = sync.history.sync(maxAge, followed.entries.value

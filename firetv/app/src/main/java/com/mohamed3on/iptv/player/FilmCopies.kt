@@ -7,7 +7,9 @@ import com.mohamed3on.iptv.data.RdCheck
 import com.mohamed3on.iptv.data.ServerCopy
 import com.mohamed3on.iptv.player.Capacity.Source
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -48,9 +50,11 @@ data class Prepared(
 
 /**
  * Every title's copies, kept in memory a while (KTD13). Opening a title page, resting on an Up next card or
- * starting an episode (for the next one) [warm]s a title: copies from the box, the ranking and the first
- * Real-Debrid check, all off the main thread, so Play opens a copy at once. An answer whose Real-Debrid
- * side is still pending is asked again shortly (the box has it by then).
+ * starting an episode (for the next one) [warm]s a title: copies from the box, the ranking, the first
+ * Real-Debrid check and, when Play would open a Real-Debrid copy, its unrestricted [link], all off the main
+ * thread, so Play opens a copy at once. An answer whose Real-Debrid side is still pending is asked again
+ * shortly (the box has it by then). [ip] names the stick's public IP (VPN on or off): a link made on
+ * another is never used (KTD2).
  */
 class FilmCopies(
     private val fetch: suspend (String) -> Result<CopiesAnswer>,
@@ -60,11 +64,17 @@ class FilmCopies(
     private val setup: () -> SetupProfile,
     private val scope: CoroutineScope,
     private val now: () -> Long = System::currentTimeMillis,
+    private val ip: () -> Any? = { null },
+    /** A link fetched ahead, for [FilmHeads] to read the file's head. */
+    private val linked: suspend (String) -> Unit = {},
 ) {
+    private class Link(val copy: String, val at: Long, val ip: Any?, val url: Deferred<String?>)
+
     private class Entry(val at: Long) {
         val state = MutableStateFlow(Prepared())
         @Volatile var rd = false
         @Volatile var checking: Job? = null
+        @Volatile var link: Link? = null
     }
 
     private val entries = ConcurrentHashMap<String, Entry>()
@@ -89,6 +99,9 @@ class FilmCopies(
     fun answers(title: String): Flow<TitleCopies> =
         entry(title, rd = false).state.transformWhile { p -> p.answer?.let { emit(it) }; !p.asked && !p.failed }
             .distinctUntilChanged { a, b -> a === b }.map { it.copies }
+
+    /** For [FilmSession]: [copyId]'s link fetched ahead, if under [LINK_MS] old and made on this IP. */
+    suspend fun link(title: String, copyId: String): String? = entries[title]?.link?.takeIf { it.fresh(copyId) }?.url?.await()
 
     /** Ranks [title] again after a pin, mark or correction in Versions. */
     fun rerank(title: String) {
@@ -115,6 +128,7 @@ class FilmCopies(
             e.rd = true
             if (e.state.value.answer != null) check(e)
         }
+        if (rd) prefetch(e) // again once the last one is old
         return e
     }
 
@@ -142,7 +156,21 @@ class FilmCopies(
     private fun publish(title: String, e: Entry, a: TitleAnswer) {
         val ranking = choices.rank(title, a.copies.copies, a.copies.originalLanguage, setup()) { capacity.typicalMbps(it, now()) }
         e.state.update { it.copy(answer = a, ranking = ranking, rdChecked = it.rdChecked || a.copies.rd.isEmpty()).settled() }
+        prefetch(e)
     }
+
+    /** Unrestricts the Real-Debrid copy Play would open, unless a fresh link for it is kept. */
+    private fun prefetch(e: Entry) {
+        val p = e.state.value
+        val copy = p.plays?.takeIf { e.rd && it.source == Source.RealDebrid } ?: return
+        val ready = p.rd[copy.id] as? RdCheck.Ready ?: return
+        if (e.link?.fresh(copy.id) == true) return
+        e.link = Link(copy.id, now(), ip(), scope.async { runCatching { debrid.link(ready) }.getOrNull()?.also { scope.launch { linked(it) } } })
+    }
+
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    private fun Link.fresh(copyId: String) =
+        copy == copyId && now() - at < LINK_MS && ip == ip() && !(url.isCompleted && url.getCompleted() == null)
 
     /** Asks Real-Debrid about the unchecked copies in rank order; its answers are kept there too, so Play's check makes no calls. */
     private fun check(e: Entry) {
@@ -155,6 +183,7 @@ class FilmCopies(
             val answers = if (ids.isEmpty()) emptyMap() else runCatching { debrid.check(ids.map(torrents::getValue)) }.getOrDefault(emptyMap())
             val byId = ids.mapNotNull { id -> answers[torrents.getValue(id)]?.let { id to it } }.toMap()
             e.state.update { it.copy(rd = it.rd + byId, rdChecked = true).settled() }
+            prefetch(e)
         }
     }
 
@@ -167,6 +196,8 @@ class FilmCopies(
 
     private companion object {
         const val KEEP_MS = 30 * 60_000L
+        /** A link fetched ahead is used within this long, on the IP it was made on. */
+        const val LINK_MS = 5 * 60_000L
         /** A pending Real-Debrid side is asked again this much later, at most [ASKS] asks in all. */
         const val REASK_MS = 2_500L
         const val ASKS = 3

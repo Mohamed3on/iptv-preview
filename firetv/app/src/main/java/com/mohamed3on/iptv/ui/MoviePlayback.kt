@@ -190,7 +190,7 @@ internal fun MoviePlayback(
     // Its loading bursts teach the typical bandwidth (KTD8); every film is an IPTV copy until Real-Debrid plays.
     val load = remember { FilmLoad() }
     val meter = remember { BandwidthMeter(graph.capacity) }
-    val exo = remember { moviePlayer(context, graph.http, load) { fileBytes.compareAndSet(0, it) } }
+    val exo = remember { moviePlayer(context, graph.http, graph.filmHeads, load) { fileBytes.compareAndSet(0, it) } }
     // A film's first play measures what it really is (an episode's is known already), for its quality and tier.
     val films = LocalLibrary.current == LibraryKind.Movies
     val ui = remember { MovieState() }
@@ -204,7 +204,7 @@ internal fun MoviePlayback(
     val film = remember { ExoFilmPlayer(exo) }
     val setup = remember { graph.setup }
     val session = remember {
-        FilmSession(title, null, film, graph.copyChoices, { setup.profile.value }, meter, graph.debrid, iptvUrl, scope, System::currentTimeMillis, graph.telemetry::film)
+        FilmSession(title, null, film, graph.copyChoices, { setup.profile.value }, meter, graph.debrid, iptvUrl, scope, System::currentTimeMillis, graph.telemetry::film) { graph.films.link(title, it.id) }
     }
     // A copy with no English subtitles gets them from the box (R30), drawn here over the picture.
     val fetched = remember {
@@ -234,6 +234,7 @@ internal fun MoviePlayback(
             }
 
             override fun onPlaybackStateChanged(state: Int) {
+                if (state == Player.STATE_READY && !ui.started) Check.log("film_ready")
                 ui.buffering = state == Player.STATE_BUFFERING || state == Player.STATE_IDLE
                 if (state == Player.STATE_ENDED) {
                     keep(exo.duration, exo.duration) // finished: out of Continue watching
@@ -258,6 +259,7 @@ internal fun MoviePlayback(
             override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
                 val copy = session.state.value.copy ?: return
                 val url = mediaItem?.localConfiguration?.uri?.toString() ?: return
+                if (!ui.started) Check.log("film_open", "src" to copy.source)
                 fetched.find(title, copy.id, url, graph.films.state(title).value.answer?.name(copy.id).orEmpty())
             }
         }

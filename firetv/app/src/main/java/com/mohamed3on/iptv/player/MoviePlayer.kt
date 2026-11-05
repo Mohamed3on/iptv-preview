@@ -31,9 +31,9 @@ import java.util.concurrent.atomic.AtomicLong
  * HEVC seek decoding up to an exact frame takes seconds on the stick, and a step is ±10s anyway.
  * Its owner releases it. [onFileSize] hears the file's full size in bytes, from the first response that says.
  */
-fun moviePlayer(context: Context, http: OkHttpClient, load: FilmLoad = FilmLoad(), onFileSize: (Long) -> Unit = {}): ExoPlayer =
+fun moviePlayer(context: Context, http: OkHttpClient, heads: FilmHeads, load: FilmLoad = FilmLoad(), onFileSize: (Long) -> Unit = {}): ExoPlayer =
     ExoPlayer.Builder(context)
-        .setMediaSourceFactory(DefaultMediaSourceFactory(OkHttpDataSource.Factory(http).setTransferListener(FileSize(load.bytes, onFileSize))))
+        .setMediaSourceFactory(DefaultMediaSourceFactory(HeadSource.Factory(OkHttpDataSource.Factory(http).setTransferListener(FileSize(load.bytes, onFileSize)), heads)))
         .setLoadControl(
             DefaultLoadControl.Builder()
                 .setAllocator(load.allocator)

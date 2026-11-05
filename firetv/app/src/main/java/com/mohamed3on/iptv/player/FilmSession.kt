@@ -117,6 +117,8 @@ class FilmSession(
     /** Wall-clock ms: hour bands of typical bandwidth key on it. */
     private val now: () -> Long,
     private val report: (FilmEvent) -> Unit = {},
+    /** A Real-Debrid copy's link fetched before Play (the title page's, [FilmCopies.link]), else null. */
+    private val ahead: suspend (Copy) -> String? = { null },
 ) {
     private val _state = MutableStateFlow(FilmState())
     val state: StateFlow<FilmState> = _state
@@ -337,6 +339,7 @@ class FilmSession(
         if (copy.source == Source.Iptv) return iptvUrl(copy)
         val ready = ready(copy) ?: return null
         links.remove(copy.id)?.takeIf { now() - it.first < LINK_MS }?.second?.await()?.let { return it }
+        if (current == null) ahead(copy)?.let { return it } // a retry gets a fresh one
         repeat(2) {
             try {
                 return debrid.link(ready)

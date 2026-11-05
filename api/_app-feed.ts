@@ -115,7 +115,9 @@ const SUPERSCRIPT = /[ᴬ-ᶿ⁰-₟]+/g
 const compGroup = new Map(COMPS.map((c) => [c.key, c.group]))
 
 export function buildAppGuide(channels: Channel[], xmltv: string, now = Date.now()): Uint8Array {
-  const filler = new Set(channels.map((c) => `${c.tvgId}\n${c.name}\n${c.group}`))
+  // Name-as-title filler: ours (slots, uncovered channels) and the provider's own 2-hour blocks
+  // named for the channel ("IT: DAZN DIRETTA GOL EUROPA LEAGUE" all day), never a programme.
+  const filler = new Set(channels.map((c) => `${c.tvgId}\n${c.name.toLowerCase()}`))
   const db = new Database(':memory:')
   db.run(`CREATE TABLE programmes (tvg_id TEXT NOT NULL, start INTEGER NOT NULL, stop INTEGER NOT NULL,
     title TEXT NOT NULL, norm TEXT NOT NULL, descr TEXT NOT NULL, synthetic INTEGER NOT NULL, match INTEGER NOT NULL, comp TEXT)`)
@@ -127,7 +129,7 @@ export function buildAppGuide(channels: Channel[], xmltv: string, now = Date.now
     const tvgId = attr('channel')
     const title = unxml(m[2].match(/<title\b[^>]*>([\s\S]*?)<\/title>/)?.[1] ?? '').trim()
     const descr = unxml(m[2].match(/<desc\b[^>]*>([\s\S]*?)<\/desc>/)?.[1] ?? '').trim()
-    return { tvgId, title, descr, start: xmltvSeconds(attr('start')), stop: xmltvSeconds(attr('stop')), synthetic: filler.has(`${tvgId}\n${title}\n${descr}`) }
+    return { tvgId, title, descr, start: xmltvSeconds(attr('start')), stop: xmltvSeconds(attr('stop')), synthetic: filler.has(`${tvgId}\n${title.toLowerCase()}`) }
   })
   const replays = replayAirings(rows.map((r) => (r.synthetic ? { ...r, title: '' } : r)), new Date(now))
   // A re-run is no live match, and no 🏆 group's either (Live now lists those).

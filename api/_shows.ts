@@ -106,13 +106,14 @@ export async function showList(cfg: XtreamConfig): Promise<ShowList> {
 }
 
 interface SeriesInfo {
+  info?: { plot?: string }
   episodes?: Record<string, { id: string; episode_num: number | string; title?: string; container_extension?: string; season?: number; info?: { duration_secs?: number | string } }[]>
 }
 
-/** A show's episodes, in season and episode order. */
-export async function showEpisodes(cfg: XtreamConfig, seriesId: number): Promise<Episode[]> {
+/** A show's plot and its episodes, in season and episode order. */
+export async function showEpisodes(cfg: XtreamConfig, seriesId: number): Promise<{ plot: string; episodes: Episode[] }> {
   const info = await apiGet<SeriesInfo>(cfg, `get_series_info&series_id=${seriesId}`)
-  return Object.entries(info.episodes ?? {})
+  const episodes = Object.entries(info.episodes ?? {})
     .flatMap(([season, eps]) =>
       eps.map((e) => ({
         id: Number(e.id),
@@ -126,4 +127,21 @@ export async function showEpisodes(cfg: XtreamConfig, seriesId: number): Promise
     )
     .filter((e) => e.id > 0)
     .sort((a, b) => a.season - b.season || a.episode - b.episode)
+  return { plot: String(info.info?.plot ?? '').trim(), episodes }
+}
+
+interface VodInfo {
+  info?: { plot?: string; description?: string; genre?: string; duration_secs?: number | string; rating?: string | number }
+}
+
+/** A film's plot, running time (seconds, 0 when unknown), genres and rating ("" when unknown). */
+export async function movieInfo(cfg: XtreamConfig, vodId: number) {
+  const info = (await apiGet<VodInfo>(cfg, `get_vod_info&vod_id=${vodId}`)).info ?? {}
+  const rating = Number(info.rating)
+  return {
+    plot: String(info.plot || info.description || '').trim(),
+    secs: Number(info.duration_secs) || 0,
+    genre: String(info.genre ?? '').trim(),
+    rating: rating > 0 ? rating.toFixed(1) : '',
+  }
 }

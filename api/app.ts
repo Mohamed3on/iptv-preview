@@ -15,7 +15,7 @@ import { appTokenOk, backupConfigFromEnv, configFromEnv, fetchCuratedChannels, s
 import { addBitrate, mergeAppReading, saveQuality, type Meta } from './_quality.js'
 import { QUALITY } from './quality-cache.js'
 import { curatedGuide } from './epg.js'
-import { showEpisodes, showList } from './_shows.js'
+import { movieInfo, showEpisodes, showList } from './_shows.js'
 
 const forbidden = () => new Response('Forbidden', { status: 403 })
 
@@ -154,13 +154,28 @@ export async function shows(req: Request): Promise<Response> {
   }
 }
 
-// GET /api/app/episodes?t=TOKEN&id=SERIES_ID — a show's episodes, in order.
+// GET /api/app/movie?t=TOKEN&id=VOD_ID — a film's plot, running time, genres and rating, fetched
+// when the app shows it.
+export async function movie(req: Request): Promise<Response> {
+  if (!appTokenOk(req.url)) return forbidden()
+  const id = Number(new URL(req.url).searchParams.get('id'))
+  if (!Number.isInteger(id) || id <= 0) return new Response('Bad id', { status: 400 })
+  try {
+    return Response.json(await movieInfo(configFromEnv(), id), {
+      headers: { 'Cache-Control': 'private, s-maxage=604800, stale-while-revalidate=604800' },
+    })
+  } catch (e) {
+    return new Response(e instanceof Error ? e.message : 'upstream error', { status: 502 })
+  }
+}
+
+// GET /api/app/episodes?t=TOKEN&id=SERIES_ID — a show's plot and episodes, in order.
 export async function episodes(req: Request): Promise<Response> {
   if (!appTokenOk(req.url)) return forbidden()
   const id = Number(new URL(req.url).searchParams.get('id'))
   if (!Number.isInteger(id) || id <= 0) return new Response('Bad id', { status: 400 })
   try {
-    return Response.json({ episodes: await showEpisodes(configFromEnv(), id) }, {
+    return Response.json(await showEpisodes(configFromEnv(), id), {
       headers: { 'Cache-Control': 'private, s-maxage=21600, stale-while-revalidate=86400' },
     })
   } catch (e) {

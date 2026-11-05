@@ -162,6 +162,8 @@ describe('competition groups', () => {
     expect(staticCompetitions('FR: LIGUE1+ 1 ⱽᴵᴾ ᴿᴬᵂ', 'FR| LIGUE1+ ⱽᴵᴾ ᴿᴬᵂ')).toEqual(['ligue1'])
     // a bare UEFA package can't tell the three cups apart, so it joins all of them
     expect(staticCompetitions('UEFA | 03 - Beşiktaş vs Marseille 8:00 pm', 'UK| UEFA PPV')).toEqual(['ucl', 'uel', 'uecl'])
+    // other countries' Premier Leagues
+    expect(staticCompetitions('Next | St. Louis FC vs. PTL Bazar Brothers FC | Premier League - Seychelles | 2026-11-05 | 14:30 (GMT) | DE: DAZN PPV 5', 'DAZN PPV')).toEqual([])
   })
 
   test('EPG titles count only when they are live matches', () => {
@@ -189,6 +191,9 @@ describe('competition groups', () => {
     expect(couldBeLiveMatch('Udinese - Cagliari')).toBe(true)
     expect(couldBeLiveMatch('BL: FC Bayern München - VfB Stuttgart, 1. Spieltag')).toBe(true)
     expect(couldBeLiveMatch('Premier League Review')).toBe(false)
+    expect(couldBeLiveMatch('Premier League Icons - Yaya Toure')).toBe(false)
+    // an event channel announcing a later match isn't airing it
+    expect(couldBeLiveMatch('Next | Sunderland vs. Dinamo Zagreb | all | 05-11-2026 | 20:45 (GMT) | DE: SOCCER PPV 68')).toBe(false)
     expect(couldBeLiveMatch('EFL Cup 07/08: Chelsea v Spurs', new Date('2026-09-20'))).toBe(false)
   })
 

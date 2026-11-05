@@ -437,6 +437,16 @@ const CAT_ONLY: Record<number, RegExp> = {
   872: /PREMIER LEAGUE/i,
   56: /NOW PREMIER SPORTS/i,
 }
+// The provider's own mistakes, checked against each feed's picture (2026-11-05): "PEH TB" is РЕН ТВ
+// spelt in Latin look-alikes, the same feed as "REN TV", whose logo is Petersburg's 5 Kanal; "PYATIT
+// KANAL" is Ukraine's 5 Kanal (5.ua), not Russia's, under Tulsky TV's logo.
+const REN_TV = { name: 'RU: REN TV', logo: 'http://photo-tmdb.com/stalker_portal/logos/PEH-TB.jpg' }
+const PROVIDER_FIX: Record<string, { name: string; logo: string }> = {
+  'RU: PEH TB': REN_TV,
+  'RU: REN TV': REN_TV,
+  'RU: PYATIT KANAL': { name: 'RU: 5 KANAL UKRAINE', logo: 'https://raw.githubusercontent.com/tv-logo/tv-logos/main/countries/ukraine/channel5-ua.png' },
+}
+
 // Russian kids channels (Nick/Cartoon Network/Disney) sit in the general RU
 // category — no dedicated RU kids category exists — so route them out by name.
 const RU_KIDS = /nick|cartoon\s*network|disney\s*(?:channel|jr|junior|xd)|карусел|мульт|малыш/i
@@ -481,7 +491,7 @@ const nameKey = (s: string): string =>
 // coming and going never shifts the groups everyone uses.
 interface Competition { key: string; group: string; re: RegExp; not?: RegExp }
 export const COMPS: Competition[] = [
-  { key: 'pl', group: '🏆 Premier League', re: /premier league|\bEPL\b|\bsky sports? pl\b|hub premier|now premier sports|الدوري الإنجليزي الممتاز/i, not: /scottish|welsh|irish|premier league 2\b|\bpl2\b/i },
+  { key: 'pl', group: '🏆 Premier League', re: /premier league|\bEPL\b|\bsky sports? pl\b|hub premier|now premier sports|الدوري الإنجليزي الممتاز/i, not: /scottish|welsh|irish|premier league 2\b|\bpl2\b|premier league\s*[-–—]\s*(?![^|]*\s(?:v|vs\.?)\s)[^|\d]+(?:\||$)/i },
   { key: 'ucl', group: '🏆 Champions League', re: /champions league|liga de campeones|ligue des champions|دوري أبطال أوروبا|دوري الأبطال|\bUCL\b/i, not: /afc champions|caf champions|concacaf|asian champions|global champions|gulf club champions/i },
   { key: 'laliga', group: '🏆 La Liga', re: /\bla ?liga\b|الدوري الإسباني/i, not: /hypermotion|smartbank|segunda|liga portugal|liga mx|liga f\b/i },
   { key: 'bundes', group: '🏆 Bundesliga', re: /bundesliga|الدوري الألماني/i, not: /2\.\s*bundesliga|zweite|regionalliga|3\. liga|austria|österreich|admiral/i },
@@ -501,11 +511,13 @@ const UEFA_ALL = ['ucl', 'uel', 'uecl']
 // non-match programming (a channel airing "Premier League Review" isn't showing it).
 const OTHER_SPORT = /basket|handball|pallamano|volley|superlega|hockey|rugby|darts|netball|cricket|snooker|golf|tennis|boxing|drone|horse|esport|virtual|vela\b/i
 const WOMEN = /women|femen|frauen|femminile|f[ée]minin|\bwsl\b|uwcl|سيدات|نساء/i
-const SHOW = /highlight|hoogtepunten|review|\bshow\b|magazin|stories|\bbest\b|top goals|top \d+|goals? of|legend|classic|rewind|preview|previa|pre-?match|vorbericht|anteprima|analys|resumen|resúmen|zusammenfassung|replay|re-live|wiederholung|special|especial|feature|weekly|daily|\bnews\b|press conference|conferenza|rueda de prensa|pressekonferenz|weigh|goal rush|greatest|documentar|\bfilm\b|pel[ií]cula|countdown|build-?up|warm-?up|inside|kompakt|\bpur\b|retro|netbusters|full impact|\bep\.? ?\d|episode|folge/i
+const SHOW = /highlight|hoogtepunten|review|\bshow\b|magazin|stories|\bbest\b|top goals|top \d+|goals? of|legend|classic|rewind|preview|previa|pre-?match|vorbericht|anteprima|analys|resumen|resúmen|zusammenfassung|replay|re-live|wiederholung|special|especial|feature|weekly|daily|\bnews\b|press conference|conferenza|rueda de prensa|pressekonferenz|weigh|goal rush|greatest|documentar|\bfilm\b|pel[ií]cula|countdown|build-?up|warm-?up|inside|kompakt|\bpur\b|retro|netbusters|full impact|\bicons?\b|league 100\b|\bep\.? ?\d|episode|folge/i
 const vetoed = (text: string) => OTHER_SPORT.test(text) || WOMEN.test(text) || SHOW.test(text)
 // A programme that is a live match: a "live" tag or a fixture ("X v Y", "X - Y", "X vs Y", Arabic "X × Y").
 const LIVE = /\blive\b|ᴸᶦᵛᵉ|\ben directo\b|\ben vivo\b|\bdiretta\b|\ben direct\b|مباشر|прямая трансляция/i
 const FIXTURE = /\S\s+(?:v|vs\.?|x|×|-|–|—|@)\s+\S|\S×\S/i
+// "Next | Deportivo vs. Osasuna | … 20:00 (GMT)": an event channel announcing a match, not airing it.
+const ANNOUNCED = /^\s*next\b/i
 
 /** Competitions a channel carries by its own name + provider category. A bare
  *  "UEFA" package (UK| UEFA PPV) can't tell UCL from UEL/UECL — it joins all three. */
@@ -524,9 +536,9 @@ const seasonYear = (title: string): number | null => {
 }
 
 /** Whether a programme title could be a current live match: live-tagged or a fixture, no veto,
- *  no retro season. Only these need their competition decided. */
+ *  no announcement of a later one, no retro season. Only these need their competition decided. */
 export function couldBeLiveMatch(title: string, now = new Date()): boolean {
-  if (vetoed(title) || !(LIVE.test(title) || FIXTURE.test(title))) return false
+  if (vetoed(title) || ANNOUNCED.test(title) || !(LIVE.test(title) || FIXTURE.test(title))) return false
   const season = seasonYear(title)
   return season === null || season >= now.getFullYear() - 1
 }
@@ -565,8 +577,6 @@ function fixtureOf(title: string): string | null {
 
 export interface Airing { tvgId: string; title: string; start: number; stop: number }
 
-// "Next | Deportivo vs. Osasuna | … 20:00 (GMT)": an event channel announcing a match, not airing it.
-const ANNOUNCED = /^\s*next\b/i
 // Only an airing a whole match long can be the one that aired it first; a 15-minute preview titled with the fixture isn't.
 const FULL_MATCH_SEC = 90 * 60
 // Re-runs follow within a day or two, while the same clubs can meet again days later in another competition.
@@ -836,7 +846,8 @@ export async function fetchCuratedChannels(cfg: XtreamConfig, vod = true): Promi
     const isEventSlot = EVENT_GROUP.test(group)
     const backup = BACKUP_GROUP.test(group) ? 1 : 0
     for (const s of byCat.get(id) ?? []) {
-      const name = String(s.name ?? '').trim()
+      const fix = PROVIDER_FIX[String(s.name ?? '').trim()]
+      const name = fix?.name ?? String(s.name ?? '').trim()
       if (!name || SEPARATOR.test(name)) continue
       if (CAT_ONLY[id] && !CAT_ONLY[id].test(name)) continue
       if (isEventSlot && DEAD_SLOT.test(name)) continue
@@ -863,7 +874,7 @@ export async function fetchCuratedChannels(cfg: XtreamConfig, vod = true): Promi
         c: {
           streamId: s.stream_id,
           name,
-          logo: icons.get(name) ?? icons.get(tvgId) ?? String(s.stream_icon ?? ''),
+          logo: fix?.logo ?? icons.get(name) ?? icons.get(tvgId) ?? String(s.stream_icon ?? ''),
           tvgId,
           group: chBucket,
           isEventSlot,

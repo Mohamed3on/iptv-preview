@@ -11,7 +11,7 @@
 // POST /api/app/events?t=TOKEN — what happened while watching, for later analysis.
 // POST /api/app/title-ids?t=TOKEN — title ids for the provider ids the app saved marks under.
 // GET /api/app/library?t=TOKEN — Movies & Shows: titles and rows (see _library.ts).
-// GET /api/app/history?t=TOKEN — Trakt and Letterboxd marks, Watchlist, Recommended, followed shows' next episodes.
+// GET /api/app/history?t=TOKEN — Trakt and Letterboxd marks, Watchlist, followed shows' next episodes.
 // GET /api/app/copies?t=TOKEN&title=… — every copy of a film or episode, for the stick to rank.
 // POST /api/app/rd-infringing?t=TOKEN — torrents Real-Debrid refused, left out of copies from then on.
 // GET /api/app/subtitles?t=TOKEN&title=…&hash=…&size=…&name=… — English and Arabic subtitles for the copy playing.
@@ -270,7 +270,7 @@ export async function library(req: Request): Promise<Response> {
 }
 
 // GET /api/app/history?t=TOKEN&shows=tv:N:sSeE@ms,… — the owner's history (see _history.ts): marks from Trakt and
-// Letterboxd, the Watchlist and Recommended rows, and the next episode of each followed show ([shows]: the stick's
+// Letterboxd, the Watchlist row, and the next episode of each followed show ([shows]: the stick's
 // own, the episode each last finished and when). Read again when over 10 minutes old; ETag/304 like the library.
 export async function history(req: Request): Promise<Response> {
   if (!appTokenOk(req.url)) return forbidden()

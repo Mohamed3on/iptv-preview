@@ -556,19 +556,17 @@ private fun NextEpisode.place() = Resume(show.titleId, show.title.title, show.po
 private class MovieRow(val key: String, val title: String, val badge: String?, val movies: List<Movie>, val progress: Map<TitleId, Float>)
 
 /**
- * The owner's Watchlist and Recommended (watched titles left out), each only when it has titles (R26), then the library's rows
- * (Top TrueScore, trending, new, genres, languages; the provider's groups when TMDB's are missing); what is part-way through lives in
- * Up next, not here. [hideWatched] leaves watched titles out of every row (a row left empty goes).
+ * The owner's Watchlist when it has titles (R26), then the library's rows (TrueScore's recent and all-time, trending, new,
+ * genres, languages; the provider's groups when TMDB's are missing); what is part-way through lives in Up next, not here.
+ * [hideWatched] leaves watched titles out of every row (a row left empty goes).
  */
 private fun rowsOf(library: Catalog?, resume: List<Resume>, history: History?, watched: Set<TitleId>, hideWatched: Boolean): List<MovieRow> {
     library ?: return emptyList()
     val progress = resume.filter { it.dur > 0 }.associate { it.title to it.pos.toFloat() / it.dur }
     fun shown(movies: List<Movie>) = if (hideWatched) movies.filter { it.titleId !in watched } else movies
     // The library's own card for a title it has (its genres), else the history's.
-    fun own(movies: List<Movie>) = shown(movies).map { library.find(it.titleId) ?: it }
     val mine = listOfNotNull(
-        history?.watchlist?.let(::own)?.takeIf { it.isNotEmpty() }?.let { MovieRow("h|watchlist", "Watchlist", null, it, progress) },
-        history?.recommended?.filter { it.titleId !in watched }?.takeIf { it.isNotEmpty() }?.let { MovieRow("h|recommended", "Recommended", null, own(it), progress) },
+        history?.watchlist?.let(::shown)?.map { library.find(it.titleId) ?: it }?.takeIf { it.isNotEmpty() }?.let { MovieRow("h|watchlist", "Watchlist", null, it, progress) },
     )
     return mine + library.rows.mapNotNull { row ->
         val label = groupLabel(row.name)

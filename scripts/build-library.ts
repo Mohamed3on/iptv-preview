@@ -2,20 +2,19 @@
 // provider's 4K and Blu-ray films and its shows, each looked up on TMDB once (a title the last build already
 // knew keeps its details). Run nightly on the box by deploy/iptv-library.timer. Without TMDB_TOKEN, or when
 // every TMDB list fails, nothing is written and the app keeps the last library (or the provider's rows).
-// Every row title, provider title and the owner's Watchlist and Recommended are scored first (api/_scores.ts:
+// Every row title, provider title and the owner's Watchlist titles are scored first (api/_scores.ts:
 // MDBList and IMDb's histograms), then each row keeps its 150 most convincing candidates (TMDB's most popular
 // where no score is known), sorted by score and cut to 60. TrueScore's two rows lead: the films its store scores, by its
 // recent-adjusted and by its all-time score (each only by that number), looked up on TMDB where new. Titles on show carry their runtime (TMDB's kept details, looked up where none are kept). Each key is optional: without one its source is skipped, and rows keep their order.
-// First it reads the owner's Trakt and Letterboxd history into .cache/history.json (api/_history.ts), and builds
-// Recommended from the titles the owner loved (lovedPicks: TMDB's recommendations, mostly kept with their details)
-// and the Watchlist's runtimes (it is shown shortest first).
+// First it reads the owner's Trakt and Letterboxd history into .cache/history.json (api/_history.ts), with the
+// Watchlist's runtimes (it is shown shortest first).
 // Usage: bun scripts/build-library.ts   (XTREAM_*, TMDB_TOKEN, TRAKT_CLIENT_ID, MDBLIST_KEY from env / .env.local)
 import { readFile } from 'node:fs/promises'
 import { configFromEnv } from '../api/_lib.js'
 import { assemble, fromTmdb, LIBRARY_FILE, LIBRARY_FULL_FILE, providerTitles, ROW_CANDIDATES, rowDefs, saveLibrary, withProviderCopies, type Library, type LibTitle, type TmdbItem } from '../api/_library.js'
 import { letterboxdFilms, loadScores, onScreen, ranked, refreshScores, saveScores, scoreTitles, unscored } from '../api/_scores.js'
 import { parseTitleId, runtimeOf, tmdbGet, type Kind } from '../api/_tmdb.js'
-import { historyTitles, loadHistory, lovedPicks, refreshHistory, saveHistory, watchlistRuntimes } from '../api/_history.js'
+import { historyTitles, loadHistory, refreshHistory, saveHistory, watchlistRuntimes } from '../api/_history.js'
 import { readOnlyTokens } from '../api/_trakt.js'
 
 // The owner's history first (seconds): Trakt read whole, recommendations included, and the Letterboxd feed.
@@ -30,10 +29,9 @@ if (!process.env.TMDB_TOKEN) {
 }
 
 if (history) {
-  const picks = await lovedPicks(history, scoreTitles(await loadScores()))
-  const runtimes = await watchlistRuntimes({ ...history, picks })
+  const runtimes = await watchlistRuntimes(history)
   // Onto the history as it is now: the server may have written it meanwhile.
-  history = { ...((await loadHistory()) ?? history), picks, runtimes }
+  history = { ...((await loadHistory()) ?? history), runtimes }
   await saveHistory(history)
 }
 

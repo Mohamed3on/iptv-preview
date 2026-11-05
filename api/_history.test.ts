@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { followed, nextEpisodes, refreshHistory, type Kept } from './_history'
 import { resetTrakt } from './_trakt'
 
-const none: Kept = { at: 0, trakt: 'off', letterboxd: 'off', lb: [], movies: [], eps: [], shows: {}, hidden: [], watchlist: [], recs: [] }
+const none: Kept = { at: 0, trakt: 'off', letterboxd: 'off', lb: [], movies: [], eps: [], shows: {}, hidden: [], watchlist: [] }
 
 const env = { ...process.env }
 afterEach(() => {
@@ -56,7 +56,6 @@ test('a blocked Letterboxd feed leaves the Trakt rows working and sets its statu
     expect(h.lb).toEqual(['movie:603'])
     expect(h.trakt).toBe('on')
     expect(h.watchlist).toEqual(['movie:438631', 'tv:126308'])
-    expect(h.recs).toEqual(['movie:949'])
   } finally {
     fetch.mockRestore()
   }

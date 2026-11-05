@@ -1,18 +1,17 @@
 // The owner's history (U16; R26, R31, KTD19): what Trakt and the Letterboxd diary say was watched, Trakt's
-// Watchlist and recommendations, and each followed show's next episode for Up next. The Trakt and Letterboxd
+// Watchlist, and each followed show's next episode for Up next. The Trakt and Letterboxd
 // parts are kept in .cache/history.json, read again nightly by scripts/build-library.ts and when the app asks
 // and they are over 10 minutes old (then one Trakt call, last_activities, when nothing changed, the RSS
 // feed and the Letterboxd watchlist's pages; the owner's Letterboxd export adds older marks and stars). /api/app/history serves them with titles in the library's shape, with ETag/304 like the library.
 // The owner's IMDb ratings (.cache/imdb-ratings.json, dropped in by hand) are read on each refresh: every title
 // rated there counts as watched. Watched marks are the union of Trakt, Letterboxd, IMDb and the stick's own marks
 // (merged on the stick); the stick's finished plays, marks and ratings go to Trakt through the box (_trakt.ts).
-// Recommended is built nightly from the titles the owner loved ([lovedPicks]). A source that fails keeps what it
-// gave last and says so in `src`.
+// A source that fails keeps what it gave last and says so in `src`.
 import { readFile } from 'node:fs/promises'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { fileURLToPath } from 'node:url'
 import { writeAtomic } from './_fs.js'
-import { byScore, decorate, type Known } from './_browse.js'
+import { decorate, type Known } from './_browse.js'
 import type { LibTitle } from './_library.js'
 import { episodeTitle, parseTitleId, tmdbEpisodes, tmdbTitle, type Kind, type TmdbEpisode } from './_tmdb.js'
 import { accessToken, revoked, status, traktHeaders } from './_trakt.js'
@@ -35,7 +34,6 @@ export interface Kept {
   /** Shows hidden from Trakt's progress (dropped): never followed. */
   hidden: string[]
   watchlist: string[]
-  recs: string[]
   /** Films in the Letterboxd diary: every one the feed or the export has listed (the feed holds the latest 50). */
   lb: string[]
   /** The owner's Letterboxd stars per film (0.5–5): the export's, the feed's newer ones on top. */
@@ -46,15 +44,13 @@ export interface Kept {
   rated?: Record<string, number>
   /** The owner's IMDb ratings (1–10). */
   imdb?: Record<string, number>
-  /** Recommended from what the owner loved, best first (built nightly, [lovedPicks]). */
-  picks?: string[]
   /** Watchlist titles' runtimes in minutes (a show's episode), from TMDB nightly ([watchlistRuntimes]). */
   runtimes?: Record<string, number>
 }
-type TraktPart = Pick<Kept, 'trakt' | 'acts' | 'movies' | 'eps' | 'shows' | 'hidden' | 'watchlist' | 'recs' | 'rated'>
+type TraktPart = Pick<Kept, 'trakt' | 'acts' | 'movies' | 'eps' | 'shows' | 'hidden' | 'watchlist' | 'rated'>
 
-const NONE = { movies: [], eps: [], shows: {}, hidden: [], watchlist: [], recs: [], rated: {} }
-const traktOf = (h: Kept | null) => ({ ...NONE, ...(h && { acts: h.acts, movies: h.movies, eps: h.eps, shows: h.shows, hidden: h.hidden, watchlist: h.watchlist, recs: h.recs, rated: h.rated ?? {} }) })
+const NONE = { movies: [], eps: [], shows: {}, hidden: [], watchlist: [], rated: {} }
+const traktOf = (h: Kept | null) => ({ ...NONE, ...(h && { acts: h.acts, movies: h.movies, eps: h.eps, shows: h.shows, hidden: h.hidden, watchlist: h.watchlist, rated: h.rated ?? {} }) })
 
 type Ids = { ids?: { tmdb?: number | null } }
 const film = (m?: Ids) => (m?.ids?.tmdb ? `movie:${m.ids.tmdb}` : null)
@@ -72,14 +68,11 @@ async function readTrakt(access: string, prev: Kept | null, full: boolean): Prom
   }
   const acts = (await get<{ all?: string }>('/sync/last_activities')).all
   if (!full && prev?.trakt === 'on' && acts && prev.acts === acts && prev.rated) return { ...traktOf(prev), trakt: 'on' }
-  const recs = (kind: string) => get<Ids[]>(`/recommendations/${kind}?limit=50&ignore_collected=true&ignore_watchlisted=true`)
-  const [movies, shows, hidden, watchlist, recFilms, recShows, ratings] = await Promise.all([
+  const [movies, shows, hidden, watchlist, ratings] = await Promise.all([
     get<{ movie: Ids }[]>('/sync/watched/movies'),
     get<{ last_watched_at: string; show: Ids; seasons?: { number: number; episodes: { number: number; last_watched_at: string }[] }[] }[]>('/sync/watched/shows'),
     get<{ show?: Ids }[]>('/users/hidden/progress_watched?type=show&limit=1000'),
     get<{ type: string; movie?: Ids; show?: Ids }[]>('/sync/watchlist'),
-    recs('movies'),
-    recs('shows'),
     get<{ rating: number; type: string; movie?: Ids; show?: Ids; episode?: { season: number; number: number } }[]>('/sync/ratings'),
   ])
   const eps = shows.flatMap((s) => {
@@ -94,8 +87,6 @@ async function readTrakt(access: string, prev: Kept | null, full: boolean): Prom
     shows: Object.fromEntries(shows.map((s) => [show(s.show), Date.parse(s.last_watched_at)]).filter(([id]) => id)),
     hidden: hidden.map((h) => show(h.show)).filter(known),
     watchlist: watchlist.map((w) => (w.type === 'movie' ? film(w.movie) : w.type === 'show' ? show(w.show) : null)).filter(known),
-    // Films and shows taken in turn: the app ranks them by score.
-    recs: Array.from({ length: Math.max(recFilms.length, recShows.length) }, (_, i) => [film(recFilms[i]), show(recShows[i])]).flat().filter(known),
     // Seasons' ratings are left out: nothing here shows one.
     rated: Object.fromEntries(ratings.flatMap((r) => {
       const id = r.type === 'movie' ? film(r.movie) : r.type === 'show' ? show(r.show) : r.type === 'episode' && r.episode && show(r.show) ? episodeTitle(show(r.show)!, r.episode.season, r.episode.number) : null
@@ -184,11 +175,11 @@ async function letterboxdPart(prev: Kept | null): Promise<Pick<Kept, 'letterboxd
 
 /**
  * The history read again from Trakt and Letterboxd. Trakt's parts are read whole only when its last activity
- * changed, or [full] (nightly: recommendations change by themselves).
+ * changed, or [full] (nightly).
  */
 export async function refreshHistory(prev: Kept | null, { full = false } = {}): Promise<Kept> {
   const [trakt, lb, imdb] = await Promise.all([traktPart(prev, full), letterboxdPart(prev), readJson<{ ratings?: Record<string, number> }>(IMDB, {})])
-  return { at: Date.now(), ...trakt, ...lb, imdb: imdb.ratings ?? prev?.imdb ?? {}, ...(prev && { picks: prev.picks, runtimes: prev.runtimes }) }
+  return { at: Date.now(), ...trakt, ...lb, imdb: imdb.ratings ?? prev?.imdb ?? {}, ...(prev && { runtimes: prev.runtimes }) }
 }
 
 export const loadHistory = (file = HISTORY_FILE) => readFile(file, 'utf8').then((s) => JSON.parse(s) as Kept, () => null)
@@ -272,8 +263,8 @@ async function pool<T, R>(items: T[], n: number, fn: (x: T) => Promise<R>): Prom
 
 const ROW_CAP = 60
 const FOLLOW_CAP = 30
-/** Titles Watchlist and Recommended can show, which the nightly build scores whatever the library rows hold. */
-export const historyTitles = (h: Kept | null) => [...watchlistOf(h).slice(0, ROW_CAP * 2), ...(h?.recs ?? []), ...(h?.picks ?? [])]
+/** Titles the Watchlist can show, which the nightly build scores whatever the library rows hold. */
+export const historyTitles = (h: Kept | null) => watchlistOf(h).slice(0, ROW_CAP * 2)
 /** The Watchlist: Trakt's, then Letterboxd's. */
 export const watchlistOf = (h: Kept | null) => [...new Set([...(h?.watchlist ?? []), ...(h?.lbw ?? [])])]
 
@@ -286,45 +277,9 @@ export function yours(h: Kept | null): Map<string, number> {
   return out
 }
 
-/** Titles the owner has seen: marked watched (films, shows) or rated anywhere. */
-const seenOf = (h: Kept | null) => new Set([...(h?.movies ?? []), ...(h?.lb ?? []), ...Object.keys(h?.shows ?? {}), ...yours(h).keys()])
-
-const SEED_CAP = 60
-/**
- * Recommended from what the owner loved: TMDB's recommendations (kept with each title's details) for up to 60 films
- * and shows rated 8+/10 anywhere, highest then latest first; each candidate counts the seeds naming it (a 9–10 twice),
- * a half for Trakt recommending it, times its quality: its score out of 10 (ours, else TMDB's average pulled toward 5.5
- * by 1,000 votes, so a little-seen title counts little) less 5, at least 0.5, so a niche making-of many seeds name stays below a great film. Seen titles and the
- * Watchlist are left out. Nightly only.
- */
-export async function lovedPicks(h: Kept, scores: Map<string, { s?: number; s10?: number; ir?: number; lb?: number; iv?: number }>): Promise<string[]> {
-  const seeds = [...yours(h)].filter(([id, r]) => r >= 8 && /^(movie|tv):\d+$/.test(id)).sort((a, b) => b[1] - a[1]).slice(0, SEED_CAP)
-  const pts = new Map(h.recs.map((id) => [id, 0.5]))
-  const tmdbScore = new Map<string, number>()
-  const tmdbVotes = new Map<string, number>()
-  await pool(seeds, 4, async ([id, r]) => {
-    const [kind, tmdb] = id.split(':') as [Kind, string]
-    for (const x of (await tmdbTitle(kind, tmdb))?.recommendations ?? []) {
-      pts.set(x.title, (pts.get(x.title) ?? 0) + (r >= 9 ? 2 : 1))
-      if (x.votes) tmdbScore.set(x.title, (x.votes * x.vote! + 1000 * 5.5) / (x.votes + 1000))
-      if (x.votes) tmdbVotes.set(x.title, x.votes)
-    }
-  })
-  const skip = new Set([...seenOf(h), ...watchlistOf(h)])
-  const quality = (id: string) => {
-    const sc = scores.get(id)
-    const out10 = sc?.s10 ?? sc?.ir ?? (sc?.lb && sc.lb * 2) ?? tmdbScore.get(id) ?? 5.5
-    return Math.max(out10 - 5, 0.5)
-  }
-  // Widely seen only (20k IMDb votes, else 500 on TMDB): no making-ofs, specials or one-off episodes of anthology series.
-  const seenWidely = (id: string) => (scores.get(id)?.iv ?? 0) >= 20_000 || (tmdbVotes.get(id) ?? 0) >= 500
-  const rank = new Map([...pts].map(([id, p]) => [id, p * quality(id)]))
-  return [...rank].filter(([id]) => !skip.has(id) && seenWidely(id)).sort(([a, p], [b, q]) => q - p || (scores.get(b)?.s ?? 0) - (scores.get(a)?.s ?? 0)).slice(0, ROW_CAP * 2).map(([id]) => id)
-}
-
-/** Each Watchlist and Recommended title's runtime in minutes, as TMDB's kept details give it (looked up when missing); 0 unknown. Nightly. */
+/** Each Watchlist title's runtime in minutes, as TMDB's kept details give it (looked up when missing); 0 unknown. Nightly. */
 export async function watchlistRuntimes(h: Kept): Promise<Record<string, number>> {
-  return Object.fromEntries(await pool([...new Set([...watchlistOf(h), ...h.recs, ...(h.picks ?? [])])], 4, async (id) => {
+  return Object.fromEntries(await pool(watchlistOf(h), 4, async (id) => {
     const [kind, tmdb] = id.split(':') as [Kind, string]
     return [id, h.runtimes?.[id] || ((await tmdbTitle(kind, tmdb))?.runtime ?? 0)] as const
   }))
@@ -350,8 +305,7 @@ export function withMark(h: Kept, title: string, covered: string[], watched?: bo
 
 /**
  * What /api/app/history answers: each source's state, every title Trakt, Letterboxd and IMDb mark watched, the
- * owner's ratings, the Watchlist (shortest first, then Trakt's order) and Recommended ([lovedPicks], else Trakt's best score first; seen
- * titles left out) as library titles, and the next episode of each followed show ([local] from the stick, see [followed]).
+ * owner's ratings, the Watchlist (shortest first, then Trakt's order) as library titles, and the next episode of each followed show ([local] from the stick, see [followed]).
  */
 export async function historyAnswer(h: Kept | null, local: string[], k: Known) {
   const titles = new Map<string, LibTitle | null>()
@@ -364,16 +318,14 @@ export async function historyAnswer(h: Kept | null, local: string[], k: Known) {
     titles.set(id, out)
     return out
   }
-  const seen = new Set([...seenOf(h), ...watchlistOf(h)])
   const follow = new Map([...followed(h, local)].sort(([, a], [, b]) => b.last - a.last).slice(0, FOLLOW_CAP))
   const next = await nextEpisodes(follow, async (id) => {
     const t = await tmdbTitle('tv', id.slice(3))
     return t ? tmdbEpisodes(id.slice(3), t.seasons) : []
   })
   const list = async (ids: string[]) => (await pool(ids, 8, title)).filter((t): t is LibTitle => !!t)
-  const [watchlist, recommended, shows] = await Promise.all([
+  const [watchlist, shows] = await Promise.all([
     list(byRuntime(h, watchlistOf(h)).slice(0, ROW_CAP * 2)),
-    list((h?.picks ?? h?.recs ?? []).filter((id) => !seen.has(id)).slice(0, ROW_CAP * 2)),
     pool(next, 8, (n) => title(n.show)),
   ])
   return {
@@ -384,8 +336,6 @@ export async function historyAnswer(h: Kept | null, local: string[], k: Known) {
     lbw: (h?.lbw ?? []).filter((id) => !h?.watchlist.includes(id)),
     // The owner's rating per title, out of 10 (see [yours]).
     ratings: Object.fromEntries(yours(h)),
-    // Loved picks keep their order; Trakt's alone go best score first.
-    recommended: (h?.picks ? recommended : byScore(recommended)).slice(0, ROW_CAP),
     next: next.flatMap(({ show: _s, ...n }, i) => (shows[i] ? [{ t: shows[i], ...n }] : [])),
   }
 }

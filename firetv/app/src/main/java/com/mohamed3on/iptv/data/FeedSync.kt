@@ -63,7 +63,7 @@ class FeedSync(
     val movies = Library("movies") { text -> parseMovies(text).also { require(it.movies[0].titleId.isNotEmpty()) } }
     /** Movies & Shows (U11): title-first rows of films and shows, revalidated by its ETag (a 304 when unchanged). */
     val library = Library("library", ::parseCatalog)
-    /** The owner's history (U16): Trakt and Letterboxd marks, Watchlist, Recommended and followed shows' next episodes. */
+    /** The owner's history (U16): Trakt and Letterboxd marks, Watchlist and followed shows' next episodes. */
     val history = Library("history", ::parseHistory)
 
     /** Loads whatever is cached, without touching the network. */

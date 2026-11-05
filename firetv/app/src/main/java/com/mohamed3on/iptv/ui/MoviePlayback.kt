@@ -253,7 +253,7 @@ internal fun MoviePlayback(
         }
         exo.addListener(listener)
         val frameRate = window?.let { FrameRate(it, exo, phase, scope) }
-        session.play(Place(from), load = { graph.films.load(title) }, fallback = fallback)
+        session.play(Place(from), load = { graph.films.load(title) }, fallback = fallback, later = graph.films.answers(title))
         onDispose {
             save()
             session.stop()

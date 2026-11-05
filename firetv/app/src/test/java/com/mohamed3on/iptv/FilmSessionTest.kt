@@ -25,6 +25,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
@@ -302,5 +303,19 @@ class FilmSessionTest {
         assertEquals(2, r.state.ranking?.copies?.size)
         assertEquals(iptv1080, r.state.copy)
         assertEquals(1, r.player.opens.size)
+    }
+
+    // KTD13: Real-Debrid's copies, still pending when Play started, join the play when the box has them.
+    @Test fun copiesArrivingAfterPlayJoinIt() = runTest {
+        val r = rig()
+        r.session.play(Place(0), { titleCopies(iptv1080) }, later = flow {
+            delay(3_000)
+            emit(titleCopies(iptv1080, rd4k))
+        })
+        runCurrent()
+        assertEquals(iptv1080, r.state.copy)
+        advance(3_000)
+        assertEquals(listOf(rd4k, iptv1080), r.state.ranking?.copies?.map { it.copy })
+        assertTrue(r.state.rd[rd4k.id] is RdCheck.Ready)
     }
 }

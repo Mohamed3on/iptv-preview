@@ -11,7 +11,7 @@ import { savedVodChannels, MOVIE_4K, type XtreamConfig } from './_lib.js'
 import { measuredStream, pictureTier, probedPicture, type Tier } from './_quality-labels.js'
 import { measuredFilms, showList } from './_shows.js'
 import { filmTitle, showTitle, type Kind } from './_tmdb.js'
-import { blurayMovies, filmTitleOf } from './_vod.js'
+import { bestFilmCopies, blurayMovies, filmTitleOf } from './_vod.js'
 
 /** A film or show; empty fields are left out. */
 export interface LibTitle {
@@ -42,6 +42,9 @@ export interface LibTitle {
   /** Letterboxd average (0–5) and IMDb average (0–10), from MDBList. */
   lb?: number
   ir?: number
+  /** A film the provider has: its best copy's VOD id and container, which Play starts when the box can't answer (KTD13). */
+  v?: number
+  x?: string
 }
 export interface Row { id: string; n: string; /** Indexes into Library.titles. */ i: number[] }
 export interface Library { v: 1; src: 'tmdb' | 'provider'; at: string; img: string; gn: Record<string, string>; titles: LibTitle[]; rows: Row[] }
@@ -167,6 +170,12 @@ export async function providerTitles(cfg: XtreamConfig): Promise<ProviderTitle[]
   ]
 }
 
+/** [lib] with each film's best provider copy ([LibTitle.v], [LibTitle.x]). */
+export async function withProviderCopies(lib: Library, cfg: XtreamConfig): Promise<Library> {
+  const best = await bestFilmCopies(cfg)
+  return { ...lib, titles: lib.titles.map((t) => (best.has(t.id) ? { ...t, v: best.get(t.id)![0], x: best.get(t.id)![1] } : t)) }
+}
+
 /** The provider's rows as a library, for when TMDB's is missing or stale. */
 export async function providerLibrary(cfg: XtreamConfig): Promise<Library> {
   const titles = new Map<string, LibTitle>()
@@ -175,7 +184,7 @@ export async function providerLibrary(cfg: XtreamConfig): Promise<Library> {
     titles.set(t.id, titles.has(t.id) ? withTier(titles.get(t.id)!, t) : t)
     rows.get(group)?.push(t.id) ?? rows.set(group, [t.id])
   }
-  return toLibrary('provider', titles, [...rows].map(([n, ids], i) => ({ id: `p${i}`, n, ids })), {})
+  return withProviderCopies(toLibrary('provider', titles, [...rows].map(([n, ids], i) => ({ id: `p${i}`, n, ids })), {}), cfg)
 }
 
 export const LIBRARY_FILE = fileURLToPath(new URL('../.cache/library.json', import.meta.url))

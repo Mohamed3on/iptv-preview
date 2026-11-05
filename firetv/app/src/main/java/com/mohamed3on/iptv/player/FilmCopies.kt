@@ -9,9 +9,13 @@ import com.mohamed3on.iptv.player.Capacity.Source
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.transformWhile
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.io.IOException
@@ -30,7 +34,7 @@ class TitleAnswer(val copies: TitleCopies, val rdPending: Boolean, val rdUnavail
 /**
  * A title prepared ahead of Play (KTD13): its copies ranked for this setup, the Real-Debrid check, and
  * [plays], the copy Play would open, once [rdChecked] (or there is nothing on Real-Debrid). [failed]
- * when the box could not answer: Play then starts the library's IPTV copy.
+ * when the box could not answer: Play then starts the library's IPTV copy. [asked] once the box is asked no more.
  */
 data class Prepared(
     val answer: TitleAnswer? = null,
@@ -39,6 +43,7 @@ data class Prepared(
     val rdChecked: Boolean = false,
     val plays: Copy? = null,
     val failed: Boolean = false,
+    val asked: Boolean = false,
 )
 
 /**
@@ -72,9 +77,18 @@ class FilmCopies(
         entry(title, rd = true)
     }
 
-    /** For [FilmSession]'s load: the latest answer, waiting for the first; throws when the box can't answer. */
+    /**
+     * For [FilmSession]'s load: the first answer with copies (an empty one whose Real-Debrid side is pending waits
+     * for the re-ask), else the last; throws when the box can't answer.
+     */
     suspend fun load(title: String): TitleCopies =
-        entry(title, rd = false).state.first { it.answer != null || it.failed }.answer?.copies ?: throw IOException("no copies")
+        entry(title, rd = false).state.first { it.failed || it.asked || it.answer?.copies?.copies?.isNotEmpty() == true }.answer?.copies
+            ?: throw IOException("no copies")
+
+    /** For [FilmSession]: each answer as it comes (copies arriving later join the play), ending with the last. */
+    fun answers(title: String): Flow<TitleCopies> =
+        entry(title, rd = false).state.transformWhile { p -> p.answer?.let { emit(it) }; !p.asked && !p.failed }
+            .distinctUntilChanged { a, b -> a === b }.map { it.copies }
 
     /** Ranks [title] again after a pin, mark or correction in Versions. */
     fun rerank(title: String) {
@@ -105,19 +119,23 @@ class FilmCopies(
     }
 
     private suspend fun gather(title: String, e: Entry) {
-        repeat(ASKS) {
-            val a = fetch(title).getOrNull()?.let(::answerOf)
-            if (a == null) {
-                if (e.state.value.answer == null) e.state.update { it.copy(failed = true) }
-                return
+        try {
+            repeat(ASKS) { i ->
+                val a = fetch(title).getOrNull()?.let(::answerOf)
+                if (a == null) {
+                    if (e.state.value.answer == null) e.state.update { it.copy(failed = true) }
+                    return
+                }
+                publish(title, e, a)
+                if (e.rd) {
+                    e.checking?.join()
+                    check(e)
+                }
+                if (!a.rdPending || i == ASKS - 1) return
+                delay(REASK_MS)
             }
-            publish(title, e, a)
-            if (e.rd) {
-                e.checking?.join()
-                check(e)
-            }
-            if (!a.rdPending) return
-            delay(REASK_MS)
+        } finally {
+            e.state.update { it.copy(asked = true) }
         }
     }
 

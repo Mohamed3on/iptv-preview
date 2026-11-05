@@ -94,6 +94,19 @@ function tier(cat: string, name: string): number {
 /** A copy filed under another language ("FR - FILM 4K", "4K-FR - …"): offered after the others in its tier. */
 const foreign = (cat: string, name: string) => /^(?!EN\b)[A-Z]{2}\b/.test(cat) || /^(?!EN\b)[A-Z]{2}\s*-/.test(name.replace(/^4K-/, ''))
 
+/** Each TMDB film's best catalogue copy (by [tier], other languages last) as [VOD id, container], by title id. */
+export async function bestFilmCopies(cfg: XtreamConfig): Promise<Map<string, [number, string]>> {
+  const { cats, vod } = await catalogue(cfg)
+  const best = new Map<string, [number, string, number]>()
+  for (const [id, name, , cat, ext, , tmdb] of vod) {
+    const title = filmTitle(tmdb, id)
+    if (!title.startsWith('movie:')) continue
+    const rank = tier(cats[cat] ?? '', name) * 2 + Number(foreign(cats[cat] ?? '', name))
+    if (rank < (best.get(title)?.[2] ?? Infinity)) best.set(title, [id, ext, rank])
+  }
+  return new Map([...best].map(([t, [id, ext]]) => [t, [id, ext]]))
+}
+
 /**
  * Films in the whole catalogue whose title has every typed word, one per film (same title and year; a
  * copy with no year joins a dated one of the same title), each on its best copy; titles where every

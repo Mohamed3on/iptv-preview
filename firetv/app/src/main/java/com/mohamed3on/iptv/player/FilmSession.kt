@@ -13,7 +13,9 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
@@ -93,10 +95,10 @@ data class FilmState(
 /**
  * One film play from first copy to end (U9, KTD11): failover at start, step-down after stalls, the
  * offers, trials and fresh Real-Debrid links. Copies come from [load] within [WAIT_MS], else [play]'s
- * fallback IPTV copy starts and later copies only feed Versions and offers (KTD13). The first copy opens
+ * fallback IPTV copy starts; copies arriving later feed failover, Versions and offers (KTD13). The first copy opens
  * as soon as a ranking exists; Real-Debrid's check runs alongside, and the next copy's link is fetched
  * while this one plays, so failover rarely waits. One session per play; call from the main thread, with
- * [scope] there too. Only permanent faults, and trials, write marks (KTD7).
+ * [scope] there too. Only permanent faults, and trials (a failure in one too), write marks (KTD7, R28).
  */
 class FilmSession(
     private val titleId: String,
@@ -156,6 +158,8 @@ class FilmSession(
     private var intro: LongRange? = null
     /** Skip intro is offered once a play. */
     private var introRaised = false
+    /** Play starts by then: Real-Debrid's check gets only what is left of [WAIT_MS] while IPTV could play (KTD13). */
+    private var startBy = 0L
 
     init {
         player.setListener(object : FilmPlayer.Listener {
@@ -177,9 +181,13 @@ class FilmSession(
         })
     }
 
-    /** Plays the title from [from]: the best copy [load] ranks, or [fallback] (its IPTV copy from the cached library) if copies take longer than [WAIT_MS]. */
-    fun play(from: Place, load: suspend () -> TitleCopies, fallback: Copy? = null) {
+    /**
+     * Plays the title from [from]: the best copy [load] ranks, or [fallback] (its IPTV copy from the cached library) if
+     * copies take longer than [WAIT_MS]; with no fallback it waits for them. [later] answers join the ranking as they come.
+     */
+    fun play(from: Place, load: suspend () -> TitleCopies, fallback: Copy? = null, later: Flow<TitleCopies> = emptyFlow()) {
         phase = FilmPhase.Loading
+        startBy = now() + WAIT_MS
         publish()
         jobs.launch {
             while (true) {
@@ -196,9 +204,10 @@ class FilmSession(
             }
         }
         work = jobs.launch {
-            val got = withTimeoutOrNull(WAIT_MS) { loading.await() }
+            val got = if (fallback == null) loading.await() else withTimeoutOrNull(WAIT_MS) { loading.await() }
             arrived(got ?: TitleCopies(emptyList()), fallback)
             if (got == null) jobs.launch { loading.await()?.let { arrived(it, fallback) } }
+            jobs.launch { later.collect { arrived(it, fallback) } }
             next(from)
         }
     }
@@ -225,8 +234,6 @@ class FilmSession(
         val copy = current
         val to = back
         if (trial && copy != null && to != null && here().position - trialFrom < TRIAL_MS) {
-            choices.mark(setup(), copy, works = false)
-            rerank()
             trialOver(copy, works = false)
             reopen(to, here())
             return true
@@ -338,9 +345,10 @@ class FilmSession(
 
     private suspend fun ready(copy: Copy): RdCheck.Ready? {
         if (copy.id !in rd) {
-            // While an IPTV copy could play instead, Real-Debrid gets no longer than copies do (KTD13).
+            // While an IPTV copy could play instead, Real-Debrid gets no longer than copies do, and at the start only
+            // what is left of Play's wait (KTD13).
             val other = !iptvBusy && copies.any { it.source == Source.Iptv && it.id !in tried }
-            if (other) withTimeoutOrNull(WAIT_MS) { checked(copy) } else checked(copy)
+            if (other) withTimeoutOrNull(if (current == null) startBy - now() else WAIT_MS) { checked(copy) } else checked(copy)
         }
         return rd[copy.id] as? RdCheck.Ready
     }
@@ -430,7 +438,7 @@ class FilmSession(
         val to = back
         when {
             to != null -> {
-                if (trial) trialOver(copy, works = false)
+                if (trial) trialOver(copy, works = false) // R28: any error in a trial marks it, transient too
                 reopen(to, place)
             }
             // The provider's one connection is taken: every IPTV copy would get the same answer.
@@ -516,8 +524,6 @@ class FilmSession(
         val copy = current ?: return
         if (trial && player.place.position - trialFrom >= TRIAL_MS) {
             back = null
-            choices.mark(setup(), copy, works = true)
-            rerank()
             trialOver(copy, works = true)
         }
         skipIntro()
@@ -529,7 +535,9 @@ class FilmSession(
         val w = intro ?: return
         val at = player.place.position
         if (notices.firstOrNull() is Notice.SkipIntro && at !in w) dismiss(accepted = false)
-        if (!introRaised && notices.isEmpty() && pausedAt == null && at >= w.first && at < w.last - INTRO_TAIL_MS) {
+        val head = notices.firstOrNull()
+        if (at !in w) notices.removeAll { it is Notice.SkipIntro && it !== head }
+        if (!introRaised && pausedAt == null && at >= w.first && at < w.last - INTRO_TAIL_MS) {
             introRaised = true
             notify(Notice.SkipIntro(w.last))
         }
@@ -542,8 +550,11 @@ class FilmSession(
         val b = better
         val mbps = bandwidth.sessionMbps
         fitsSince = if (quiet && b != null && b.mbps > 0f && mbps != null && mbps >= MARGIN * b.mbps) fitsSince ?: t else null
+        // A waiting offer whose window passed goes unspent.
+        val head = notices.firstOrNull()
+        if (!quiet) notices.removeAll { it is Notice.Offer && it !== head }
         if (!quiet || notices.isNotEmpty()) return
-        if (b != null && fitsSince?.let { t - it >= FIT_MS } == true) return offer(OfferKind.Better, b)
+        if (b != null && OfferKind.Better !in spent && fitsSince?.let { t - it >= FIT_MS } == true) return offer(OfferKind.Better, b)
         if (OfferKind.Untested in spent || t - (playingAt ?: t) < SETTLE_MS || choices.pin(titleId) == copy.id) return
         usable().offer?.copy?.takeIf { it.id != copy.id }?.let { offer(OfferKind.Untested, it) }
     }
@@ -552,8 +563,15 @@ class FilmSession(
         if (kind !in spent && notices.none { it is Notice.Offer }) notify(Notice.Offer(kind, copy))
     }
 
+    /** One notice at a time, by priority: Skip intro, trial result, offers, then information; the one showing stays. */
     private fun notify(n: Notice) {
-        notices.addLast(n)
+        fun rank(x: Notice) = when (x) {
+            is Notice.SkipIntro -> 0
+            is Notice.TrialResult -> 1
+            is Notice.Offer -> 2
+            else -> 3
+        }
+        notices.add((1 until notices.size).firstOrNull { rank(notices[it]) > rank(n) } ?: notices.size, n)
         if (notices.size == 1) noticeAt = now()
         publish()
     }
@@ -569,7 +587,10 @@ class FilmSession(
         return n
     }
 
+    /** R28: a trial's result is marked for this setup. */
     private fun trialOver(copy: Copy, works: Boolean) {
+        choices.mark(setup(), copy, works)
+        rerank()
         trial = false
         report(FilmEvent.Trial(copy, works))
         notify(Notice.TrialResult(copy, works))

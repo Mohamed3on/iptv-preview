@@ -44,18 +44,20 @@ fun Scored.averagesLabel(): String? =
 
 /**
  * A library title (`/api/app/library`, `/api/app/search`, More like this): its id, 'm' film or 't' show, name, year,
- * poster and backdrop (a TMDB path, or a full URL), genre ids, best known tier ([e] 1 when estimated) and scores.
+ * poster and backdrop (a TMDB path, or a full URL), genre ids, best known tier ([e] 1 when estimated) and scores;
+ * a film the provider has, its best copy's VOD id [v] and container [x] (Play starts it when the box can't answer).
  */
 @Serializable
 data class LibTitle(
     val id: TitleId, val k: String = "m", val n: String, val y: Int = 0, val p: String = "", val b: String = "", val g: List<Int> = emptyList(),
     val t: String = "", val e: Int = 0,
     override val s: Int? = null, override val sn: Int? = null, override val se: Int = 0, override val lb: Double? = null, override val ir: Double? = null,
+    val v: Int = 0, val x: String = "",
 ) : Scored {
     /** On screen, [genres] its first two genres' names. */
     fun toMovie(genres: String = ""): Movie {
-        val provider = if (id.startsWith("iptv:")) id.substringAfterLast(':').toIntOrNull() else null
-        return Movie(provider ?: titleKey(id), if (y > 0) "$n ($y)" else n, tmdbImage(p, "w342"), genres, titleId = id, lib = this)
+        val provider = if (id.startsWith("iptv:")) id.substringAfterLast(':').toIntOrNull() else v.takeIf { it > 0 }
+        return Movie(provider ?: titleKey(id), if (y > 0) "$n ($y)" else n, tmdbImage(p, "w342"), genres, x.ifEmpty { "mkv" }, titleId = id, lib = this)
     }
 }
 

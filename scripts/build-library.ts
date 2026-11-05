@@ -8,7 +8,7 @@
 // Usage: bun scripts/build-library.ts   (XTREAM_*, TMDB_TOKEN, TRAKT_CLIENT_ID, MDBLIST_KEY from env / .env.local)
 import { readFile } from 'node:fs/promises'
 import { configFromEnv } from '../api/_lib.js'
-import { assemble, fromTmdb, LIBRARY_FILE, LIBRARY_FULL_FILE, providerTitles, rowDefs, saveLibrary, type Library, type LibTitle, type TmdbItem } from '../api/_library.js'
+import { assemble, fromTmdb, LIBRARY_FILE, LIBRARY_FULL_FILE, providerTitles, rowDefs, saveLibrary, withProviderCopies, type Library, type LibTitle, type TmdbItem } from '../api/_library.js'
 import { loadScores, onScreen, ranked, refreshScores, saveScores, scoreTitles } from '../api/_scores.js'
 import { parseTitleId, tmdbGet, type Kind } from '../api/_tmdb.js'
 import { loadHistory, refreshHistory, saveHistory } from '../api/_history.js'
@@ -57,7 +57,8 @@ const prev = await readFile(LIBRARY_FULL_FILE, 'utf8').catch(() => readFile(LIBR
 // TMDB details by title id: this run's rows, then the last build's (without its tiers and scores).
 const known = new Map<string, LibTitle>()
 for (const { t: _t, e: _e, s: _s, sn: _n, se: _se, lb: _l, ir: _i, ...meta } of [...seeds.flat(), ...(prev?.titles ?? [])]) if (meta.l && !known.has(meta.id)) known.set(meta.id, meta)
-const provider = await providerTitles(configFromEnv())
+const cfg = configFromEnv()
+const provider = await providerTitles(cfg)
 const missing = [...new Set(provider.map((p) => p.t.id))].filter((id) => parseTitleId(id) && !known.has(id))
 await pool(missing, 6, async (id) => {
   const { kind, tmdb } = parseTitleId(id)!
@@ -65,10 +66,10 @@ await pool(missing, 6, async (id) => {
   if (r) known.set(id, fromTmdb(kind, r))
 })
 
-const full = assemble(defs, seeds, provider.map(({ t, group }) => ({ group, t: known.has(t.id) ? { ...known.get(t.id)!, ...(t.t && { t: t.t }), ...(t.e && { e: t.e }) } : t })), prev, gn)
+const full = await withProviderCopies(assemble(defs, seeds, provider.map(({ t, group }) => ({ group, t: known.has(t.id) ? { ...known.get(t.id)!, ...(t.t && { t: t.t }), ...(t.e && { e: t.e }) } : t })), prev, gn), cfg)
 await saveLibrary(full, LIBRARY_FULL_FILE)
 // Rows sorted by the scores known so far go out at once. The APIs are asked in that order (about an hour on
-// the first night, at Trakt's 3 a second), then the rows are sorted again.
+// the first nights, at one Trakt request a second), then the rows are sorted again.
 const scores = await loadScores()
 await saveLibrary(ranked(full, scoreTitles(scores)))
 const fresh = new Set(full.rows.find((r) => r.id === 'new')?.i.map((i) => full.titles[i].id))

@@ -204,8 +204,6 @@ private fun PlayerChrome(
     var info by remember { mutableStateOf(false) }
     // Movies rise over the open channel list, which keeps its place underneath for Back.
     var movies by remember { mutableStateOf(false) }
-    // Which library is up (kept while it leaves, so its exit draws the right one).
-    var library by remember { mutableStateOf(LibraryKind.Movies) }
     val moviesShown = animateFloatAsState(if (movies) 1f else 0f, if (reduced) tween(Motion.FADE_MS) else Motion.panel(), label = "movies")
     val moviesComposed by remember { derivedStateOf { movies || moviesShown.value > 0f } }
 
@@ -470,8 +468,8 @@ private fun PlayerChrome(
                         }
                     },
                     entrance = { shown.value },
-                    // Watching, not picking a tile: Movies and Shows are among the list's groups.
-                    onLibrary = if (pick == null && !multiView) ({ library = it; movies = true }) else null,
+                    // Watching, not picking a tile: Movies & Shows is among the list's groups.
+                    onLibrary = if (pick == null && !multiView) ({ movies = true }) else null,
                     pickHint = pick?.let { purpose ->
                         val onScreen = if (multiView) grid.tiles.map { it.channel.family } else listOfNotNull(state.requested?.family)
                         val hint: (Channel) -> String? = { channel ->
@@ -488,8 +486,7 @@ private fun PlayerChrome(
             }
         }
 
-        if (moviesComposed) key(library) { MoviesLayer(
-            kind = library,
+        if (moviesComposed) MoviesLayer(
             feed = feed,
             session = session,
             tiles = tiles,
@@ -497,7 +494,7 @@ private fun PlayerChrome(
             open = movies,
             onPlaying = onMovie,
             onClose = { movies = false },
-        ) }
+        )
 
         AnimatedVisibility(
             visible = layer == Layer.Recent,

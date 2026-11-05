@@ -8,6 +8,9 @@ import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.unit.Dp
@@ -603,7 +606,8 @@ private fun Backdrop(url: String?, solidFrom: Dp?, modifier: Modifier = Modifier
         Box(
             Modifier.fillMaxSize().drawWithCache {
                 val ink = Palette.ink
-                val left = Brush.horizontalGradient(0f to ink.copy(alpha = 0.94f), 0.42f to ink.copy(alpha = 0.62f), 0.78f to ink.copy(alpha = 0f))
+                // Dense across the text column (to ~60% of the width), so plot text clears 4.5:1 over a white sky, then off.
+                val left = Brush.horizontalGradient(0f to ink.copy(alpha = 0.94f), 0.6f to ink.copy(alpha = 0.86f), 0.88f to ink.copy(alpha = 0f))
                 val bottom = Brush.verticalGradient(0.4f to ink.copy(alpha = 0f), 1f to ink.copy(alpha = 0.96f))
                 val band = SOLID_BAND.toPx()
                 val topBand = TOP_SCRIM.toPx()
@@ -668,12 +672,31 @@ private fun UpNextPage(
                 Text(i?.plot.orEmpty(), style = Type.body, minLines = 3, maxLines = 3, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = Space.xs))
             }
         }
-        Row(Modifier.padding(start = EDGE, top = Space.l), horizontalArrangement = Arrangement.spacedBy(Space.m)) {
+        val alone = entries.size == 1
+        Row(
+            Modifier
+                .padding(start = EDGE, top = Space.l)
+                // With one title there is no strip below: Down goes on to the rows, and Menu takes it out, from here.
+                .onKeyEvent {
+                    if (!alone || it.type != KeyEventType.KeyDown) return@onKeyEvent false
+                    when (it.nativeKeyEvent.keyCode) {
+                        AndroidKeyEvent.KEYCODE_DPAD_DOWN -> onDown()
+                        AndroidKeyEvent.KEYCODE_MENU -> onRemove(movie)
+                        else -> return@onKeyEvent false
+                    }
+                    true
+                },
+            horizontalArrangement = Arrangement.spacedBy(Space.m),
+        ) {
             PageButton(if (shows) "Resume ${saved.label.orEmpty()}".trim() else "Resume", { onResume(movie) }, Modifier.focusRequester(resumeButton))
             if (shows) PageButton("Episodes", { onOpen(movie) }) else {
                 PageButton("Start over", { onStartOver(movie) })
                 PageButton("Details", { onOpen(movie) })
             }
+        }
+        if (alone) {
+            Text("Menu removes it · Down for all ${LocalLibrary.current.noun}", style = Type.caption, maxLines = 1, modifier = Modifier.padding(start = EDGE, top = Space.l))
+            return@Column
         }
         Row(Modifier.padding(start = EDGE, top = Space.xl), horizontalArrangement = Arrangement.spacedBy(Space.m), verticalAlignment = Alignment.CenterVertically) {
             Text("Continue watching", style = Type.headline, maxLines = 1)
@@ -1326,9 +1349,9 @@ private fun ShowPage(show: Movie, resume: Resume?, watched: Set<Int>, active: Bo
             }
             if (!episodes.isNullOrEmpty()) LazyColumn(
                 // On the app's floating material, so the list reads over any backdrop.
-                Modifier.weight(1f).fillMaxHeight().padding(vertical = Space.safeY).material().edgeFade(Palette.material, top = Space.m, bottom = Space.xl).focusRestorer(targetRow).focusGroup(),
+                Modifier.weight(1f).padding(vertical = Space.safeY).material().edgeFade(Palette.material, top = Space.m, bottom = Space.xl).focusRestorer(targetRow).focusGroup(),
                 state = list,
-                contentPadding = PaddingValues(horizontal = Space.s, vertical = Space.m),
+                contentPadding = PaddingValues(horizontal = Space.l, vertical = Space.m),
                 verticalArrangement = Arrangement.spacedBy(Space.xs),
             ) {
                 items(lines, key = { if (it is EpisodeLine.Item) it.episode.id else "s${(it as EpisodeLine.Season).season}" }) { line ->
@@ -1390,7 +1413,16 @@ private val GENERIC_EPISODE = Regex("""(?i)episode\s*\d+""")
 /** A watched film's corner mark: a check on an accent disc. */
 @Composable
 private fun WatchedMark(modifier: Modifier) {
-    Box(modifier.size(22.dp).drawBehind { drawCircle(Palette.accent) }, contentAlignment = Alignment.Center) {
-        Text("✓", style = Type.body.copy(color = Color.White), maxLines = 1)
-    }
+    Box(
+        modifier.size(22.dp).drawBehind {
+            drawCircle(Palette.accent)
+            val w = size.width
+            val check = Path().apply {
+                moveTo(w * 0.28f, w * 0.52f)
+                lineTo(w * 0.44f, w * 0.68f)
+                lineTo(w * 0.73f, w * 0.36f)
+            }
+            drawPath(check, Color.White, style = Stroke(width = 2.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
+        },
+    )
 }

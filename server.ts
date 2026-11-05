@@ -63,6 +63,13 @@ export async function handle(req: Request): Promise<Response> {
     return res
   }
   if (pathname === '/api/app/bitrate' && req.method === 'POST') return app.bitrate(req)
+  if (pathname === '/api/app/film-quality' && req.method === 'POST') {
+    const res = await app.filmQuality(req)
+    // A new reading changes that film's info: its cached copy goes.
+    const body = res.ok ? await res.clone().json() : null
+    if (body?.stored) for (const url of cache.keys()) { const u = new URL(url); if (u.pathname === '/api/app/movie' && u.searchParams.get('id') === String(body.id)) cache.delete(url) }
+    return res
+  }
   if (pathname === '/api/app/events' && req.method === 'POST') return app.events(req)
   const handler = routes[pathname]
   if (handler) return cached(req, handler)

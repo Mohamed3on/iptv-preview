@@ -70,3 +70,60 @@ export function categoryLabels(category: string, kbps?: number | string): string
   if (/dolby\s*audio/i.test(c)) out.push('Dolby Audio')
   return out.filter((l): l is string => !!l)
 }
+
+/**
+ * The one-word verdict on a picture, from its resolution and how many bits each pixel gets (bitrate
+ * over pixels a second, scaled by how efficient the codec is: HEVC needs about half H.264's bits for
+ * the same picture). Resolution caps it (1080p tops out at Great); null when the bitrate is unknown.
+ */
+export type Tier = 'Reference' | 'Great' | 'OK' | 'Soft'
+export interface Picture { width: number; height: number; fps?: number; codec?: string; kbps?: number | string }
+const TIERS: Tier[] = ['Reference', 'Great', 'OK', 'Soft']
+const CODEC_GAIN: Record<string, number> = { h264: 1, hevc: 2, vp9: 1.8, av1: 2.4, mpeg2video: 0.6 }
+const is4K = (p: Picture) => p.height >= 2000 || p.width >= 3800
+
+export function pictureTier(p: Picture): Tier | null {
+  const kbps = Number(p.kbps)
+  if (!(kbps > 0) || !(p.width > 0 && p.height > 0)) return null
+  // Unknown codec: 4K is HEVC in practice, smaller pictures H.264.
+  const gain = CODEC_GAIN[String(p.codec ?? '').toLowerCase()] ?? (is4K(p) ? 2 : 1)
+  const fps = p.fps && p.fps > 0 ? p.fps : 24
+  // H.264-equivalent bits per pixel: 4K HEVC at 25 Mbps is 0.25, at 16 Mbps (Netflix's 4K) 0.16.
+  const bpp = (kbps * 1000 * gain) / (p.width * p.height * fps)
+  const byBits = bpp >= 0.24 ? 0 : bpp >= 0.14 ? 1 : bpp >= 0.07 ? 2 : 3
+  const cap = is4K(p) ? 0 : p.height >= 1000 || p.width >= 1900 ? 1 : p.height >= 700 ? 2 : 3
+  return TIERS[Math.max(byBits, cap)]
+}
+
+/** A probed stream's picture (an episode's, or a film's measured by the app). */
+export function probedPicture(s: ProbedStream | undefined): Picture | null {
+  const v = s?.video
+  if (!v) return null
+  const [num, den] = String(v.avg_frame_rate || v.r_frame_rate || '').split('/').map(Number)
+  return { width: Number(v.width) || 0, height: Number(v.height) || 0, fps: den ? num / den : num || undefined, codec: v.codec_name, kbps: s?.bitrate }
+}
+
+/** What a film's category claims its picture is (no codec or frame rate): the estimate until it is measured. */
+export function claimedPicture(category: string, kbps?: number | string): Picture | null {
+  const c = category.normalize('NFKC')
+  if (/\b4K\b|3840|2160|\bUHD\b|فائقة الوضوح/i.test(c)) return { width: 3840, height: 2160, kbps }
+  if (/blu-?ray/i.test(c)) return { width: 1920, height: 1080, kbps }
+  return null
+}
+
+/** A film as the app measured it while it played: what the player decoded, named as ffprobe names it. */
+export interface Measured { w: number; h: number; fps?: number; codec: string; hdr?: string; audio?: string; channels?: number; atmos?: boolean; /** file size over running time */ kbps?: number }
+
+/** The measured film as a probed stream, so it gets the same labels and tier as an episode. */
+export function measuredStream(m: Measured, kbps?: number | string): ProbedStream {
+  return {
+    video: {
+      codec_name: m.codec, width: m.w, height: m.h,
+      codec_tag_string: m.hdr === 'Dolby Vision' ? 'dvhe' : '',
+      color_transfer: m.hdr === 'HDR10' ? 'smpte2084' : m.hdr === 'HLG' ? 'arib-std-b67' : '',
+      avg_frame_rate: m.fps ? String(m.fps) : '',
+    },
+    audio: { codec_name: m.audio, channels: m.channels, profile: m.atmos ? 'Atmos' : '' },
+    bitrate: kbps,
+  }
+}

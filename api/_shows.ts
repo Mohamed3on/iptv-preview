@@ -5,7 +5,7 @@
 // on disk (the old copy is served if a pull fails); a show's episodes are fetched when it's opened.
 import { readFile, stat, writeFile } from 'node:fs/promises'
 import { apiGet, plainCategory, type XtreamConfig } from './_lib.js'
-import { categoryLabels, streamLabels, type ProbedStream } from './_quality-labels.js'
+import { categoryLabels, claimedPicture, measuredStream, pictureTier, probedPicture, streamLabels, type Measured, type ProbedStream } from './_quality-labels.js'
 import { vodCategoryName } from './_vod.js'
 
 interface Category {
@@ -137,6 +137,7 @@ export async function showEpisodes(cfg: XtreamConfig, seriesId: number) {
         secs: Number(e.info?.duration_secs) || 0,
         image: String(e.info?.movie_image ?? '').trim(),
         quality: streamLabels(e.info),
+        tier: pictureTier(probedPicture(e.info) ?? { width: 0, height: 0 }) ?? '',
       })),
     )
     .filter((e) => e.id > 0)
@@ -154,11 +155,18 @@ interface VodInfo {
 export async function movieInfo(cfg: XtreamConfig, vodId: number) {
   const res = await apiGet<VodInfo>(cfg, `get_vod_info&vod_id=${vodId}`)
   const info = res.info ?? {}
-  // A film's own probe when the provider has one (rare); else its category's tags and its bitrate.
-  const probed = info.video && Object.keys(info.video).length ? streamLabels(info) : null
-  const quality = probed ?? categoryLabels(await vodCategoryName(cfg, Number(res.movie_data?.category_id)).catch(() => ''), info.bitrate)
+  // Best first: what the app measured when the film played; the provider's own probe (rare); else what
+  // its category claims plus its bitrate, an estimate.
+  const measured = (await measuredFilms())[String(vodId)]
+  const stream = measured ? measuredStream(measured, Number(info.bitrate) > 0 ? info.bitrate : measured.kbps) : info.video && Object.keys(info.video).length ? info : null
+  const category = stream ? '' : await vodCategoryName(cfg, Number(res.movie_data?.category_id)).catch(() => '')
+  const quality = stream ? streamLabels(stream) : categoryLabels(category, info.bitrate)
+  const tier = pictureTier((stream ? probedPicture(stream) : claimedPicture(category, info.bitrate)) ?? { width: 0, height: 0 }) ?? ''
   return {
     quality,
+    tier,
+    /** The tier comes from the category's claim, not the stream: the app measures it on first play. */
+    estimated: !stream && tier !== '',
     plot: String(info.plot || info.description || '').trim(),
     secs: Number(info.duration_secs) || 0,
     genre: String(info.genre ?? '').trim(),
@@ -167,4 +175,22 @@ export async function movieInfo(cfg: XtreamConfig, vodId: number) {
     cast: castOf(info.cast || info.actors),
     director: String(info.director ?? '').trim(),
   }
+}
+
+// Films the app measured while they played (resolution, codec, HDR, frame rate, audio), by VOD id:
+// a film's quality is then known rather than claimed, for every viewer. Kept on the box.
+const MEASURED = new URL('../.cache/vod-measured.json', import.meta.url)
+let measured: Promise<Record<string, Measured>> | null = null
+export function measuredFilms(): Promise<Record<string, Measured>> {
+  measured ??= readFile(MEASURED, 'utf8').then((t) => JSON.parse(t) as Record<string, Measured>).catch(() => ({}))
+  return measured
+}
+
+/** Keeps the app's reading of film [id]; true when it changed what was known. */
+export async function saveMeasuredFilm(id: number, m: Measured): Promise<boolean> {
+  const all = await measuredFilms()
+  if (JSON.stringify(all[String(id)]) === JSON.stringify(m)) return false
+  all[String(id)] = m
+  await writeFile(MEASURED, JSON.stringify(all))
+  return true
 }

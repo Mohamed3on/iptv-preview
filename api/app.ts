@@ -16,7 +16,7 @@ import { appTokenOk, backupConfigFromEnv, configFromEnv, fetchCuratedChannels, s
 import { addBitrate, mergeAppReading, saveQuality, type Meta } from './_quality.js'
 import { QUALITY } from './quality-cache.js'
 import { curatedGuide } from './epg.js'
-import { movieInfo, showEpisodes, showList } from './_shows.js'
+import { movieInfo, saveMeasuredFilm, showEpisodes, showList } from './_shows.js'
 import { blurayMovies, searchVod } from './_vod.js'
 
 const forbidden = () => new Response('Forbidden', { status: 403 })
@@ -86,6 +86,31 @@ export async function quality(req: Request): Promise<Response> {
     await saveQuality()
   }
   return Response.json({ stored: !!merged }, { headers: { 'Cache-Control': 'no-store' } })
+}
+
+// POST /api/app/film-quality?t=TOKEN — what a film really is, measured by the app's player on its first
+// play: from then on its labels and tier are measured, not the category's claim.
+const HDR = new Set(['', 'HDR10', 'HLG', 'Dolby Vision'])
+export async function filmQuality(req: Request): Promise<Response> {
+  if (!appTokenOk(req.url)) return forbidden()
+  const r = (await req.json().catch(() => null)) as Record<string, unknown> | null
+  const int = (v: unknown, max: number) => Number.isInteger(v) && (v as number) > 0 && (v as number) <= max
+  const word = (v: unknown) => typeof v === 'string' && /^[a-z0-9._-]{1,24}$/i.test(v)
+  if (!r || !int(r.id, 2e9) || !int(r.w, 8192) || !int(r.h, 8192) || !word(r.codec) || !HDR.has(String(r.hdr ?? '')) ||
+      (r.audio !== undefined && !word(r.audio)) || (r.channels !== undefined && !int(r.channels, 16)) ||
+      (r.fps !== undefined && !(typeof r.fps === 'number' && r.fps > 0 && r.fps <= 240)) || (r.kbps !== undefined && !int(r.kbps, 500_000))) {
+    return new Response('Bad reading', { status: 400 })
+  }
+  const stored = await saveMeasuredFilm(r.id as number, {
+    w: r.w as number, h: r.h as number, codec: r.codec as string,
+    ...(typeof r.fps === 'number' && { fps: Math.round(r.fps * 1000) / 1000 }),
+    ...(r.hdr ? { hdr: r.hdr as string } : {}),
+    ...(r.audio ? { audio: r.audio as string } : {}),
+    ...(r.channels ? { channels: r.channels as number } : {}),
+    ...(r.atmos === true && { atmos: true }),
+    ...(r.kbps ? { kbps: r.kbps as number } : {}),
+  })
+  return Response.json({ stored, id: r.id }, { headers: { 'Cache-Control': 'no-store' } })
 }
 
 // POST /api/app/bitrate?t=TOKEN — a feed's bitrate (Mbps) measured while the app played it,

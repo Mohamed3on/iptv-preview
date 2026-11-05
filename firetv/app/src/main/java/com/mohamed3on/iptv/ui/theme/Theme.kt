@@ -53,6 +53,16 @@ object Palette {
 
     /** Progress track behind [accent]. */
     val track = Color(0x33FFFFFF)
+
+    /**
+     * Review scores, acclaimed to poor: oklch L 0.82 on every step (so none reads louder; a 0.6 L gap over the dark
+     * chip and page), hues 150 / 128 / 100 / 70 / 28 at 70% of each hue's sRGB chroma ceiling. Meaning only.
+     */
+    private val scores = listOf(Color(0xFF6FE08C), Color(0xFFA8D666), Color(0xFFD6C665), Color(0xFFEEB97A), Color(0xFFEFB3AB))
+    /** A net share (loved minus hated, %): 70+ acclaimed, 50+ good, 30+ mixed, 10+ weak, else poor. */
+    fun share(pct: Int) = scores[when { pct >= 70 -> 0; pct >= 50 -> 1; pct >= 30 -> 2; pct >= 10 -> 3; else -> 4 }]
+    /** A rating out of 10 (yours, IMDb's, Letterboxd's doubled): 8+, 7+, 6+, 5+, below. */
+    fun outOf10(r: Double) = scores[when { r >= 8 -> 0; r >= 7 -> 1; r >= 6 -> 2; r >= 5 -> 3; else -> 4 }]
 }
 
 /**

@@ -34,6 +34,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import kotlin.time.Duration
+import kotlin.time.Duration.Companion.days
 import kotlin.time.Duration.Companion.seconds
 
 class App : Application(), SingletonImageLoader.Factory {
@@ -51,6 +52,8 @@ class App : Application(), SingletonImageLoader.Factory {
             launch { graph.trakt.flush() } // plays finished while the box was out of reach
             graph.sync.library.loadCached()
             graph.sync.library.sync(LIBRARY_CHECK)
+            graph.sync.history.loadCached()
+            graph.syncHistory()
             graph.sync.movies.loadCached()
             withContext(Dispatchers.Main) { graph.setup } // its callbacks land on the main thread too
             graph.migration.run(graph.sync::titleIds)
@@ -84,6 +87,10 @@ class AppGraph(context: Context) {
     /** Films and episodes watched to the end. */
     val watchedMovies = WatchedStore(prefs, "titles.movies.watched")
     val watchedEpisodes = WatchedStore(prefs, "titles.shows.watched")
+    /** Each show's episode last finished here, and when: the box follows the shows watched in the last 6 months (U16). */
+    val followed = ResumeStore(prefs, "titles.shows.followed")
+    /** Next episodes taken out of Up next with Menu, by episode title id. */
+    val dismissed = WatchedStore(prefs, "titles.upnext.dismissed")
     /** Carries the marks saved under provider ids over to title ids, once. */
     val migration = TitleMigration(prefs, resume, showResume, watchedMovies, watchedEpisodes)
     /** Typical film bandwidth per source and hour band. */
@@ -101,6 +108,11 @@ class AppGraph(context: Context) {
     val debrid by lazy { RealDebrid(http, { sync.realDebridToken }, onInfringing = ::refused) }
     /** Each title's copies, ranked and checked ahead of Play. Touch [setup] on the main thread first. */
     val films by lazy { FilmCopies(sync::copies, debrid, copyChoices, capacity, { setup.profile.value }, scope) }
+
+    /** The owner's history from the box, telling it the shows finished here in the last 6 months ("tv:N:sSeE@ms"). */
+    suspend fun syncHistory() = sync.history.sync(LIBRARY_CHECK, followed.entries.value
+        .filter { it.episode != null && System.currentTimeMillis() - it.at < 183.days.inWholeMilliseconds }
+        .joinToString(",") { "${it.episode}@${it.at}" }.let { if (it.isEmpty()) "" else "&shows=$it" })
     private val refusedHashes = mutableSetOf<String>()
 
     /** A torrent Real-Debrid refused goes to the box (one post for a burst), which drops it from every title's copies. */

@@ -36,6 +36,13 @@ let sign: (Status & { until?: number }) | null = null // the device sign-in unde
 let poll: ReturnType<typeof setTimeout> | undefined
 let timer: ReturnType<typeof setTimeout> | undefined
 let refreshing: Promise<Token | null> | null = null
+let renews = true
+
+/** For a process besides the server (the nightly build): it reads the tokens and never refreshes them, so the two never race to rotate one. */
+export function readOnlyTokens() {
+  renews = false
+  clearTimeout(timer)
+}
 
 const load = () => (token ??= readFile(tokenFile(), 'utf8').then((s) => JSON.parse(s) as Token).catch(() => null).then((t) => (schedule(t), t)))
 
@@ -54,7 +61,7 @@ async function save(t: Token | null) {
 /** Refreshes [t] when due, so the sign-in stays alive while nothing asks; long waits are re-checked. */
 function schedule(t: Token | null, ms = t ? refreshAt(t) - Date.now() : 0) {
   clearTimeout(timer)
-  if (t) (timer = setTimeout(() => accessToken().catch(() => {}), Math.min(Math.max(ms, 0), 2 ** 31 - 1))).unref()
+  if (t && renews) (timer = setTimeout(() => accessToken().catch(() => {}), Math.min(Math.max(ms, 0), 2 ** 31 - 1))).unref()
 }
 
 /** A token from Trakt's answer (device or refresh grant). */
@@ -76,12 +83,18 @@ async function refresh(t: Token): Promise<Token | null> {
   return null
 }
 
-/** A valid access token for Trakt calls (U16's history, watchlist and progress), refreshed when due; null when not signed in. */
+/** A valid access token for Trakt calls (U16's history and watchlist), refreshed when due; null when not signed in. */
 export async function accessToken(now = Date.now()): Promise<string | null> {
   let t = await load()
   if (!t || refused) return null
+  if (!renews) return now < t.expires ? t.access : null
   if (now >= refreshAt(t)) t = (await (refreshing ??= refresh(t).finally(() => (refreshing = null)))) ?? (now < t.expires ? t : null)
   return t?.access ?? null
+}
+
+/** Trakt answered 401 to a signed-in call: the owner signs in again (Options show Reconnect). */
+export function revoked() {
+  refused = true
 }
 
 /** The sign-in as the stick's Options show it. */
@@ -154,7 +167,7 @@ export async function logPlay(title: string, at: number): Promise<'ok' | 'off' |
   const access = await accessToken()
   if (!access) return 'off'
   const r = await post('/sync/history', body, access).catch(() => null)
-  if (r?.status === 401) refused = true
+  if (r?.status === 401) revoked()
   return r?.ok || r?.status === 409 ? 'ok' : r?.status === 401 ? 'off' : 'error'
 }
 
@@ -164,4 +177,5 @@ export function resetTrakt() {
   clearTimeout(timer)
   token = null
   refused = false
+  renews = true
 }

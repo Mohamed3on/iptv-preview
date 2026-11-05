@@ -30,13 +30,13 @@ export function knownTitles(): Promise<Known> {
 }
 
 /** [t] with the tier and score the library knows for it. */
-function decorate(k: Known, t: LibTitle): LibTitle {
+export function decorate(k: Known, t: LibTitle): LibTitle {
   const base = k.titles.get(t.id)
   return { ...t, ...(base?.t && { t: base.t, ...(base.e && { e: base.e }) }), ...k.scores.get(t.id) }
 }
 
 /** Best score first; unscored titles keep their order after them. */
-const byScore = <T extends LibTitle>(list: T[]) => list.map((t, i) => [t, i] as const).sort(([a, i], [b, j]) => (b.s ?? -Infinity) - (a.s ?? -Infinity) || i - j).map(([t]) => t)
+export const byScore = <T extends LibTitle>(list: T[]) => list.map((t, i) => [t, i] as const).sort(([a, i], [b, j]) => (b.s ?? -Infinity) - (a.s ?? -Infinity) || i - j).map(([t]) => t)
 
 const IMG = 'https://image.tmdb.org/t/p/'
 

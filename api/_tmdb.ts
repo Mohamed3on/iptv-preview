@@ -158,14 +158,15 @@ export async function tmdbFacts(title: string): Promise<{ imdb?: string; origina
 }
 
 /** A show's episode as TMDB lists it. */
-export interface TmdbEpisode { season: number; episode: number; title: string; secs: number; image: string }
+export interface TmdbEpisode { season: number; episode: number; title: string; secs: number; image: string; /** Air date, "2026-11-04". */ air: string }
 interface RawEpisode { season_number: number; episode_number: number; name?: string; runtime?: number | null; still_path?: string | null; air_date?: string | null }
 
 const EPISODES_MAX_AGE_MS = 864e5
 
 /**
- * A show's aired episodes in order ([seasons] asked 20 to a call), kept a day in the same cache, as new
- * episodes air; [] without TMDB_TOKEN, the last list kept when TMDB fails.
+ * A show's aired episodes in order ([seasons] asked 20 to a call, and the season after them, so a new season
+ * shows before the 30-day details know it), kept a day in the same cache, as new episodes air; [] without
+ * TMDB_TOKEN, the last list kept when TMDB fails.
  */
 export async function tmdbEpisodes(id: string | number, seasons: number[]): Promise<TmdbEpisode[]> {
   const key = process.env.TMDB_TOKEN
@@ -173,15 +174,17 @@ export async function tmdbEpisodes(id: string | number, seasons: number[]): Prom
   if (!key || !tmdb || !seasons.length) return []
   const k = `tv:${tmdb}:episodes`
   const all = await loaded()
-  if (all[k] && Date.now() - all[k].at < EPISODES_MAX_AGE_MS) return all[k].e ?? []
+  // A list kept before episodes had air dates is fetched again.
+  if (all[k] && Date.now() - all[k].at < EPISODES_MAX_AGE_MS && (!all[k].e?.length || all[k].e![0].air)) return all[k].e ?? []
   const today = new Date().toISOString().slice(0, 10)
-  const chunks = Array.from({ length: Math.ceil(seasons.length / 20) }, (_, i) => seasons.slice(i * 20, i * 20 + 20))
+  const asked = [...seasons, Math.max(...seasons) + 1] // TMDB leaves out a season it doesn't have
+  const chunks = Array.from({ length: Math.ceil(asked.length / 20) }, (_, i) => asked.slice(i * 20, i * 20 + 20))
   try {
     const parts = await Promise.all(chunks.map((c) => tmdbGet<Record<string, { episodes?: RawEpisode[] }>>(`tv/${tmdb}?append_to_response=${c.map((n) => `season/${n}`).join(',')}`, key)))
     const e = parts
       .flatMap((p) => Object.entries(p).filter(([n]) => n.startsWith('season/')).flatMap(([, s]) => s?.episodes ?? []))
       .filter((x) => x.air_date && x.air_date <= today)
-      .map((x) => ({ season: x.season_number, episode: x.episode_number, title: x.name ?? '', secs: (x.runtime ?? 0) * 60, image: x.still_path ? `https://image.tmdb.org/t/p/w300${x.still_path}` : '' }))
+      .map((x) => ({ season: x.season_number, episode: x.episode_number, title: x.name ?? '', secs: (x.runtime ?? 0) * 60, image: x.still_path ? `https://image.tmdb.org/t/p/w300${x.still_path}` : '', air: x.air_date! }))
       .sort((a, b) => a.season - b.season || a.episode - b.episode)
     all[k] = { at: Date.now(), e }
     save(all)

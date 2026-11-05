@@ -137,6 +137,7 @@ import com.mohamed3on.iptv.data.movieUrl
 import com.mohamed3on.iptv.data.posterUrl
 import com.mohamed3on.iptv.graph
 import com.mohamed3on.iptv.player.Capacity
+import com.mohamed3on.iptv.system.Check
 import com.mohamed3on.iptv.player.Copy
 import com.mohamed3on.iptv.player.ExoStreamPlayer
 import com.mohamed3on.iptv.player.FilmSession
@@ -218,7 +219,7 @@ internal val LocalLibrary = staticCompositionLocalOf { LibraryKind.Movies }
 
 /** A page over the browsing screen: a title's, or a person's titles. Back takes the top one off. */
 private sealed interface LibraryPage {
-    data class Title(val movie: Movie) : LibraryPage
+    data class Title(val movie: Movie, val versions: Boolean = false) : LibraryPage
     data class Cast(val person: Person) : LibraryPage
 }
 
@@ -291,6 +292,7 @@ fun MoviesLayer(
     var stoppedLive by remember { mutableStateOf(false) }
     var failed by remember { mutableStateOf<SyncError?>(null) }
     var attempt by remember { mutableStateOf(0) }
+    val refreshed = remember { booleanArrayOf(false) }
     LaunchedEffect(attempt) {
         failed = null
         // The history too: from disk at once, then asked again beside the library.
@@ -301,6 +303,8 @@ fun MoviesLayer(
         // The copy on disk shows at once; the box is asked whether it changed (a 304 when not).
         sync.loadCached()
         val error = sync.sync(LIBRARY_CHECK)
+        refreshed[0] = true
+        Check.log("movies_refreshed", "ok" to (error == null))
         if (sync.items.value == null) failed = error ?: SyncError.Malformed
         // The provider's films: Play's IPTV copy when the box can't list a film's copies (KTD13).
         graph.sync.movies.loadCached()
@@ -388,6 +392,31 @@ fun MoviesLayer(
         onPlaying(false)
     }
 
+    // firetv/check.sh (system/Check): the browsing screen is shown (two frames: its rows build a frame late), the
+    // Real-Debrid account's state, and the screen an open target names, once the library is in.
+    LaunchedEffect(library != null) {
+        if (library == null) return@LaunchedEffect
+        repeat(2) { withFrameNanos {} }
+        Check.log("movies_shown", "from" to if (refreshed[0]) "box" else "disk")
+    }
+    LaunchedEffect(Unit) { graph.debrid.status.collect { Check.log("rd", "status" to it) } }
+    val check by Check.open.collectAsState()
+    LaunchedEffect(check, library) {
+        val target = check ?: return@LaunchedEffect
+        val verb = target.substringBefore(':')
+        if (verb == "live") return@LaunchedEffect leave().also { Check.open.value = null }
+        val lib = library ?: return@LaunchedEffect
+        if (verb != "search") Check.open.value = null // MoviesBrowse takes a search
+        if (verb != "play" && playing != null) stopped()
+        pages.clear()
+        val id = target.substringAfter(':')
+        val title = lib.find(id) ?: Movie(id = -1, name = id, group = "", titleId = id)
+        when (verb) {
+            "title", "versions" -> push(LibraryPage.Title(title, versions = verb == "versions"))
+            "play" -> playFilm(title, fromStart = false)
+        }
+    }
+
     CompositionLocalProvider(LocalLibrary provides LibraryKind.Movies) {
         Box(Modifier.fillMaxSize()) {
             MoviesBrowse(
@@ -424,6 +453,7 @@ fun MoviesLayer(
                             val saved = resume.firstOrNull { it.title == title.titleId } ?: nextUp.firstOrNull { it.show.titleId == title.titleId }?.place()
                             if (!title.titleId.isShow) FilmPage(
                                 film = title,
+                                openVersions = page.versions,
                                 resume = saved,
                                 watched = watched,
                                 active = active,
@@ -621,6 +651,14 @@ private fun MoviesBrowse(
         leftSearch[0] = true
         focused.value = null
         page = beforeSearch
+    }
+    // firetv/check.sh's `search:<query>` (system/Check), once the rows are built.
+    val check by Check.open.collectAsState()
+    LaunchedEffect(check, kind) {
+        val q = check?.takeIf { it.startsWith("search:") && kind == 2 }?.removePrefix("search:") ?: return@LaunchedEffect
+        Check.open.value = null
+        if (page != BrowsePage.Search) openSearch()
+        query = q
     }
 
     val rested = rememberRested(focused)
@@ -1474,7 +1512,7 @@ private class ExtrasFocus {
  */
 @Composable
 private fun FilmPage(
-    film: Movie, resume: Resume?, watched: Set<TitleId>, active: Boolean, hidden: Boolean,
+    film: Movie, openVersions: Boolean, resume: Resume?, watched: Set<TitleId>, active: Boolean, hidden: Boolean,
     onPlay: (fromStart: Boolean) -> Unit, onOpen: (Movie) -> Unit, onPerson: (Person) -> Unit, onBack: () -> Unit,
 ) {
     val graph = LocalContext.current.graph
@@ -1487,8 +1525,12 @@ private fun FilmPage(
     val extras = remember { ExtrasFocus() }
     val hasExtras = info != null && (info.people.isNotEmpty() || info.more.isNotEmpty())
     var hasFocus by remember { mutableStateOf(false) }
-    var versions by remember { mutableStateOf(false) }
+    var versions by remember { mutableStateOf(openVersions) }
     val closedVersions = remember { booleanArrayOf(false) }
+    LaunchedEffect(Unit) {
+        withFrameNanos {}
+        Check.log("title_shown", "title" to film.titleId)
+    }
     LaunchedEffect(active, versions, unavailable, hasExtras) {
         if (!active || versions) return@LaunchedEffect
         val target = when {
@@ -1577,6 +1619,7 @@ private fun PlaysLine(title: TitleId, fallback: List<String>?, modifier: Modifie
         p.rdChecked && p.ranking != null -> "no copy plays here right now"
         else -> null
     }
+    LaunchedEffect(text) { if (text != null) Check.log("plays", "title" to title, "copy" to copy?.id, "src" to (copy?.source ?: "library")) }
     Row(modifier.height(PLAYS_HEIGHT), horizontalArrangement = Arrangement.spacedBy(Space.s), verticalAlignment = Alignment.CenterVertically) {
         if (text == null) return@Row
         copy?.let(::copyTier)?.let { TierChip(it) }
@@ -1800,6 +1843,10 @@ private fun ShowPage(
     val extras = remember { ExtrasFocus() }
     var data by remember { mutableStateOf(sync.peekShowOf(show)) }
     var failed by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        withFrameNanos {}
+        Check.log("title_shown", "title" to show.titleId)
+    }
     var attempt by remember { mutableStateOf(0) }
     LaunchedEffect(attempt) {
         failed = false
@@ -1972,7 +2019,9 @@ private fun EpisodePlays(title: TitleId) {
         delay(WARM_REST_MS)
         films.state(title).collect { value = it }
     }
-    val text = p?.plays?.let { (listOf(sourceName(it.source)) + copyLabels(it).take(2)).joinToString(" · ") } ?: return
+    val plays = p?.plays
+    LaunchedEffect(plays) { if (plays != null) Check.log("plays", "title" to title, "copy" to plays.id, "src" to plays.source) }
+    val text = plays?.let { (listOf(sourceName(it.source)) + copyLabels(it).take(2)).joinToString(" · ") } ?: return
     Text("Plays: $text · Menu for versions", style = Type.caption, maxLines = 1, overflow = TextOverflow.Ellipsis)
 }
 

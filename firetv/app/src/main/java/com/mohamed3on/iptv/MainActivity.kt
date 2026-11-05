@@ -1,6 +1,8 @@
 package com.mohamed3on.iptv
 
+import android.content.Intent
 import android.os.Bundle
+import com.mohamed3on.iptv.system.Check
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.ColumnScope
@@ -101,6 +103,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        Check.request(intent.getStringExtra("open"))
         val sync = graph.sync
         // The pool lives from onStart to onStop (KTD7); multi-view takes its tiles' players from it.
         val pool = PlayerPool(this, graph.http)
@@ -189,6 +192,12 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    // firetv/check.sh opens screens with `am start --activity-single-top --es open <target>`.
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        Check.request(intent.getStringExtra("open"))
     }
 
     /**

@@ -39,6 +39,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.tv.material3.Text
 import com.mohamed3on.iptv.data.RdCheck
+import com.mohamed3on.iptv.system.Check
 import com.mohamed3on.iptv.data.RdStatus
 import com.mohamed3on.iptv.graph
 import com.mohamed3on.iptv.player.Capacity.Source
@@ -154,6 +155,7 @@ internal fun VersionsPanel(title: String, onPlay: () -> Unit, onClose: () -> Uni
     LaunchedEffect(p.ranking == null) {
         withFrameNanos {}
         runCatching { first.requestFocus() }
+        Check.log("versions_shown", "title" to title, "copies" to p.ranking?.copies?.size)
     }
     Column(
         modifier

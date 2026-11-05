@@ -22,7 +22,7 @@ import { LEARNED } from './competition-cache.js'
 // Guide channels Jev matched offline to ours (scripts/match-epg-channels.ts).
 import { EPG_MATCHES } from './epg-matches.js'
 import { askJev, type JevQuestion } from './_jev.js'
-import { readFile, writeFile } from 'node:fs/promises'
+import { readFile, stat, writeFile } from 'node:fs/promises'
 
 // Provider category_ids to keep.
 export const KEEP: number[] = [
@@ -377,6 +377,8 @@ interface VodStream {
   category_id: string
   container_extension?: string
   added?: string
+  tmdb?: string | number
+  is_adult?: string | number
 }
 
 export interface Channel {
@@ -726,7 +728,7 @@ function ufcReplays(vod: VodStream[]): Channel[] {
 // superscript tags (⁴ᴷ ³⁸⁴⁰ᴾ), plain 4K/3840/UHD, or Arabic فائقة الوضوح
 // ("ultra-HD"). We pull every such category — all languages — as on-demand VOD
 // so the playlist gains a clean, browsable 4K film library beside the sports.
-const MOVIE_4K = /⁴ᴷ|³⁸⁴⁰|\b4K\b|3840|\bUHD\b|2160|فائقة الوضوح/i
+export const MOVIE_4K = /⁴ᴷ|³⁸⁴⁰|\b4K\b|3840|\bUHD\b|2160|فائقة الوضوح/i
 
 // Decorative Unicode the provider uses for those tags (superscript digits +
 // modifier letters: ⁴ᴷ ³⁸⁴⁰ᴾ ᴰᴼᴸᴮʸ ᴬᵁᴰᴵᴼ ⱽᴵˢᴵᴼᴺ ᴴᴰᴿ) — stripped for clean names.
@@ -748,12 +750,12 @@ export function plainCategory(cat: string): string {
 }
 
 // "NETFLIX MOVIES ⁴ᴷ ³⁸⁴⁰ᴾ ᴰᵒˡᵇʸ ⱽᶦˢᶦᵒⁿ" -> "🎬 NETFLIX MOVIES 4K".
-function movieGroup(cat: string): string {
+export function movieGroup(cat: string): string {
   return `🎬 ${plainCategory(cat)} 4K`
 }
 
 // Strip the provider's "4K-EN - " / "4K-D+ - " title prefix for clean, sortable names.
-const MOVIE_PREFIX = /^4K-[A-Z0-9+]{1,5}\s*-\s*/i
+export const MOVIE_PREFIX = /^4K-[A-Z0-9+]{1,5}\s*-\s*/i
 
 // Every movie in a 4K-marked category, as on-demand VOD (served from /movie/).
 // No tvg-id, so buildEventEpg gives them no (bogus) EPG row.
@@ -783,6 +785,32 @@ function movie4kChannels(vod: VodStream[], catName: Map<number, string>): Channe
 // until the catalogue comes back.
 const LAST_GOOD_VOD = new URL('../.cache/vod-last-good.json', import.meta.url)
 
+/** The whole VOD catalogue, trimmed (adult titles left out), as the last good pull saw it: the app's
+ *  Blu-ray row and its search over every film read this, never the 74MB pull itself. */
+export interface VodCatalogue {
+  /** Category id to name. */
+  cats: Record<string, string>
+  /** [stream id, name, icon, category id, container extension, added (epoch s), tmdb id or ""] */
+  vod: [number, string, string, number, string, number, string][]
+}
+const VOD_CATALOGUE = new URL('../.cache/vod-catalogue.json', import.meta.url)
+
+function saveCatalogue(vod: VodStream[], cats: Category[]): Promise<void> {
+  const catalogue: VodCatalogue = {
+    cats: Object.fromEntries(cats.map((c) => [String(c.category_id), c.category_name])),
+    vod: vod
+      .filter((s) => String(s.is_adult ?? '0') !== '1' && String(s.name ?? '').trim())
+      .map((s) => [s.stream_id, String(s.name).trim(), String(s.stream_icon ?? ''), Number(s.category_id), s.container_extension || 'mp4', Number(s.added ?? 0), String(s.tmdb ?? '').replace(/^0$/, '')]),
+  }
+  return writeFile(VOD_CATALOGUE, JSON.stringify(catalogue)).catch(() => {})
+}
+
+/** The saved catalogue file, pulling it first only when none exists yet. */
+export async function vodCatalogueFile(cfg: XtreamConfig): Promise<URL> {
+  if (!(await stat(VOD_CATALOGUE).catch(() => null))) await vodChannels(cfg)
+  return VOD_CATALOGUE
+}
+
 async function vodChannels(cfg: XtreamConfig): Promise<Channel[]> {
   const [vod, vodCats] = await Promise.all([
     apiGet<VodStream[]>(cfg, 'get_vod_streams').catch(() => []),
@@ -791,7 +819,7 @@ async function vodChannels(cfg: XtreamConfig): Promise<Channel[]> {
   if (vod.length && vodCats.length) {
     const vodCatName = new Map(vodCats.map((c) => [Number(c.category_id), c.category_name]))
     const channels = [...ufcReplays(vod), ...movie4kChannels(vod, vodCatName)]
-    await writeFile(LAST_GOOD_VOD, JSON.stringify(channels)).catch(() => {})
+    await Promise.all([writeFile(LAST_GOOD_VOD, JSON.stringify(channels)).catch(() => {}), saveCatalogue(vod, vodCats)])
     return channels
   }
   return JSON.parse(await readFile(LAST_GOOD_VOD, 'utf8').catch(() => '[]'))

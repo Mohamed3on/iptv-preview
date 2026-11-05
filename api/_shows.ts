@@ -5,6 +5,8 @@
 // on disk (the old copy is served if a pull fails); a show's episodes are fetched when it's opened.
 import { readFile, stat, writeFile } from 'node:fs/promises'
 import { apiGet, plainCategory, type XtreamConfig } from './_lib.js'
+import { categoryLabels, streamLabels, type ProbedStream } from './_quality-labels.js'
+import { vodCategoryName } from './_vod.js'
 
 interface Category {
   category_id: string
@@ -35,6 +37,8 @@ export interface Episode {
   secs: number
   /** A still from the episode; empty when the provider has none. */
   image: string
+  /** Ready-to-show quality labels from the provider's probe ("4K", "HEVC", "31 Mbps", "E-AC3 5.1"), best first. */
+  quality: string[]
 }
 
 const FILE = new URL('../.cache/shows.json', import.meta.url)
@@ -109,7 +113,7 @@ export async function showList(cfg: XtreamConfig): Promise<ShowList> {
 
 interface SeriesInfo {
   info?: { plot?: string; genre?: string; cast?: string; rating?: string | number; backdrop_path?: string[] | string }
-  episodes?: Record<string, { id: string; episode_num: number | string; title?: string; container_extension?: string; season?: number; info?: { duration_secs?: number | string; movie_image?: string } }[]>
+  episodes?: Record<string, { id: string; episode_num: number | string; title?: string; container_extension?: string; season?: number; info?: { duration_secs?: number | string; movie_image?: string } & ProbedStream }[]>
 }
 
 /** The first of the provider's backdrops (a list, sometimes one string); "" when none. */
@@ -132,6 +136,7 @@ export async function showEpisodes(cfg: XtreamConfig, seriesId: number) {
         ext: e.container_extension || 'mkv',
         secs: Number(e.info?.duration_secs) || 0,
         image: String(e.info?.movie_image ?? '').trim(),
+        quality: streamLabels(e.info),
       })),
     )
     .filter((e) => e.id > 0)
@@ -141,13 +146,19 @@ export async function showEpisodes(cfg: XtreamConfig, seriesId: number) {
 }
 
 interface VodInfo {
-  info?: { plot?: string; description?: string; genre?: string; duration_secs?: number | string; rating?: string | number; backdrop_path?: string[] | string; cast?: string; actors?: string; director?: string }
+  info?: { plot?: string; description?: string; genre?: string; duration_secs?: number | string; rating?: string | number; backdrop_path?: string[] | string; cast?: string; actors?: string; director?: string } & ProbedStream
+  movie_data?: { category_id?: string | number }
 }
 
-/** A film's plot, running time (seconds, 0 when unknown), genres, rating, backdrop, cast and director ("" when unknown). */
+/** A film's plot, running time (seconds, 0 when unknown), genres, rating, backdrop, cast, director ("" when unknown) and quality labels. */
 export async function movieInfo(cfg: XtreamConfig, vodId: number) {
-  const info = (await apiGet<VodInfo>(cfg, `get_vod_info&vod_id=${vodId}`)).info ?? {}
+  const res = await apiGet<VodInfo>(cfg, `get_vod_info&vod_id=${vodId}`)
+  const info = res.info ?? {}
+  // A film's own probe when the provider has one (rare); else its category's tags and its bitrate.
+  const probed = info.video && Object.keys(info.video).length ? streamLabels(info) : null
+  const quality = probed ?? categoryLabels(await vodCategoryName(cfg, Number(res.movie_data?.category_id)).catch(() => ''), info.bitrate)
   return {
+    quality,
     plot: String(info.plot || info.description || '').trim(),
     secs: Number(info.duration_secs) || 0,
     genre: String(info.genre ?? '').trim(),

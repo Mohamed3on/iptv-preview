@@ -2,7 +2,8 @@
 // no CORS header, and only the server's own cache may keep a response.
 // GET /api/app/channels?t=TOKEN — groups, channels, feed families, badges and both provider fronts.
 // GET /api/app/guide?t=TOKEN — the guide as a gzip SQLite file the stick opens without parsing.
-// GET /api/app/movies?t=TOKEN — the on-demand library: 4K movies and UFC replays.
+// GET /api/app/movies?t=TOKEN — the on-demand library: 4K movies, UFC replays and Blu-ray films.
+// GET /api/app/vod-search?t=TOKEN&q=… — films across the provider's whole catalogue.
 // GET /api/app/version, /api/app/apk, /api/app/dm ?t=TOKEN — the latest build and its dex metadata (the
 // baseline profile, compiled at install), copied to the box by firetv.yml.
 // POST /api/app/quality?t=TOKEN — a quality reading the app measured while playing.
@@ -16,6 +17,7 @@ import { addBitrate, mergeAppReading, saveQuality, type Meta } from './_quality.
 import { QUALITY } from './quality-cache.js'
 import { curatedGuide } from './epg.js'
 import { movieInfo, showEpisodes, showList } from './_shows.js'
+import { blurayMovies, searchVod } from './_vod.js'
 
 const forbidden = () => new Response('Forbidden', { status: 403 })
 
@@ -123,19 +125,37 @@ export async function events(req: Request): Promise<Response> {
   return new Response(null, { status: 204 })
 }
 
-// GET /api/app/movies?t=TOKEN — the on-demand library (4K movies, UFC replays) in playlist order,
+// GET /api/app/movies?t=TOKEN — the on-demand library (4K movies, UFC replays, then Blu-ray films) in playlist order,
 // from the copy the playlist build saves, so the app never adds a pull of the 74MB catalogue.
 export async function movies(req: Request): Promise<Response> {
   if (!appTokenOk(req.url)) return forbidden()
   try {
-    const vod = await savedVodChannels(configFromEnv())
+    const cfg = configFromEnv()
+    const vod = await savedVodChannels(cfg)
+    // The 1080p Blu-ray row follows the 4K groups: films with no 4K copy.
+    const movies = [...vod.map((m) => ({ id: m.streamId, name: m.name, poster: m.logo, group: m.group, ext: m.vodExt ?? 'mp4' })), ...(await blurayMovies(cfg).catch(() => []))]
     return Response.json(
       {
-        groups: [...new Set(vod.map((m) => m.group))],
-        movies: vod.map((m) => ({ id: m.streamId, name: m.name, poster: m.logo, group: m.group, ext: m.vodExt })),
+        groups: [...new Set(movies.map((m) => m.group))],
+        movies,
       },
       { headers: { 'Cache-Control': 'private, s-maxage=1800, stale-while-revalidate=3600' } },
     )
+  } catch (e) {
+    return new Response(e instanceof Error ? e.message : 'upstream error', { status: 502 })
+  }
+}
+
+// GET /api/app/vod-search?t=TOKEN&q=QUERY — films across the provider's whole catalogue (not only the
+// library's 4K and Blu-ray rows), one per film on its best copy, in /api/app/movies' item shape.
+export async function vodSearch(req: Request): Promise<Response> {
+  if (!appTokenOk(req.url)) return forbidden()
+  const q = (new URL(req.url).searchParams.get('q') ?? '').trim()
+  if (!q) return Response.json({ movies: [] })
+  try {
+    return Response.json({ movies: await searchVod(configFromEnv(), q) }, {
+      headers: { 'Cache-Control': 'private, s-maxage=600, stale-while-revalidate=3600' },
+    })
   } catch (e) {
     return new Response(e instanceof Error ? e.message : 'upstream error', { status: 502 })
   }

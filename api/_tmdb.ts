@@ -97,6 +97,13 @@ function save(all: Record<string, Entry>): Promise<void> {
   return writing
 }
 
+/** GET a TMDB v3 path ("discover/movie?with_genres=35"). A v3 API key (32 hex) goes in the query; a v4 read token as a Bearer header. */
+export function tmdbGet<T>(path: string, key = process.env.TMDB_TOKEN ?? ''): Promise<T> {
+  const v3 = /^[0-9a-f]{32}$/i.test(key)
+  const url = `https://api.themoviedb.org/3/${path}${v3 ? `${path.includes('?') ? '&' : '?'}api_key=${key}` : ''}`
+  return getJson<T>(url, v3 ? {} : { headers: { Authorization: `Bearer ${key}` } })
+}
+
 /**
  * A film's or show's TMDB details; null without TMDB_TOKEN, for an id TMDB doesn't know, or when TMDB
  * fails with nothing cached (a stale entry is served instead).
@@ -110,10 +117,7 @@ export async function tmdbTitle(kind: Kind, id: string | number): Promise<TmdbTi
   if (all[k] && Date.now() - all[k].at < MAX_AGE_MS) return all[k].t
   let job = pending.get(k)
   if (!job) {
-    // A v3 API key (32 hex) goes in the query; a v4 read token as a Bearer header.
-    const v3 = /^[0-9a-f]{32}$/i.test(key)
-    const url = `https://api.themoviedb.org/3/${kind}/${tmdb}?append_to_response=external_ids,credits,recommendations${v3 ? `&api_key=${key}` : ''}`
-    job = getJson<Raw>(url, v3 ? {} : { headers: { Authorization: `Bearer ${key}` } })
+    job = tmdbGet<Raw>(`${kind}/${tmdb}?append_to_response=external_ids,credits,recommendations`, key)
       .then((r) => trim(kind, r))
       .catch((e) => {
         if (e instanceof HttpError && e.status === 404) return null

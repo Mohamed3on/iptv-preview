@@ -55,6 +55,8 @@ export async function handle(req: Request): Promise<Response> {
   if (pathname === '/api/app/version') return app.version(req)
   if (pathname === '/api/app/apk') return app.apk(req)
   if (pathname === '/api/app/dm') return app.dm(req)
+  // Answers from its own memory, with ETag/304.
+  if (pathname === '/api/app/library') return app.library(req)
   if (pathname === '/api/app/quality' && req.method === 'POST') {
     const res = await app.quality(req)
     // A stored reading can reorder feeds, so the channel lists rebuild on their next request.

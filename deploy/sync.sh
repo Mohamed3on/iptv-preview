@@ -14,4 +14,4 @@ rsync -az --delete --exclude competition-cache.ts --exclude quality-cache.ts ser
 # repo's copies only seed a fresh box and never overwrite what the box has learned.
 rsync -a --ignore-existing api/competition-cache.ts api/quality-cache.ts "$SERVER:$APP_DIR/api/"
 rsync -a deploy/*.service deploy/*.timer "$SERVER:/etc/systemd/system/"
-ssh "$SERVER" "chown -R iptv:iptv $APP_DIR && systemctl daemon-reload && systemctl enable --now iptv-learn.timer && systemctl enable iptv-preview && systemctl restart iptv-preview"
+ssh "$SERVER" "chown -R iptv:iptv $APP_DIR && systemctl daemon-reload && systemctl enable --now iptv-learn.timer iptv-library.timer && systemctl enable iptv-preview && systemctl restart iptv-preview"

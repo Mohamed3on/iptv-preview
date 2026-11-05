@@ -85,6 +85,8 @@ function entry(m: Mdb | undefined, now: number): ScoreEntry {
   return { ma: now, ...(m?.ids?.imdb && { im: m.ids.imdb }), ...(im?.value && { ir: im.value }), ...(im?.votes && { iv: im.votes }), ...(lb?.score && { lb: Math.round(lb.score * 5) / 100 }), ...(lb?.votes && { lv: lb.votes }) }
 }
 
+/** An IMDb title id (some lookups give others, which fail IMDb's whole batch). */
+const TT = /^tt\d+$/
 const IMDB_Q = 'query($ids: [ID!]!) { titles(ids: $ids) { id ratingsSummary { aggregateRating voteCount } aggregateRatingsBreakdown { histogram { histogramValues { rating voteCount } } } } }'
 /** IMDb's answers for the titles [ims] by IMDb id (none for one IMDb doesn't know), or null when IMDb didn't answer. */
 async function imdb(ims: string[], now: number, get: typeof fetch, signal?: AbortSignal): Promise<Map<string, ScoreEntry> | null> {
@@ -130,7 +132,7 @@ export async function refreshScores(ids: string[], fresh: Set<string>, cache: Sc
       if (Number(r!.headers.get('x-ratelimit-remaining') ?? Infinity) <= ONDEMAND) break mdb
     }
   }
-  const imDue = ids.filter((id) => cache[id]?.im && !(cache[id].ha! > now - (fresh.has(id) ? 1 : 7) * DAY))
+  const imDue = ids.filter((id) => TT.test(cache[id]?.im ?? '') && !(cache[id].ha! > now - (fresh.has(id) ? 1 : 7) * DAY))
   for (let i = 0, fails = 0; i < imDue.length && fails < 3;) {
     const batch = imDue.slice(i, i + 100)
     const found = await imdb(batch.map((id) => cache[id].im!), now, get)
@@ -183,7 +185,7 @@ export function scoreNow(id: string, im: string | undefined, key: string | undef
   }
   const ask = async (): Promise<ScoreEntry> => {
     const tt = im ?? have?.im
-    const found = tt && d.imdb ? await imdb([tt], now, get, AbortSignal.timeout(3000)) : null
+    const found = tt && TT.test(tt) && d.imdb ? await imdb([tt], now, get, AbortSignal.timeout(3000)) : null
     return found ? found.get(tt!) ?? { ha: now } : {}
   }
   const job = Promise.all([mdb().catch(() => ({})), ask().catch(() => ({}))]).then(([a, b]) => {

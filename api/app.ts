@@ -10,9 +10,12 @@
 // POST /api/app/bitrate?t=TOKEN — a feed's bitrate the app measured while playing.
 // POST /api/app/events?t=TOKEN — what happened while watching, for later analysis.
 // POST /api/app/title-ids?t=TOKEN — title ids for the provider ids the app saved marks under.
+// GET /api/app/copies?t=TOKEN&title=… — every copy of a film or episode, for the stick to rank.
+// POST /api/app/rd-infringing?t=TOKEN — torrents Real-Debrid refused, left out of copies from then on.
 import { appendFile, mkdir, rename, stat } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import { buildAppFeed, buildAppGuide } from './_app-feed.js'
+import { iptvCopies, markInfringing, titleCopies } from './_copies.js'
 import { appTokenOk, backupConfigFromEnv, configFromEnv, fetchCuratedChannels, saneFps, savedVodChannels, withBackupFeeds, withCompetitionGroups } from './_lib.js'
 import { addBitrate, mergeAppReading, saveQuality, type Meta } from './_quality.js'
 import { QUALITY } from './quality-cache.js'
@@ -251,4 +254,28 @@ export async function titleIds(req: Request): Promise<Response> {
   } catch (e) {
     return new Response(e instanceof Error ? e.message : 'upstream error', { status: 502 })
   }
+}
+
+// GET /api/app/copies?t=TOKEN&title=TITLE_ID — every copy of a film or episode, IPTV copies and Real-Debrid
+// candidates, with what each is (see _copies.ts); the stick ranks them. Kept an hour once both sources
+// answered (Torrentio's cached flags change).
+const COPY_TITLE = /^(?:movie:\d+|iptv:\d+|(?:tv|iptv:tv):\d+:s\d+e\d+)$/
+export async function copies(req: Request): Promise<Response> {
+  if (!appTokenOk(req.url)) return forbidden()
+  const title = new URL(req.url).searchParams.get('title') ?? ''
+  if (!COPY_TITLE.test(title)) return new Response('Bad title', { status: 400 })
+  const c = await titleCopies(title, iptvCopies(configFromEnv(), title))
+  const settled = c.sources.iptv === 'ok' && c.sources.rd === 'ok'
+  return Response.json(c, { headers: { 'Cache-Control': settled ? 'private, s-maxage=3600, stale-while-revalidate=86400' : 'no-store' } })
+}
+
+// POST /api/app/rd-infringing?t=TOKEN — { hashes: [infoHash] } Real-Debrid refused here (451): no title
+// offers them again for 60 days.
+export async function rdInfringing(req: Request): Promise<Response> {
+  if (!appTokenOk(req.url)) return forbidden()
+  const hashes = ((await req.json().catch(() => null)) as { hashes?: unknown } | null)?.hashes
+  if (!Array.isArray(hashes) || !hashes.length || hashes.length > 200 || !hashes.every((h) => typeof h === 'string' && /^[0-9a-f]{40}$/i.test(h))) {
+    return new Response('Bad hashes', { status: 400 })
+  }
+  return Response.json({ stored: await markInfringing(hashes) }, { headers: { 'Cache-Control': 'no-store' } })
 }

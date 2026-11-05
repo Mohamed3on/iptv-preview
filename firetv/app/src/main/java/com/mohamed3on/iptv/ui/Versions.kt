@@ -102,6 +102,21 @@ internal fun Versions(title: String, data: VersionsData, first: FocusRequester, 
         (it.support != Support.Wont || it.pinned) && (it.copy.source == Source.Iptv || data.rd[it.copy.id] is RdCheck.Ready)
     }?.copy?.id
     val state = rememberLazyListState()
+    val shown = if (all) rows else rows.take(FIRST_ROWS)
+    // Menu clears a pin or mark and the row moves as the list re-ranks: focus follows it.
+    var cleared by remember { mutableStateOf<String?>(null) }
+    val clearedFocus = remember { FocusRequester() }
+    LaunchedEffect(rows) {
+        val id = cleared ?: return@LaunchedEffect
+        val i = shown.indexOfFirst { it.first.copy.id == id }
+        if (i < 0) runCatching { first.requestFocus() }
+        else {
+            if (state.layoutInfo.visibleItemsInfo.none { it.key == id }) state.scrollToItem(i + (0..i).count { it == 0 || shown[it - 1].second != shown[it].second })
+            withFrameNanos {}
+            runCatching { clearedFocus.requestFocus() }
+        }
+        cleared = null
+    }
     LazyColumn(modifier.scrollbar(state), state = state, verticalArrangement = Arrangement.spacedBy(Space.xs)) {
         if (ranking == null) {
             item(key = "loading") {
@@ -114,14 +129,14 @@ internal fun Versions(title: String, data: VersionsData, first: FocusRequester, 
                 }
             }
         }
-        val shown = if (all) rows else rows.take(FIRST_ROWS)
         shown.forEachIndexed { i, (r, s) ->
             if (i == 0 || shown[i - 1].second != s) item(key = "h${s.name}") { Heading(s.heading) }
             item(key = r.copy.id) {
                 VersionRow(r, ranking!!.reasonFor(r, plays), data, focus = if (i == 0) first else if (i == FIRST_ROWS) more else null, onClick = { onChoose(r.copy) }, onClear = if (r.pinned || r.mark != null) ({
+                    cleared = r.copy.id
                     if (r.pinned) choices.pin(title, null) else choices.clearMark(setup, r.copy.id)
                     onChanged()
-                }) else null)
+                }) else null, modifier = if (r.copy.id == cleared) Modifier.focusRequester(clearedFocus) else Modifier)
             }
         }
         if (rows.size > shown.size) item(key = "all") { PanelRow("Show all", "${rows.size} copies") { all = true } }
@@ -196,7 +211,7 @@ private fun Heading(text: String) {
 
 /** A copy: tier and labels, then why it ranks where it does, then source, size and release name. */
 @Composable
-private fun VersionRow(r: Ranked, reason: String, data: VersionsData, focus: FocusRequester?, onClick: () -> Unit, onClear: (() -> Unit)?) {
+private fun VersionRow(r: Ranked, reason: String, data: VersionsData, focus: FocusRequester?, onClick: () -> Unit, onClear: (() -> Unit)?, modifier: Modifier = Modifier) {
     val c = r.copy
     val status = listOfNotNull(
         reason.ifEmpty { null },
@@ -204,7 +219,7 @@ private fun VersionRow(r: Ranked, reason: String, data: VersionsData, focus: Foc
         onClear?.let { "Menu clears" },
     ).joinToString(" · ")
     Column(
-        Modifier
+        modifier
             .fillMaxWidth()
             .then(if (focus != null) Modifier.focusRequester(focus) else Modifier)
             .onKeyEvent {

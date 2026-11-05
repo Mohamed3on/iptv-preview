@@ -34,9 +34,9 @@ interface Scored {
     val ir: Double?
 }
 
-/** TrueScore's display, "490 (70%)", "~120" when estimated ([share] off on cards); null when unscored. */
+/** TrueScore's display, "490 (70%)", "~120" when estimated ([share] off on cards); null when unscored or 0 ("0 (-11%)" says nothing). */
 fun Scored.scoreLabel(share: Boolean = true): String? =
-    s?.let { (if (se == 1) "~" else "") + it + if (share && sn != null) " ($sn%)" else "" }
+    s?.takeIf { it != 0 }?.let { (if (se == 1) "~" else "") + it + if (share && sn != null) " ($sn%)" else "" }
 
 /** "Letterboxd ★ 4.1 · IMDb 8.8"; null when neither is known. */
 fun Scored.averagesLabel(): String? =

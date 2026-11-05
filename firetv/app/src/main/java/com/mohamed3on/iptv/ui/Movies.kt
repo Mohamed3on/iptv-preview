@@ -1787,6 +1787,12 @@ private fun PersonPage(person: Person, watched: Set<TitleId>, active: Boolean, h
     var opened by remember { mutableStateOf<String?>(null) }
     var hasFocus by remember { mutableStateOf(false) }
     val list = titles
+    // The cards come a frame after the page, as a title page's extras do, so its opening frame stays light.
+    var cards by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        withFrameNanos {}
+        cards = true
+    }
     LaunchedEffect(active, list != null, failed) {
         if (!active) return@LaunchedEffect
         val target = when {
@@ -1825,7 +1831,7 @@ private fun PersonPage(person: Person, watched: Set<TitleId>, active: Boolean, h
                     if (failed) ActionButton("Try again", { attempt++ }, Modifier.padding(top = Space.s))
                 }
             }
-            if (!list.isNullOrEmpty()) itemsIndexed(list, key = { _, m -> m.key }, contentType = { _, _ -> "card" }) { i, m ->
+            if (cards && !list.isNullOrEmpty()) itemsIndexed(list, key = { _, m -> m.key }, contentType = { _, _ -> "card" }) { i, m ->
                 PosterCard(
                     m, null, watched = m.titleId in watched,
                     focus = if (i == 0) first else null,

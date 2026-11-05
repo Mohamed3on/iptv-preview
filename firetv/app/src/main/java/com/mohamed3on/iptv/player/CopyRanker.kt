@@ -88,7 +88,7 @@ class Ranking internal constructor(
     val heavier: Ranked?,
 ) {
     /**
-     * [r]'s reason worded against [plays], the copy playing or that Play opens, when that isn't [pick]
+     * [r]'s reason worded against [plays], the copy Play opens, when that isn't [pick]
      * (a Real-Debrid copy ranked above it isn't ready): else it would read "lower bitrate" on what plays.
      */
     fun reasonFor(r: Ranked, plays: String?): String {

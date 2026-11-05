@@ -1258,7 +1258,8 @@ private fun PosterRow(
                     edge
                 }
                 .focusRequester(rowFocus)
-                .focusRestorer(restore)
+                // Asking for the opened card enters through here: falling back to the entry card would win.
+                .focusRestorer(back?.second ?: restore)
                 .focusGroup(),
             contentPadding = PaddingValues(horizontal = EDGE, vertical = Space.m),
             horizontalArrangement = Arrangement.spacedBy(Space.l),

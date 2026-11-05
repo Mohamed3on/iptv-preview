@@ -97,8 +97,8 @@ internal fun Versions(title: String, data: VersionsData, first: FocusRequester, 
     val rows = remember(ranking, data.rd) {
         ranking?.copies.orEmpty().map { it to standing(it, data.rd) }.sortedBy { it.second.ordinal }
     }
-    // Reasons are worded against the copy that plays, as the Plays line names it.
-    val plays = data.playing ?: ranking?.copies?.firstOrNull {
+    // Reasons are worded against the copy Play opens, as the Plays line names it: the best one ready.
+    val plays = ranking?.copies?.firstOrNull {
         (it.support != Support.Wont || it.pinned) && (it.copy.source == Source.Iptv || data.rd[it.copy.id] is RdCheck.Ready)
     }?.copy?.id
     val state = rememberLazyListState()

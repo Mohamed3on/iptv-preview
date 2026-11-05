@@ -9,7 +9,6 @@ import com.mohamed3on.iptv.data.TitleId
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
@@ -170,13 +169,15 @@ class SubtitleFetch(
         if (!wanted) onPicked(found)
     }
 
-    /** The file's OpenSubtitles hash and size, from its first and last 64 KB read at once; null when the server won't send ranges. */
+    /**
+     * The file's OpenSubtitles hash and size, from its first 64 KB and then its last (asked by offset: the
+     * IPTV provider answers a suffix range with a 500); null when the server won't send ranges.
+     */
     private suspend fun hashOf(url: String): Pair<String, Long>? = withContext(Dispatchers.IO) {
-        val head = async { range(url, "bytes=0-${CHUNK - 1}") }
-        val tail = async { range(url, "bytes=-$CHUNK") }
-        val (h, size) = head.await() ?: return@withContext null
-        val (t, _) = tail.await() ?: return@withContext null
-        if (size < CHUNK) null else osHash(h, t, size) to size
+        val (h, size) = range(url, "bytes=0-${CHUNK - 1}") ?: return@withContext null
+        if (size < CHUNK) return@withContext null
+        val (t, _) = range(url, "bytes=${size - CHUNK}-${size - 1}") ?: return@withContext null
+        osHash(h, t, size) to size
     }
 
     private fun range(url: String, range: String): Pair<ByteArray, Long>? = runCatching {

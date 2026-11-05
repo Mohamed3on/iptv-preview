@@ -174,6 +174,7 @@ A cool blue-black neutral ramp with one clear blue accent and three status hues 
 
 ### Status
 - **Live Red** (live): "LIVE" marks, errors that need attention, bad stream health. **Amber** (warning): weak picture or health. **Green** (good): a stream playing well, 1080p and up. Status colours appear as text on a 16% tint of the same colour, never as solid fills.
+- **Score ramp** (`Palette.share`, `Palette.outOf10`): five steps at one lightness, acclaimed green to poor rose, as text on the numbers of IMDb's and Letterboxd's averages (Letterboxd's doubled, out of 10), the card chip's combined score and the owner's "You 9/10". Review scores only: never the tier chip, never the accent.
 
 ### Named Rules
 **The One Accent Rule.** Signal Blue marks state (playing, selected, focused artwork, caret, watched); it never decorates. Progress lines in lists and cards are neutral (text-secondary on track) so the accent stays for focus; only the player's own seek bar fills in accent.

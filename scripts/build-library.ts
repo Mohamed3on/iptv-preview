@@ -5,25 +5,34 @@
 // Each row keeps its 150 most popular candidates on TMDB (provider titles included), plus the owner's Watchlist
 // and Recommended; those are scored (api/_scores.ts: Trakt, MDBList, and IMDb's histograms with SCRAPE_IMDB=1), then
 // each row is sorted by score and cut to 60. Each key is optional: without one its source is skipped, and rows keep their order.
-// First it reads the owner's Trakt and Letterboxd history into .cache/history.json (api/_history.ts).
+// First it reads the owner's Trakt and Letterboxd history into .cache/history.json (api/_history.ts), and builds
+// Recommended from the titles the owner loved (lovedPicks: TMDB's recommendations, mostly kept with their details)
+// and the Watchlist's runtimes (it is shown shortest first).
 // Usage: bun scripts/build-library.ts   (XTREAM_*, TMDB_TOKEN, TRAKT_CLIENT_ID, MDBLIST_KEY from env / .env.local)
 import { readFile } from 'node:fs/promises'
 import { configFromEnv } from '../api/_lib.js'
 import { assemble, fromTmdb, LIBRARY_FILE, LIBRARY_FULL_FILE, providerTitles, rowDefs, saveLibrary, withProviderCopies, type Library, type LibTitle, type TmdbItem } from '../api/_library.js'
 import { loadScores, onScreen, ranked, refreshScores, saveScores, scoreTitles } from '../api/_scores.js'
 import { parseTitleId, tmdbGet, type Kind } from '../api/_tmdb.js'
-import { historyTitles, loadHistory, refreshHistory, saveHistory } from '../api/_history.js'
+import { historyTitles, loadHistory, lovedPicks, refreshHistory, saveHistory, watchlistRuntimes } from '../api/_history.js'
 import { readOnlyTokens } from '../api/_trakt.js'
 
 // The owner's history first (seconds): Trakt read whole, recommendations included, and the Letterboxd feed.
 // Only the server refreshes Trakt's tokens.
 readOnlyTokens()
 const kept = await loadHistory()
-const history = await refreshHistory(kept, { full: true }).then(async (h) => (await saveHistory(h), h)).catch((e) => (console.log(`history not read: ${e}`), kept))
+let history = await refreshHistory(kept, { full: true }).then(async (h) => (await saveHistory(h), h)).catch((e) => (console.log(`history not read: ${e}`), kept))
 
 if (!process.env.TMDB_TOKEN) {
   console.log('TMDB_TOKEN unset: library not built')
   process.exit(0)
+}
+
+if (history) {
+  const [picks, runtimes] = await Promise.all([lovedPicks(history, scoreTitles(await loadScores())), watchlistRuntimes(history)])
+  // Onto the history as it is now: the server may have written it meanwhile.
+  history = { ...((await loadHistory()) ?? history), picks, runtimes }
+  await saveHistory(history)
 }
 
 /** [fn] over [items], [n] at a time (TMDB allows about 40 requests a second). */

@@ -25,25 +25,24 @@ data class Movie(
     val key: String get() = titleId.ifEmpty { id.toString() }
 }
 
-/** What scores a title (U12): conviction [s] with its net share [sn] (%), [se] 1 when estimated; Letterboxd [lb] (0–5) and IMDb [ir] (0–10) averages. */
+/**
+ * What scores a title (U12): conviction [s] (orders rows) with its net share [sn] (%), [se] 1 when estimated; Letterboxd [lb] (0–5)
+ * and IMDb [ir] (0–10) averages with their vote counts [lv] and [iv]; [s10] the combined score out of 10 cards show.
+ */
 interface Scored {
     val s: Int?
     val sn: Int?
     val se: Int
     val lb: Double?
     val ir: Double?
+    val lv: Int?
+    val iv: Int?
+    val s10: Double?
 }
 
 /** Any score is known. */
-val Scored.known get() = sn != null || lb != null || ir != null
+val Scored.known get() = sn != null || lb != null || ir != null || s10 != null
 
-/** The net share, "60%", "−11%", "~60%" when estimated; null without one. The conviction score only orders rows: its raw number says nothing. */
-fun Scored.scoreLabel(): String? =
-    sn?.let { (if (se == 1) "~" else "") + (if (it < 0) "−${-it}" else "$it") + "%" }
-
-/** "★ 4.1 · IMDb 8.8" (Letterboxd's, IMDb's); null when neither is known. */
-fun Scored.averagesLabel(): String? =
-    listOfNotNull(lb?.let { "★ %.1f".format(Locale.ROOT, it) }, ir?.let { "IMDb %.1f".format(Locale.ROOT, it) }).joinToString(" · ").ifEmpty { null }
 
 /**
  * A library title (`/api/app/library`, `/api/app/search`, More like this): its id, 'm' film or 't' show, name, year,
@@ -55,6 +54,7 @@ data class LibTitle(
     val id: TitleId, val k: String = "m", val n: String, val y: Int = 0, val p: String = "", val b: String = "", val g: List<Int> = emptyList(),
     val t: String = "", val e: Int = 0,
     override val s: Int? = null, override val sn: Int? = null, override val se: Int = 0, override val lb: Double? = null, override val ir: Double? = null,
+    override val lv: Int? = null, override val iv: Int? = null, override val s10: Double? = null,
     val v: Int = 0, val x: String = "",
 ) : Scored {
     /** On screen, [genres] its first two genres' names. */
@@ -124,13 +124,14 @@ class NextEpisode(val show: Movie, val episode: TitleId, val label: String, val 
 
 /**
  * The owner's history from the box (U16): every film and episode Trakt and Letterboxd mark [watched] (merged with
- * the stick's own marks in memory), the Watchlist and Recommended rows, and followed shows' next episodes, latest aired first;
- * the owner's Letterboxd stars ([ratings]) and the Watchlist titles only Letterboxd's list holds ([letterboxd]: no write API).
+ * the stick's own marks in [Marks]), the Watchlist and Recommended rows, and followed shows' next episodes, latest aired first;
+ * the owner's rating per title out of 10 ([ratings]: Trakt's, else IMDb's, else Letterboxd's stars doubled) and the Watchlist
+ * titles only Letterboxd's list holds ([letterboxd]: no write API).
  */
-class History(val watched: Set<TitleId>, val watchlist: List<Movie>, val recommended: List<Movie>, val next: List<NextEpisode>, val ratings: Map<TitleId, Float> = emptyMap(), val letterboxd: Set<TitleId> = emptySet())
+class History(val watched: Set<TitleId>, val watchlist: List<Movie>, val recommended: List<Movie>, val next: List<NextEpisode>, val ratings: Map<TitleId, Int> = emptyMap(), val letterboxd: Set<TitleId> = emptySet())
 
 @Serializable
-private class HistoryJson(val watched: List<TitleId> = emptyList(), val watchlist: List<LibTitle> = emptyList(), val recommended: List<LibTitle> = emptyList(), val next: List<NextJson> = emptyList(), val ratings: Map<TitleId, Float> = emptyMap(), val lbw: List<TitleId> = emptyList())
+private class HistoryJson(val watched: List<TitleId> = emptyList(), val watchlist: List<LibTitle> = emptyList(), val recommended: List<LibTitle> = emptyList(), val next: List<NextJson> = emptyList(), val ratings: Map<TitleId, Int> = emptyMap(), val lbw: List<TitleId> = emptyList())
 
 @Serializable
 private class NextJson(val t: LibTitle, val ep: TitleId, val c: String, val new: Int = 0)
@@ -221,6 +222,7 @@ data class MovieInfo(
     val series: Int = 0,
     val episodes: List<Episode> = emptyList(),
     override val s: Int? = null, override val sn: Int? = null, override val se: Int = 0, override val lb: Double? = null, override val ir: Double? = null,
+    override val lv: Int? = null, override val iv: Int? = null, override val s10: Double? = null,
 ) : Scored {
     /** [more] as cards, built once. */
     @Transient val moreMovies: List<Movie> = more.map { it.toMovie() }
@@ -353,6 +355,14 @@ class WatchedStore(private val store: KeyValueStore, private val key: String) {
         val new = ids.filter { it.isNotEmpty() && it !in _ids.value }
         if (new.isEmpty()) return
         val next = (_ids.value + new).toList().takeLast(CAP).toCollection(LinkedHashSet())
+        _ids.value = next
+        store.put(key, next.joinToString(","))
+    }
+
+    @Synchronized
+    fun unmarkAll(ids: Collection<TitleId>) {
+        val next = _ids.value - ids.toSet()
+        if (next.size == _ids.value.size) return
         _ids.value = next
         store.put(key, next.joinToString(","))
     }

@@ -19,12 +19,13 @@
 // GET /api/app/title, /api/app/search, /api/app/person ?t=TOKEN — title pages, search and person pages (see _browse.ts).
 // GET /api/app/trakt?t=TOKEN — the Trakt sign-in; POST it { action: connect | cancel | disconnect } to change it.
 // POST /api/app/trakt-history?t=TOKEN — { title, at } a film or episode finished on the stick, for Trakt history.
+// POST /api/app/mark?t=TOKEN — { title, watched?, rating? } a mark or rating made on the stick, for Trakt.
 import { appendFile, mkdir, rename, stat } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import { buildAppFeed, buildAppGuide } from './_app-feed.js'
 import { iptvCopies, markInfringing, titleCopies } from './_copies.js'
 import { appTokenOk, backupConfigFromEnv, configFromEnv, fetchCuratedChannels, saneFps, savedVodChannels, withBackupFeeds, withCompetitionGroups } from './_lib.js'
-import { currentHistory, historyAnswer, loadHistory, saveHistory, watchlistOf } from './_history.js'
+import { currentHistory, historyAnswer, loadHistory, saveHistory, watchlistOf, withMark } from './_history.js'
 import { providerLibrary, servedLibrary } from './_library.js'
 import { addBitrate, mergeAppReading, saveQuality, type Meta } from './_quality.js'
 import { QUALITY } from './quality-cache.js'
@@ -33,7 +34,7 @@ import { movieInfo, saveMeasuredFilm, showEpisodes, showList, titleIds as mapTit
 import { subtitleFile, subtitlesFor } from './_subtitles.js'
 import { knownTitles, personTitles, searchTitles, titleDetails } from './_browse.js'
 import { loadScores, ranked, scoreTitles } from './_scores.js'
-import { parseTitleId, tmdbFacts, tmdbGet } from './_tmdb.js'
+import { episodeTitle, parseTitleId, tmdbEpisodes, tmdbFacts, tmdbGet, tmdbTitle } from './_tmdb.js'
 import * as trakt from './_trakt.js'
 import { blurayMovies, filmTitleOf, searchVod } from './_vod.js'
 
@@ -384,7 +385,7 @@ export async function search(req: Request): Promise<Response> {
   const cfg = configFromEnv()
   const h = await currentHistory().catch(() => null)
   const titles = await searchTitles(q, {
-    history: h ? { watchlist: new Set(watchlistOf(h)), watched: new Set([...h.movies, ...(h.lb ?? [])]) } : undefined,
+    history: h ? { watchlist: new Set(watchlistOf(h)), watched: new Set([...h.movies, ...(h.lb ?? []), ...Object.keys(h.imdb ?? {})]) } : undefined,
     known: await knownTitles(),
     tmdb: process.env.TMDB_TOKEN ? (path) => tmdbGet(path) : undefined,
     vod: (q) => searchVod(cfg, q, 20),
@@ -436,7 +437,32 @@ export async function watchlist(req: Request): Promise<Response> {
   const result = await trakt.setWatchlist(title, r.on)
   if (result !== 'ok') return new Response(result === 'off' ? 'Trakt not connected' : 'Trakt failed', { status: result === 'off' ? 503 : 502 })
   const h = await loadHistory()
-  if (h) await saveHistory({ ...h, watchlist: [...(r.on ? [title] : []), ...h.watchlist.filter((t) => t !== title)] })
+  // Its runtime too, so the row (shortest first) places it at once.
+  const runtime = r.on ? (await tmdbTitle(title.startsWith('tv:') ? 'tv' : 'movie', title.split(':')[1]))?.runtime : 0
+  if (h) await saveHistory({ ...h, watchlist: [...(r.on ? [title] : []), ...h.watchlist.filter((t) => t !== title)], ...(runtime && { runtimes: { ...h.runtimes, [title]: runtime } }) })
+  return new Response(null, { status: 204 })
+}
+
+// POST /api/app/mark?t=TOKEN — { title: movie:N | tv:N | tv:N:sS | tv:N:sSeE, watched?: boolean, rating?: 1–10 | null }:
+// marks it watched (a season or show: its aired episodes) or not, rates it or clears its rating, on Trakt and in the
+// kept history at once, so the stick's next history has it: 204, 503 while Trakt isn't signed in, 502 when it fails.
+export async function mark(req: Request): Promise<Response> {
+  if (!appTokenOk(req.url)) return forbidden()
+  const r = (await req.json().catch(() => null)) as { title?: unknown; watched?: unknown; rating?: unknown } | null
+  const m = typeof r?.title === 'string' ? r.title.match(trakt.MARKABLE) : null
+  const { watched, rating } = r ?? {}
+  if (!m || (watched !== undefined && typeof watched !== 'boolean') || (rating !== undefined && rating !== null && !(Number.isInteger(rating) && (rating as number) >= 1 && (rating as number) <= 10))
+    || (watched === undefined && rating === undefined) || (m[3] && !m[4] && rating !== undefined) || (!m[3] && m[1] === 'tv' && watched === false)) {
+    return new Response('Bad mark', { status: 400 })
+  }
+  const title = m[0]
+  // A season or show covers its aired episodes (specials only when the season is asked for).
+  const show = m[1] === 'tv' && !m[4] && watched !== undefined ? await tmdbTitle('tv', m[2]) : null
+  const covered = show ? (await tmdbEpisodes(m[2], show.seasons)).filter((e) => (m[3] ? e.season === +m[3] : e.season > 0)).map((e) => episodeTitle(`tv:${m[2]}`, e.season, e.episode)) : [title]
+  const result = await trakt.mark(title, { watched: watched as boolean | undefined, rating: rating as number | null | undefined }, m[3] ? [] : show?.seasons)
+  if (result !== 'ok') return new Response(result === 'off' ? 'Trakt not connected' : 'Trakt failed', { status: result === 'off' ? 503 : 502 })
+  const h = await loadHistory()
+  if (h) await saveHistory(withMark(h, title, covered, watched as boolean | undefined, rating as number | null | undefined))
   return new Response(null, { status: 204 })
 }
 

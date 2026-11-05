@@ -291,6 +291,17 @@ class FeedSync(
         }.isSuccess
     }
 
+    /** Marks a title watched or not ([watched]), or rates it 1–10 or clears its rating (null, with [rate]), on Trakt through the box: false when that failed. */
+    suspend fun mark(title: TitleId, watched: Boolean? = null, rating: Int? = null, rate: Boolean = false): Boolean = withContext(Dispatchers.IO) {
+        runCatching {
+            get("mark", kotlinx.serialization.json.buildJsonObject {
+                put("title", JsonPrimitive(title))
+                if (watched != null) put("watched", JsonPrimitive(watched))
+                if (rate) put("rating", rating?.let(::JsonPrimitive) ?: kotlinx.serialization.json.JsonNull)
+            }.toString())
+        }.isSuccess
+    }
+
     private val json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
     private val showCache = java.util.concurrent.ConcurrentHashMap<Int, Pair<Long, ShowEpisodes>>()
     private val SHOW_KEEP_MS = 30 * 60_000L

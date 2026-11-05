@@ -29,7 +29,7 @@ const trakt = (path: string): Response => {
   if (path === '/sync/last_activities') return Response.json({ all: '2026-11-05T10:00:00.000Z' })
   if (path === '/sync/watched/movies') return Response.json([{ plays: 1, last_watched_at: '2026-10-01T20:00:00.000Z', movie: { title: 'Inception', year: 2010, ids: { trakt: 16662, tmdb: 27205 } } }])
   if (path === '/sync/watched/shows') return Response.json([{ plays: 2, last_watched_at: '2026-10-20T20:00:00.000Z', show: { title: 'Severance', ids: { trakt: 1, tmdb: 95396 } }, seasons: [{ number: 1, episodes: [{ number: 1, plays: 1, last_watched_at: '2026-10-19T20:00:00.000Z' }, { number: 2, plays: 1, last_watched_at: '2026-10-20T20:00:00.000Z' }] }] }])
-  if (path === '/users/hidden/progress_watched') return Response.json([])
+  if (path === '/users/hidden/progress_watched' || path === '/sync/ratings') return Response.json([])
   if (path === '/sync/watchlist') return Response.json([{ rank: 1, type: 'movie', movie: { title: 'Dune', ids: { tmdb: 438631 } } }, { rank: 2, type: 'show', show: { title: 'Shogun', ids: { tmdb: 126308 } } }])
   if (path.startsWith('/recommendations/')) return Response.json(path.endsWith('movies') ? [{ title: 'Heat', ids: { tmdb: 949 } }] : [])
   return new Response('', { status: 404 })

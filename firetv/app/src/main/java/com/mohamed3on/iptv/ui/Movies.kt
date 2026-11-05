@@ -130,11 +130,9 @@ import com.mohamed3on.iptv.data.LIBRARY_CHECK
 import com.mohamed3on.iptv.data.LibTitle
 import com.mohamed3on.iptv.data.Person
 import com.mohamed3on.iptv.data.Scored
-import com.mohamed3on.iptv.data.averagesLabel
 import com.mohamed3on.iptv.data.isShow
 import com.mohamed3on.iptv.data.isTmdb
 import com.mohamed3on.iptv.data.known
-import com.mohamed3on.iptv.data.scoreLabel
 import com.mohamed3on.iptv.data.tmdbImage
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.rememberScrollState
@@ -144,6 +142,7 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.withStyle
+import java.util.Locale
 import com.mohamed3on.iptv.data.Resume
 import com.mohamed3on.iptv.data.TitleId
 import com.mohamed3on.iptv.data.SyncError
@@ -287,9 +286,8 @@ fun MoviesLayer(
     /** Where a title was left: films and shows keep separate places (a show's names its episode). */
     fun storeOf(title: TitleId) = if (title.isShow) graph.showResume else graph.resume
     val history by graph.sync.history.items.collectAsState()
-    val watchedHere by graph.watchedMovies.ids.collectAsState()
-    // Watched marks: the stick's own, Trakt's and Letterboxd's together (U16).
-    val watched = remember(watchedHere, history) { history?.let { watchedHere + it.watched } ?: watchedHere }
+    // Watched marks: the stick's own, Trakt's, Letterboxd's and IMDb's together (U16).
+    val watched by graph.marks.watched.collectAsState()
     val library by sync.items.collectAsState()
     val filmPlaces by graph.resume.entries.collectAsState()
     val showPlaces by graph.showResume.entries.collectAsState()
@@ -398,7 +396,7 @@ fun MoviesLayer(
         if (!movie.titleId.isShow) return playFilm(movie, fromStart)
         scope.launch {
             val eps = graph.sync.showOf(movie).getOrNull()?.episodes?.takeIf { it.isNotEmpty() }
-            val seen = graph.watchedEpisodes.ids.value + history?.watched.orEmpty()
+            val seen = graph.marks.watched.value
             val place = graph.showResume.find(movie.titleId) ?: nextUp.firstOrNull { it.show.titleId == movie.titleId }?.place()
             if (eps == null) push(LibraryPage.Title(movie)) else playEpisode(movie, eps, upNextIndex(eps, place, seen), fromStart)
         }
@@ -1052,8 +1050,8 @@ private const val NEW_EPISODE = "New episode"
 private val NEW_STYLE = Type.caption.copy(color = Palette.accent, fontWeight = FontWeight.SemiBold)
 
 /**
- * Tier (unless [tier] is off: a film's page names the copy's on its Plays line), the net share with Letterboxd's and
- * IMDb's averages ("60% · ★ 4.5 · IMDb 8.5", R24), then year, running time and genres (the provider's rating when
+ * Tier (unless [tier] is off: a film's page names the copy's on its Plays line), IMDb's and Letterboxd's averages and
+ * the owner's rating ([scoresLine]), then year, running time and genres (the provider's rating when
  * no average is known); the group when nothing names genres.
  */
 @Composable
@@ -1061,26 +1059,59 @@ private fun MetaLine(movie: Movie, info: MovieInfo?, extra: String? = null, tier
     val genre = info?.genre?.split(',', '/')?.map(String::trim)?.filter(String::isNotEmpty)?.take(2)?.joinToString(", ")?.ifEmpty { null }
     val runtime = info?.secs?.takeIf { it > 0 }?.let { runtimeLabel(it * 1000L) }
     val scored: Scored? = movie.lib?.takeIf { it.known } ?: info
-    val averages = scored?.averagesLabel()
-    val rating = info?.rating?.ifEmpty { null }?.takeIf { averages == null }?.let { "$it/10" }
-    val mine = LocalContext.current.graph.sync.history.items.collectAsState().value?.ratings?.get(movie.titleId)?.let { "You ★" + it.toString().removeSuffix(".0") }
+    val rating = info?.rating?.ifEmpty { null }?.takeIf { scored?.lb == null && scored?.ir == null }?.let { "$it/10" }
+    val yours = LocalContext.current.graph.marks.ratings.collectAsState().value[movie.titleId]
+    val scores = remember(scored, yours) { scoresLine(scored, yours) }
     Row(horizontalArrangement = Arrangement.spacedBy(Space.m), verticalAlignment = Alignment.CenterVertically) {
         if (tier) (info?.tier?.ifEmpty { null } ?: movie.lib?.t?.ifEmpty { null })?.let { TierChip(it) }
-        listOfNotNull(scored?.scoreLabel(), averages, mine).joinToString(" · ").ifEmpty { null }?.let { Text(it, style = SCORE_STYLE, maxLines = 1) }
+        if (scores != null) Text(scores, style = SCORE_STYLE, maxLines = 1)
         movie.title.badge?.let { Badges(remember(it) { listOf(it) }) }
         val group = movie.group.takeIf { movie.lib != null } ?: groupLabel(movie.group).name
         FitText(listOfNotNull(movie.title.year, extra, runtime, genre ?: group.ifEmpty { null }, rating).joinToString(" · "), style = Type.body, active = true)
     }
 }
 
-/** A card's corner: tier in its colour, then the net share ("60%", R19, R24; [scored]'s when a title page learnt it); null when neither is known. */
+/**
+ * "IMDb 8.8 (2.9M) · Letterboxd 8.4 (4.6M) · You 9/10": IMDb's and Letterboxd's averages out of 10 (Letterboxd's doubled)
+ * with their vote counts, and the owner's rating; each number in its colour on the review-score ramp, the rest
+ * text-secondary; null when none is known.
+ */
+private fun scoresLine(scored: Scored?, yours: Int?): AnnotatedString? {
+    val parts = listOfNotNull(
+        scored?.ir?.let { Triple("IMDb ", it, scored.iv) },
+        scored?.lb?.let { Triple("Letterboxd ", it * 2, scored.lv) },
+        yours?.let { Triple("You ", it.toDouble(), null) },
+    )
+    if (parts.isEmpty()) return null
+    return buildAnnotatedString {
+        withStyle(SpanStyle(color = Palette.textSecondary)) {
+            parts.forEachIndexed { i, (label, value, votes) ->
+                if (i > 0) append(" · ")
+                append(label)
+                withStyle(SpanStyle(color = Palette.outOf10(value))) { append(if (label == "You ") "${value.toInt()}/10" else "%.1f".format(Locale.ROOT, value)) }
+                if (votes != null) append(" (${compactCount(votes)})")
+            }
+        }
+    }
+}
+
+/** 2.9M, 41K, 830. */
+private fun compactCount(n: Int) = when {
+    n >= 999_500 -> "%.1fM".format(Locale.ROOT, n / 1e6).replace(".0M", "M")
+    n >= 1_000 -> "${(n + 500) / 1000}K"
+    else -> "$n"
+}
+
+private fun yoursLabel(rating: Int) = "You $rating/10"
+
+/** A card's corner: tier in its colour, then the combined score out of 10 in its own ([scored]'s when a title page learnt it); null when neither is known. */
 private fun cardChip(t: LibTitle, scored: Scored): AnnotatedString? {
-    val score = scored.scoreLabel()
+    val score = scored.s10
     if (t.t.isEmpty() && score == null) return null
     return buildAnnotatedString {
         if (t.t.isNotEmpty()) withStyle(SpanStyle(color = tierColor(t.t), fontWeight = FontWeight.SemiBold)) { append(t.t) }
         if (t.t.isNotEmpty() && score != null) append("  ")
-        if (score != null) append(score)
+        if (score != null) withStyle(SpanStyle(color = Palette.outOf10(score))) { append("%.1f".format(Locale.ROOT, score)) }
     }
 }
 
@@ -1652,13 +1683,15 @@ private fun FilmPage(
     var hasFocus by remember { mutableStateOf(false) }
     var versions by remember { mutableStateOf(openVersions) }
     val closedVersions = remember { booleanArrayOf(false) }
+    // ☰'s marks panel.
+    var marking by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) {
         withFrameNanos {}
         Check.log("title_shown", "title" to film.titleId)
         graph.prefs.put(Check.LAST_SCREEN, "title:${film.titleId}")
     }
-    LaunchedEffect(active, versions, unavailable, hasExtras) {
-        if (!active || versions) return@LaunchedEffect
+    LaunchedEffect(active, versions || marking, unavailable, hasExtras) {
+        if (!active || versions || marking) return@LaunchedEffect
         val target = when {
             closedVersions[0] -> versionsButton
             extras.opened != null -> extras.back
@@ -1679,7 +1712,8 @@ private fun FilmPage(
     val started = resume != null && resume.pos > 0
     // The provider's own copy, named on the Plays line when the box can't answer.
     val iptv = film.id > 0 || graph.sync.movies.items.value?.findTitle(film.titleId) != null
-    TitleFrame(backdropOf(film, info), hidden, onBack, onFocus = { hasFocus = it }) {
+    val onMenu = if (!versions && !marking && graph.marks.canMark(film.titleId)) ({ marking = true }) else null
+    TitleFrame(backdropOf(film, info), hidden, onBack, onFocus = { hasFocus = it }, onMenu = onMenu) {
         TitleScroll(
             main = {
                 Column(Modifier.padding(start = EDGE, bottom = Space.xl).widthIn(max = PAGE_WIDTH), verticalArrangement = Arrangement.spacedBy(Space.s)) {
@@ -1725,6 +1759,17 @@ private fun FilmPage(
             },
             modifier = Modifier.align(Alignment.CenterEnd).padding(Space.safe),
         )
+        if (marking) {
+            val seen = film.titleId in watched
+            MarksPanel(
+                film.title.title,
+                listOf((if (seen) "Mark unwatched" else "Mark watched") to { graph.marks.setWatched(film.titleId, !seen); marking = false }),
+                graph.marks.ratings.collectAsState().value[film.titleId],
+                onRate = { graph.marks.rate(film.titleId, it); marking = false },
+                onClose = { marking = false },
+                modifier = Modifier.align(Alignment.CenterEnd).padding(Space.safe),
+            )
+        }
     }
 }
 
@@ -1762,14 +1807,20 @@ private val PLAYS_HEIGHT = 24.dp
 
 /** A title page's ground: the backdrop, Back to leave, focus kept inside; undrawn while [hidden]. */
 @Composable
-private fun TitleFrame(backdrop: String?, hidden: Boolean, onBack: () -> Unit, onFocus: (Boolean) -> Unit, content: @Composable BoxScope.() -> Unit) {
+private fun TitleFrame(backdrop: String?, hidden: Boolean, onBack: () -> Unit, onFocus: (Boolean) -> Unit, onMenu: (() -> Unit)? = null, content: @Composable BoxScope.() -> Unit) {
     Box(
         Modifier
             .fillMaxSize()
             .graphicsLayer { alpha = if (hidden) 0f else 1f }
             .onFocusChanged { onFocus(it.hasFocus) }
             .onKeyEvent {
-                if (remoteKey(it.nativeKeyEvent.keyCode) != RemoteKey.Back) return@onKeyEvent false
+                val key = remoteKey(it.nativeKeyEvent.keyCode)
+                // ☰ that nothing on the page took (an episode row, a card) opens the title's marks.
+                if (key == RemoteKey.Menu && onMenu != null) {
+                    if (it.type == KeyEventType.KeyDown) onMenu()
+                    return@onKeyEvent true
+                }
+                if (key != RemoteKey.Back) return@onKeyEvent false
                 if (it.type == KeyEventType.KeyDown) onBack()
                 true // the key-up too, so Back never reaches the screen behind
             }
@@ -1984,10 +2035,9 @@ private fun ShowPage(
 ) {
     val graph = LocalContext.current.graph
     val sync = graph.sync
-    val seenHere by graph.watchedEpisodes.ids.collectAsState()
-    val history by sync.history.items.collectAsState()
-    // The stick's marks with Trakt's (U16).
-    val seen = remember(seenHere, history) { history?.let { seenHere + it.watched } ?: seenHere }
+    // The stick's marks with the box's (U16).
+    val seen = watched
+    val ratings by graph.marks.ratings.collectAsState()
     val info = rememberInfo(show)
     val extras = remember { ExtrasFocus() }
     var data by remember { mutableStateOf(sync.peekShowOf(show)) }
@@ -2018,18 +2068,20 @@ private fun ShowPage(
     val listFocus = remember { FocusRequester() }
     val list = rememberLazyListState()
     var hasFocus by remember { mutableStateOf(false) }
-    // The episode whose Versions are open (Menu on its row).
+    // The episode whose Versions are open, and whose marks are (Menu on its row; -1 the show's, Menu elsewhere).
     var versionsFor by remember { mutableStateOf<Int?>(null) }
-    val hadVersions = remember { booleanArrayOf(false) }
-    // Versions closed: back to the row it was opened from.
-    LaunchedEffect(versionsFor == null) {
-        if (versionsFor != null) hadVersions[0] = true
-        if (versionsFor != null || !hadVersions[0] || !active) return@LaunchedEffect
-        hadVersions[0] = false
+    var marksFor by remember { mutableStateOf<Int?>(null) }
+    val panel = versionsFor != null || marksFor != null
+    // Where focus goes once the panel closes: the list (back on its row) or the page's first button.
+    val backTo = remember { arrayOfNulls<FocusRequester>(1) }
+    LaunchedEffect(panel) {
+        val back = backTo[0]
+        if (panel || back == null || !active) return@LaunchedEffect
+        backTo[0] = null
         repeat(FOCUS_FRAMES) {
             withFrameNanos {}
             if (hasFocus) return@LaunchedEffect
-            runCatching { listFocus.requestFocus() }
+            runCatching { back.requestFocus() }
         }
     }
     LaunchedEffect(active, target != null, failed) {
@@ -2045,7 +2097,8 @@ private fun ShowPage(
             extras.opened = null
         }
     }
-    TitleFrame(backdropOf(show, info) ?: data?.backdrop, hidden, onBack, onFocus = { hasFocus = it }) {
+    val onMenu = if (!panel && episodes != null && graph.marks.canMark(show.titleId)) ({ backTo[0] = primary; marksFor = -1 }) else null
+    TitleFrame(backdropOf(show, info) ?: data?.backdrop, hidden, onBack, onFocus = { hasFocus = it }, onMenu = onMenu) {
         TitleScroll(
             main = {
                 Row(Modifier.fillMaxSize().padding(start = EDGE, end = EDGE), horizontalArrangement = Arrangement.spacedBy(Space.xxl)) {
@@ -2087,13 +2140,17 @@ private fun ShowPage(
                                 is EpisodeLine.Item -> EpisodeRow(
                                     line.episode,
                                     watched = line.episode.titleId in seen,
+                                    rating = ratings[line.episode.titleId],
                                     progress = resume?.takeIf { it.episode == line.episode.titleId && it.dur > 0 && it.pos > 0 }?.let { it.pos.toFloat() / it.dur },
                                     focus = if (line.index == target) targetRow else null,
                                     onClick = {
                                         lastPlayed = line.index
                                         onPlay(episodes, line.index, false)
                                     },
-                                    onVersions = { versionsFor = line.index },
+                                    onMenu = {
+                                        backTo[0] = listFocus
+                                        if (graph.marks.canMark(line.episode.titleId)) marksFor = line.index else versionsFor = line.index
+                                    },
                                 )
                             }
                         }
@@ -2113,15 +2170,42 @@ private fun ShowPage(
                 modifier = Modifier.align(Alignment.CenterEnd).padding(Space.safe),
             )
         }
+        marksFor?.let { i ->
+            val close = { marksFor = null }
+            val at = Modifier.align(Alignment.CenterEnd).padding(Space.safe)
+            if (i < 0) {
+                val all = episodes.orEmpty().filter { it.season > 0 && it.titleId.isNotEmpty() }
+                val season = target?.let { episodes!![it].season }?.takeIf { s -> s > 0 && all.any { it.season != s } }
+                MarksPanel(
+                    show.title.title,
+                    listOfNotNull(
+                        season?.let { s -> "Mark season $s watched" to { graph.marks.setWatched("${show.titleId}:s$s", true, all.filter { it.season == s }.map { it.titleId }); close() } },
+                        "Mark show watched" to { graph.marks.setWatched(show.titleId, true, all.map { it.titleId }); close() },
+                    ),
+                    ratings[show.titleId], onRate = { graph.marks.rate(show.titleId, it); close() }, onClose = close, modifier = at,
+                )
+            } else {
+                val e = episodes!![i]
+                val done = e.titleId in seen
+                MarksPanel(
+                    listOfNotNull(e.code, e.title.takeUnless { it.isEmpty() || GENERIC_EPISODE.matches(it) }).joinToString(" · "),
+                    listOf(
+                        (if (done) "Mark unwatched" else "Mark watched") to { graph.marks.setWatched(e.titleId, !done); close() },
+                        "Versions" to { marksFor = null; versionsFor = i },
+                    ),
+                    ratings[e.titleId], onRate = { graph.marks.rate(e.titleId, it); close() }, onClose = close, modifier = at,
+                )
+            }
+        }
     }
 }
 
 /**
  * An episode: its still (else its number), title, length, how far it was watched, a check once seen;
- * focused, the copy it plays on (prepared once focus rests there), and Menu opens its Versions.
+ * the owner's rating; focused, the copy it plays on (prepared once focus rests there), and Menu opens its marks and Versions.
  */
 @Composable
-private fun EpisodeRow(episode: Episode, watched: Boolean, progress: Float?, focus: FocusRequester?, onClick: () -> Unit, onVersions: () -> Unit) {
+private fun EpisodeRow(episode: Episode, watched: Boolean, rating: Int?, progress: Float?, focus: FocusRequester?, onClick: () -> Unit, onMenu: () -> Unit) {
     var focused by remember { mutableStateOf(false) }
     val context = LocalPlatformContext.current
     val density = LocalDensity.current
@@ -2137,7 +2221,7 @@ private fun EpisodeRow(episode: Episode, watched: Boolean, progress: Float?, foc
             .onFocusChanged { focused = it.isFocused }
             .onKeyEvent {
                 if (remoteKey(it.nativeKeyEvent.keyCode) != RemoteKey.Menu) return@onKeyEvent false
-                if (it.type == KeyEventType.KeyDown && episode.titleId.isNotEmpty()) onVersions()
+                if (it.type == KeyEventType.KeyDown && episode.titleId.isNotEmpty()) onMenu()
                 true
             }
             .pressable(onClick)
@@ -2155,6 +2239,7 @@ private fun EpisodeRow(episode: Episode, watched: Boolean, progress: Float?, foc
             Row(horizontalArrangement = Arrangement.spacedBy(Space.s), verticalAlignment = Alignment.CenterVertically) {
                 if (episode.secs > 0) Text("${(episode.secs + 30) / 60} min", style = Type.caption, maxLines = 1)
                 if (watched) Text("Watched", style = Type.caption.copy(color = Palette.accent), maxLines = 1)
+                if (rating != null) Text(yoursLabel(rating), style = Type.caption.copy(color = Palette.outOf10(rating.toDouble())), maxLines = 1)
                 if (focused && episode.titleId.isNotEmpty()) EpisodePlays(episode.titleId)
             }
         }
@@ -2172,7 +2257,7 @@ private fun EpisodePlays(title: TitleId) {
     val plays = p?.plays
     LaunchedEffect(plays) { if (plays != null) Check.log("plays", "title" to title, "copy" to plays.id, "src" to plays.source) }
     val text = plays?.let { (listOf(sourceName(it.source)) + copyLabels(it).take(2)).joinToString(" · ") } ?: return
-    FitText("Plays: $text · Menu for versions", style = Type.caption, active = true)
+    FitText("Plays: $text · Menu for more", style = Type.caption, active = true)
 }
 
 private val GENERIC_EPISODE = Regex("""(?i)episode\s*\d+""")

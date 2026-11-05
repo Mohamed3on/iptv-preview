@@ -19,6 +19,7 @@ import com.mohamed3on.iptv.data.TraktSync
 import com.mohamed3on.iptv.data.VpnMonitor
 import com.mohamed3on.iptv.data.WatchedStore
 import com.mohamed3on.iptv.data.Watchlist
+import com.mohamed3on.iptv.data.Marks
 import com.mohamed3on.iptv.data.WatchHistory
 import com.mohamed3on.iptv.player.Capacity
 import com.mohamed3on.iptv.player.CopyChoices
@@ -100,6 +101,8 @@ class AppGraph(context: Context) {
     val capacity = Capacity(prefs, vpn = { vpnActive.value })
     /** The Trakt watchlist with the owner's own changes applied at once (title page button, ☰ on a card). */
     val watchlist by lazy { Watchlist(sync, scope) }
+    /** Watched marks and ratings, the owner's changes shown at once and written to Trakt (☰ on title pages and episodes). */
+    val marks by lazy { Marks(sync, watchedMovies, watchedEpisodes, scope) { syncHistory(Duration.ZERO) } }
     /** Movies & Shows searches that led to a title, offered under an empty search box. */
     val recentSearches = RecentSearches(prefs)
     /** Marks, corrections and pins the copy ranker reads. */
@@ -119,7 +122,7 @@ class AppGraph(context: Context) {
     val films by lazy { FilmCopies(sync::copies, debrid, copyChoices, capacity, { setup.profile.value }, scope) }
 
     /** The owner's history from the box, telling it the shows finished here in the last 6 months ("tv:N:sSeE@ms"). */
-    suspend fun syncHistory() = sync.history.sync(LIBRARY_CHECK, followed.entries.value
+    suspend fun syncHistory(maxAge: Duration = LIBRARY_CHECK) = sync.history.sync(maxAge, followed.entries.value
         .filter { it.episode != null && System.currentTimeMillis() - it.at < 183.days.inWholeMilliseconds }
         .joinToString(",") { "${it.episode}@${it.at}" }.let { if (it.isEmpty()) "" else "&shows=$it" })
     private val refusedHashes = mutableSetOf<String>()

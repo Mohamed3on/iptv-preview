@@ -81,6 +81,7 @@ export async function handle(req: Request): Promise<Response> {
   if (pathname === '/api/app/trakt') return app.traktSignIn(req)
   if (pathname === '/api/app/trakt-history' && req.method === 'POST') return app.traktHistory(req)
   if (pathname === '/api/app/watchlist' && req.method === 'POST') return app.watchlist(req)
+  if (pathname === '/api/app/mark' && req.method === 'POST') return app.mark(req)
   if (pathname === '/api/app/title-ids' && req.method === 'POST') return app.titleIds(req)
   if (pathname === '/api/app/rd-infringing' && req.method === 'POST') {
     const res = await app.rdInfringing(req)

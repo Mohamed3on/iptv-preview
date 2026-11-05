@@ -1,7 +1,7 @@
 // Trakt through the box (KTD19). The stick's Options start Trakt's device-code sign-in here; the box polls
 // for the owner's answer and keeps the tokens in .cache/trakt-token.json (atomic writes), refreshing a
 // quarter of the token's lifetime before it expires and saving the rotated refresh token. Films and episodes
-// the stick finished are written to Trakt history. New Trakt apps are public clients: TRAKT_CLIENT_SECRET is
+// the stick finished are written to Trakt history, and so are its marks and ratings. New Trakt apps are public clients: TRAKT_CLIENT_SECRET is
 // sent only when set. A refresh Trakt refuses leaves "reconnect" until the owner signs in again.
 import { readFile, rm } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
@@ -178,6 +178,33 @@ export async function setWatchlist(title: string, on: boolean): Promise<'ok' | '
   const r = await post(on ? '/sync/watchlist' : '/sync/watchlist/remove', body, access).catch(() => null)
   if (r?.status === 401) revoked()
   return r?.ok ? 'ok' : r?.status === 401 ? 'off' : 'error'
+}
+
+/** A film, show, season or episode the stick can mark: movie:N, tv:N, tv:N:sS, tv:N:sSeE. */
+export const MARKABLE = /^(movie|tv):(\d+)(?::s(\d+)(?:e(\d+))?)?$/
+
+/** Trakt's sync body for [title] (see [MARKABLE]), [extra] (a rating) on its innermost item; [seasons]: a whole show's. */
+function syncBody(title: string, extra: object, seasons: number[] = []) {
+  const [, kind, id, s, e] = title.match(MARKABLE)!
+  const ids = { tmdb: +id }
+  if (kind === 'movie') return { movies: [{ ids, ...extra }] }
+  if (s == null) return { shows: [{ ids, ...extra, ...(seasons.length && { seasons: seasons.map((number) => ({ number })) }) }] }
+  return { shows: [{ ids, seasons: [{ number: +s, ...(e == null ? extra : { episodes: [{ number: +e, ...extra }] }) }] }] }
+}
+
+/**
+ * Marks [title] watched (now) or not, and rates it 1–10 or clears its rating (null), on Trakt; [seasons] for a
+ * whole show, so its specials stay unmarked. "ok", "off" when not signed in, "error".
+ */
+export async function mark(title: string, { watched, rating }: { watched?: boolean; rating?: number | null }, seasons: number[] = []): Promise<'ok' | 'off' | 'error'> {
+  const access = await accessToken()
+  if (!access) return 'off'
+  const rs = await Promise.all([
+    watched != null && post(watched ? '/sync/history' : '/sync/history/remove', syncBody(title, {}, seasons), access),
+    rating !== undefined && post(rating ? '/sync/ratings' : '/sync/ratings/remove', syncBody(title, rating ? { rating } : {}), access),
+  ].filter((c) => c !== false).map((c) => c.catch(() => null)))
+  if (rs.some((r) => r?.status === 401)) revoked()
+  return rs.every((r) => r?.ok) ? 'ok' : rs.some((r) => r?.status === 401) ? 'off' : 'error'
 }
 
 /** For tests: forget what this process holds. */

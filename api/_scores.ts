@@ -20,7 +20,7 @@ import { parseTitleId } from './_tmdb.js'
 export interface ScoreEntry { ir?: number; iv?: number; lb?: number; lv?: number; ma?: number; im?: string; h?: number[]; ha?: number }
 export type ScoreCache = Record<string, ScoreEntry>
 /** A title's score as the library carries it: [s] = [s10] × 10, the sort key, plus the averages and votes shown. */
-export type Score = Pick<LibTitle, 's' | 's10' | 'ir' | 'iv' | 'lb' | 'lv'>
+export type Score = Pick<LibTitle, 's' | 's10' | 'ir' | 'iv' | 'lb' | 'lv' | 'ta' | 'tr' | 'tq'>
 
 /** Titles a row keeps after sorting (the rest stay findable through search). */
 export const ROW_CAP = 60
@@ -36,7 +36,7 @@ const median = (xs: number[]) => xs.slice().sort((a, b) => a - b)[Math.floor(xs.
 export const netScore = (net: number, total: number) => (total > 0 ? Math.sign(net) * Math.round((net * net) / total) : 0)
 
 const LBX_FILE = process.env.LETTERBOXD_HISTOGRAMS || '/var/lib/truescore/letterboxd.json'
-type LbxFilm = { h?: number[]; score?: number; adjusted?: number }
+type LbxFilm = { h?: number[]; score?: number; adjusted?: number; ratio?: number }
 const lbx = { at: 0, byId: new Map<string, LbxFilm>() }
 /**
  * TrueScore's score and Letterboxd's histogram (½★ to 5★) by movie:<tmdb>, from TrueScore's store on this box (what
@@ -48,10 +48,10 @@ export function letterboxdFilms(now = Date.now()) {
   lbx.at = now
   try {
     const byId = new Map<string, LbxFilm>()
-    for (const { h, score, adjusted, tmdb } of Object.values(JSON.parse(readFileSync(LBX_FILE, 'utf8')) as Record<string, LbxFilm & { tmdb?: number | null }>)) {
+    for (const { h, score, adjusted, ratio, tmdb } of Object.values(JSON.parse(readFileSync(LBX_FILE, 'utf8')) as Record<string, LbxFilm & { tmdb?: number | null }>)) {
       if (!tmdb) continue
       const id = `movie:${tmdb}`, was = byId.get(id) ?? {}
-      byId.set(id, { score: score ?? was.score, adjusted: adjusted ?? was.adjusted, h: h && sum(h) > sum(was.h ?? []) ? h : was.h })
+      byId.set(id, { score: score ?? was.score, adjusted: adjusted ?? was.adjusted, ratio: ratio ?? was.ratio, h: h && sum(h) > sum(was.h ?? []) ? h : was.h })
     }
     lbx.byId = byId
   } catch { /* the last read stands */ }
@@ -63,11 +63,13 @@ export function letterboxdFilms(now = Date.now()) {
  * 4½–5★ or 9–10, hated ½–1★ or 1–2: the same buckets), and each source's average shrunk toward 6.5 by its prior,
  * averaged by votes. The histogram gives the net share ((loved − hated) / total); its weight is the larger crowd of
  * IMDb's votes and the histogram's, so a Letterboxd-ranked film sits on the same scale as an IMDb-ranked one
- * (share × |share| × votes, which is [netScore] when the histogram is IMDb's own).
+ * (share × |share| × votes, which is [netScore] when the histogram is IMDb's own). A film in TrueScore's store also carries
+ * what its page shows: [ta] the adjusted score, [tr] the all-time net-loved ratio, [tq] the recent one (adjusted / |all-time|).
  */
 export function scoreTitles(cache: ScoreCache, lbxFilms = letterboxdFilms()): Map<string, Score> {
   const out = new Map<string, Score>()
-  for (const [id, e] of Object.entries(cache)) {
+  for (const id of new Set([...Object.keys(cache), ...lbxFilms.keys()])) {
+    const e = cache[id] ?? {}
     const src = ([[e.ir, e.iv, 3000], [e.lb && e.lb * 2, e.lv, 1000]] as number[][]).filter(([r, v]) => r && v)
     const votes = sum(src.map(([, v]) => v))
     const raw = votes && sum(src.map(([r, v, m]) => (v * (v * r + m * 6.5)) / (v + m))) / votes
@@ -80,12 +82,14 @@ export function scoreTitles(cache: ScoreCache, lbxFilms = letterboxdFilms()): Ma
       const share = (h![8] + h![9] - h![0] - h![1]) / total
       out.set(id, { s: Math.round(share * Math.abs(share) * Math.max(total, e.iv ?? 0)) })
     }
+    const r3 = (x: number) => Math.round(x * 1000) / 1000
+    if (lf?.ratio !== undefined) out.set(id, { ...out.get(id), tr: r3(lf.ratio), ...(lf.adjusted !== undefined && { ta: lf.adjusted, ...(lf.score && { tq: r3(lf.adjusted / Math.abs(lf.score)) }) }) })
     if (raw || Object.keys(shown).length) out.set(id, { ...out.get(id), ...(raw && { s10: Math.round(raw * 10) / 10 }), ...shown })
   }
   return out
 }
 
-const SCORE_KEYS = new Set(['s', 's10', 'sn', 'se', 'ir', 'iv', 'lb', 'lv'])
+const SCORE_KEYS = new Set(['s', 's10', 'sn', 'se', 'ir', 'iv', 'lb', 'lv', 'ta', 'tr', 'tq'])
 /** [t] without the scores a build gave it (older builds' sn and se too). */
 export const unscored = (t: LibTitle): LibTitle => Object.fromEntries(Object.entries(t).filter(([k]) => !SCORE_KEYS.has(k))) as LibTitle
 
@@ -100,7 +104,7 @@ export function ranked(lib: Library, scores: Map<string, Score>, cap = ROW_CAP):
     const known = r.i.map((i) => all[i].s).filter((s): s is number => s !== undefined)
     const mid = known.length ? median(known) : 0, lo = Math.min(0, ...known)
     const key = (i: number) => all[i].s ?? (all[i].s10 !== undefined ? lo - 10 + all[i].s10! : mid)
-    return { ...r, i: (!ordered(r.id) && r.i.some((i) => all[i].s10 !== undefined || all[i].s !== undefined) ? r.i.slice().sort((a, b) => key(b) - key(a)) : r.i).slice(0, cap) }
+    return { ...r, i: (!ordered(r.id) && r.i.some((i) => all[i].s10 !== undefined || all[i].s !== undefined) ? r.i.slice().sort((a, b) => key(b) - key(a)) : r.i).slice(0, ordered(r.id) ? undefined : cap) }
   })
   const kept = [...new Set(rows.flatMap((r) => r.i))].sort((a, b) => a - b)
   const index = new Map(kept.map((old, i) => [old, i]))

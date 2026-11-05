@@ -27,7 +27,8 @@ data class Movie(
 
 /**
  * What scores a title (U12): conviction [s] (orders rows) with its net share [sn] (%), [se] 1 when estimated; Letterboxd [lb] (0–5)
- * and IMDb [ir] (0–10) averages with their vote counts [lv] and [iv]; [s10] the combined score out of 10 cards show.
+ * and IMDb [ir] (0–10) averages with their vote counts [lv] and [iv]; [s10] the combined score out of 10 cards show. A film in
+ * TrueScore's store: its adjusted score [ta], all-time and recent net-loved ratios [tr] and [tq] (0–1).
  */
 interface Scored {
     val s: Int?
@@ -38,10 +39,13 @@ interface Scored {
     val lv: Int?
     val iv: Int?
     val s10: Double?
+    val ta: Int?
+    val tr: Double?
+    val tq: Double?
 }
 
 /** Any score is known. */
-val Scored.known get() = sn != null || lb != null || ir != null || s10 != null
+val Scored.known get() = sn != null || lb != null || ir != null || s10 != null || tr != null
 
 
 /**
@@ -55,6 +59,7 @@ data class LibTitle(
     val t: String = "", val e: Int = 0,
     override val s: Int? = null, override val sn: Int? = null, override val se: Int = 0, override val lb: Double? = null, override val ir: Double? = null,
     override val lv: Int? = null, override val iv: Int? = null, override val s10: Double? = null,
+    override val ta: Int? = null, override val tr: Double? = null, override val tq: Double? = null,
     val v: Int = 0, val x: String = "", val rt: Int = 0,
 ) : Scored {
     /** On screen, [genres] its first two genres' names. */
@@ -223,6 +228,7 @@ data class MovieInfo(
     val episodes: List<Episode> = emptyList(),
     override val s: Int? = null, override val sn: Int? = null, override val se: Int = 0, override val lb: Double? = null, override val ir: Double? = null,
     override val lv: Int? = null, override val iv: Int? = null, override val s10: Double? = null,
+    override val ta: Int? = null, override val tr: Double? = null, override val tq: Double? = null,
 ) : Scored {
     /** [more] as cards, built once. */
     @Transient val moreMovies: List<Movie> = more.map { it.toMovie() }

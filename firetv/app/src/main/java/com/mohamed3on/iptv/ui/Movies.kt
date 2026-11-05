@@ -213,8 +213,8 @@ private val WIDE = DpSize(184.dp, 104.dp)
 private val STILL = DpSize(128.dp, 72.dp)
 /** Room kept at the hero's right for the Search and Hide watched buttons. */
 private val SEARCH_ROOM = 168.dp
-/** Prefs key: "1" while the rows leave watched titles out. */
-private const val HIDE_WATCHED = "movies.hideWatched"
+/** Prefs key: "1" while the rows show watched titles (they leave them out by default). */
+private const val SHOW_WATCHED = "movies.showWatched"
 /** Backdrops decode at 720p: darkened behind text, more pixels show nothing and cost the stick's memory. */
 private val BACKDROP_PX = 1280 to 720
 private const val BACKDROP_FADE_MS = 400
@@ -554,6 +554,8 @@ private fun NextEpisode.place() = Resume(show.titleId, show.title.title, show.po
 
 /** A row of the library: one group's titles. [progress] is every saved place, by title id. */
 private const val CONTINUE_ROW = "h|continue"
+/** Titles a TrueScore row shows once watched ones are out. */
+private const val ROW_SHOWN = 60
 /** What was played (or a followed show's episode aired) within this long leads the screen as Up next; older is a Continue watching row. */
 private const val RECENT_MS = 7 * 86_400_000L
 
@@ -562,20 +564,21 @@ private class MovieRow(val key: String, val title: String, val badge: String?, v
 /**
  * The owner's Watchlist when it has titles (R26), then the library's rows (TrueScore's recent and all-time, trending, new,
  * genres, languages; the provider's groups when TMDB's are missing); what is part-way through lives in Up next, not here.
- * [hideWatched] leaves watched titles out of every row (a row left empty goes). What is part-way through but not recent
- * ([continuing]) is a plain Continue watching row after TrueScore's.
+ * [hideWatched] leaves watched titles out of the library's rows (a row left empty goes; TrueScore's, sent longer than
+ * they show, still show 60); the Watchlist keeps everything. What is part-way through but not
+ * recent ([continuing]) is a plain Continue watching row after TrueScore's.
  */
 private fun rowsOf(library: Catalog?, resume: List<Resume>, history: History?, watched: Set<TitleId>, hideWatched: Boolean, continuing: List<Movie>): List<MovieRow> {
     library ?: return emptyList()
     val progress = resume.filter { it.dur > 0 }.associate { it.title to it.pos.toFloat() / it.dur }
-    fun shown(movies: List<Movie>) = if (hideWatched) movies.filter { it.titleId !in watched } else movies
     // The library's own card for a title it has (its genres), else the history's.
     val mine = listOfNotNull(
-        history?.watchlist?.let(::shown)?.map { library.find(it.titleId) ?: it }?.takeIf { it.isNotEmpty() }?.let { MovieRow("h|watchlist", "Watchlist", null, it, progress) },
+        history?.watchlist?.map { library.find(it.titleId) ?: it }?.takeIf { it.isNotEmpty() }?.let { MovieRow("h|watchlist", "Watchlist", null, it, progress) },
     )
     val rows = library.rows.mapNotNull { row ->
         val label = groupLabel(row.name)
-        shown(row.movies).takeIf { it.isNotEmpty() }?.let { MovieRow("r|${row.id}", label.name, label.badge, it, progress) }
+        val movies = if (hideWatched) row.movies.filter { it.titleId !in watched } else row.movies
+        (if (row.id.startsWith("ts-")) movies.take(ROW_SHOWN) else movies).takeIf { it.isNotEmpty() }?.let { MovieRow("r|${row.id}", label.name, label.badge, it, progress) }
     }
     val at = rows.indexOfLast { it.key.startsWith("r|ts-") } + 1
     val later = continuing.takeIf { it.isNotEmpty() }?.let { MovieRow(CONTINUE_ROW, "Continue watching", null, it, progress) }
@@ -613,7 +616,7 @@ private fun MoviesBrowse(
 ) {
     val reduced = LocalReducedMotion.current
     val prefs = LocalContext.current.graph.prefs
-    var hideWatched by remember { mutableStateOf(prefs.get(HIDE_WATCHED) == "1") }
+    var hideWatched by remember { mutableStateOf(prefs.get(SHOW_WATCHED) == null) }
     // Each saved place with its title as last played (its provider id, for its episodes and IPTV copy) and as the
     // library has it now (tier and score), newest first; one played only from Real-Debrid from its own name and poster (R21).
     // Then followed shows' next episodes, latest aired first: one takes the hero only when nothing is part-way through.
@@ -782,10 +785,10 @@ private fun MoviesBrowse(
                     "Search", ::openSearch,
                     Modifier.focusRequester(searchButton).onFocusChanged { if (it.isFocused) at = FocusAt.SearchButton },
                 )
-                // Watched titles in the rows, or not (Up next and search keep them); kept across launches.
+                // Watched titles in the library's rows, or not (hidden at first; the Watchlist, Up next and search keep them); kept across launches.
                 PageButton(if (hideWatched) "Show watched" else "Hide watched", {
                     hideWatched = !hideWatched
-                    prefs.put(HIDE_WATCHED, if (hideWatched) "1" else null)
+                    prefs.put(SHOW_WATCHED, if (hideWatched) null else "1")
                 })
             }
         }
@@ -1104,11 +1107,27 @@ private fun MetaLine(movie: Movie, info: MovieInfo?, extra: String? = null, tier
 }
 
 /**
- * "IMDb 8.8 (2.9M) · Letterboxd 8.4 (4.6M) · You 9/10": IMDb's and Letterboxd's averages out of 10 (Letterboxd's doubled)
- * with their vote counts, and the owner's rating; each number in its colour on the review-score ramp, the rest
- * text-secondary; null when none is known.
+ * "TrueScore 7,735 · 23% → 27% net loved · You 9/10" for a film in TrueScore's store (all-time then recent net-loved
+ * share, the score in the colour of the latest), else "IMDb 8.8 (2.9M) · Letterboxd 8.4 (4.6M) · You 9/10": IMDb's and
+ * Letterboxd's averages out of 10 (Letterboxd's doubled) with their vote counts; then the owner's rating. Each number in
+ * its colour on the review-score ramp, the rest text-secondary; null when none is known.
  */
 private fun scoresLine(scored: Scored?, yours: Int?): AnnotatedString? {
+    val all = scored?.tr?.let(::pct)
+    if (all != null) return buildAnnotatedString {
+        val recent = scored.tq?.let(::pct)
+        withStyle(SpanStyle(color = Palette.textSecondary)) {
+            append("TrueScore ")
+            withStyle(SpanStyle(color = Palette.share(recent ?: all))) { append("%,d".format(Locale.US, scored.ta ?: scored.s ?: 0)) }
+            append(" · $all%")
+            if (recent != null) append(" → $recent%")
+            append(" net loved")
+            if (yours != null) {
+                append(" · You ")
+                withStyle(SpanStyle(color = Palette.outOf10(yours.toDouble()))) { append("$yours/10") }
+            }
+        }
+    }
     val parts = listOfNotNull(
         scored?.ir?.let { Triple("IMDb ", it, scored.iv) },
         scored?.lb?.let { Triple("Letterboxd ", it * 2, scored.lv) },
@@ -1127,6 +1146,9 @@ private fun scoresLine(scored: Scored?, yours: Int?): AnnotatedString? {
     }
 }
 
+/** A 0–1 ratio as a whole percentage. */
+private fun pct(ratio: Double) = Math.round(ratio * 100).toInt()
+
 /** 2.9M, 41K, 830. */
 private fun compactCount(n: Int) = when {
     n >= 999_500 -> "%.1fM".format(Locale.ROOT, n / 1e6).replace(".0M", "M")
@@ -1136,14 +1158,19 @@ private fun compactCount(n: Int) = when {
 
 private fun yoursLabel(rating: Int) = "You $rating/10"
 
-/** A card's corner: tier in its colour, then the combined score out of 10 in its own ([scored]'s when a title page learnt it); null when neither is known. */
+/**
+ * A card's corner: tier in its colour, then TrueScore's recent (else all-time) net-loved share for a film in its store, else the
+ * combined score out of 10, in its own colour ([scored]'s when a title page learnt it); null when neither is known.
+ */
 private fun cardChip(t: LibTitle, scored: Scored): AnnotatedString? {
+    val share = (scored.tq ?: scored.tr)?.let(::pct)
     val score = scored.s10
-    if (t.t.isEmpty() && score == null) return null
+    if (t.t.isEmpty() && share == null && score == null) return null
     return buildAnnotatedString {
         if (t.t.isNotEmpty()) withStyle(SpanStyle(color = tierColor(t.t), fontWeight = FontWeight.SemiBold)) { append(t.t) }
-        if (t.t.isNotEmpty() && score != null) append("  ")
-        if (score != null) withStyle(SpanStyle(color = Palette.outOf10(score))) { append("%.1f".format(Locale.ROOT, score)) }
+        if (t.t.isNotEmpty() && (share != null || score != null)) append("  ")
+        if (share != null) withStyle(SpanStyle(color = Palette.share(share))) { append("$share%") }
+        else if (score != null) withStyle(SpanStyle(color = Palette.outOf10(score))) { append("%.1f".format(Locale.ROOT, score)) }
     }
 }
 

@@ -11,7 +11,7 @@
 // Usage: bun scripts/build-library.ts   (XTREAM_*, TMDB_TOKEN, TRAKT_CLIENT_ID, MDBLIST_KEY from env / .env.local)
 import { readFile } from 'node:fs/promises'
 import { configFromEnv } from '../api/_lib.js'
-import { assemble, fromTmdb, LIBRARY_FILE, LIBRARY_FULL_FILE, providerTitles, ROW_CANDIDATES, rowDefs, saveLibrary, withProviderCopies, type Library, type LibTitle, type TmdbItem } from '../api/_library.js'
+import { assemble, fromTmdb, LIBRARY_FILE, LIBRARY_FULL_FILE, providerTitles, rowDefs, saveLibrary, withProviderCopies, type Library, type LibTitle, type TmdbItem } from '../api/_library.js'
 import { letterboxdFilms, loadScores, onScreen, ranked, refreshScores, saveScores, scoreTitles, unscored } from '../api/_scores.js'
 import { parseTitleId, runtimeOf, tmdbGet, type Kind } from '../api/_tmdb.js'
 import { historyTitles, loadHistory, refreshHistory, saveHistory, watchlistRuntimes } from '../api/_history.js'
@@ -90,9 +90,17 @@ const asked = await refreshScores([...new Set([...historyTitles(history), ...(pr
   fresh, scores, process.env.MDBLIST_KEY, { save: () => saveScores(scores) })
 await saveScores(scores)
 const scored = scoreTitles(scores)
-// TrueScore's rows: the films its store has that exact score for, best first (the rows keep this order).
+// TrueScore's rows: the films its store has that exact score for, best first, until 90 the owner hasn't watched are in
+// (the rows keep this order and length, so the app can leave watched titles out, its own new marks too, and still show 60).
+const seen = new Set([...(history?.movies ?? []), ...(history?.lb ?? []), ...Object.keys(history?.imdb ?? {})])
 for (const [row, by] of [['ts-recent', 'adjusted'], ['ts-all', 'score']] as const) {
-  const ids = [...letterboxdFilms()].filter(([, f]) => f[by] !== undefined).sort(([, a], [, b]) => b[by]! - a[by]!).slice(0, ROW_CANDIDATES).map(([id]) => id)
+  const ids: string[] = []
+  let unseen = 0
+  for (const [id] of [...letterboxdFilms()].filter(([, f]) => f[by] !== undefined).sort(([, a], [, b]) => b[by]! - a[by]!)) {
+    if (unseen >= 90) break
+    ids.push(id)
+    if (!seen.has(id)) unseen++
+  }
   await lookUp(ids)
   seeds[defs.findIndex((d) => d.id === row)] = ids.flatMap((id) => (known.get(id)?.p ? [known.get(id)!] : []))
 }

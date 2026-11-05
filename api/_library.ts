@@ -41,6 +41,10 @@ export interface LibTitle {
   iv?: number
   lb?: number
   lv?: number
+  /** TrueScore's adjusted score, all-time and recent net-loved ratios (0–1), for a film in its store (api/_scores.ts). */
+  ta?: number
+  tr?: number
+  tq?: number
   /** A film the provider has: its best copy's VOD id and container, which Play starts when the box can't answer (KTD13). */
   v?: number
   x?: string
@@ -145,7 +149,7 @@ function toLibrary(src: Library['src'], titles: Map<string, LibTitle>, rows: { i
   }
 }
 
-/** A row that comes in its own order (TrueScore's, by one exact score), kept as built rather than sorted by [s]. */
+/** A row that comes in its own order (TrueScore's, by one exact score), kept as built, whole, rather than sorted by [s] and cut (the app leaves out watched titles, then shows 60). */
 export const ordered = (rowId: string) => rowId.startsWith('ts-')
 
 /** Candidates a row keeps, the most convincing first (api/_scores.ts [s]; TMDB popularity after, for titles without), before scoring cuts it to ROW_CAP. */

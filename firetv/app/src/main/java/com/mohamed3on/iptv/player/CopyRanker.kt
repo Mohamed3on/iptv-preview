@@ -257,7 +257,11 @@ internal val DAY = DateTimeFormatter.ofPattern("d MMM", Locale.UK).withZone(Zone
 class CopyChoices(private val store: KeyValueStore, private val now: () -> Long = System::currentTimeMillis) {
     private val marks: MutableMap<String, MutableMap<String, Mark>> by lazy {
         read<Map<String, Map<String, Mark>>>(MARKS).orEmpty()
-            .mapValuesTo(mutableMapOf()) { (_, m) -> m.filterValues { it.expires > now() }.toMutableMap() }
+            // IPTV failures saved before they lapsed (never-expiring) lapse a day after they were made, like new ones.
+            .mapValuesTo(mutableMapOf()) { (_, m) ->
+                m.mapValues { (id, k) -> if (id.startsWith("iptv:") && !k.works && k.expires == Long.MAX_VALUE) k.copy(expires = k.at + IPTV_FAIL_MS) else k }
+                    .filterValues { it.expires > now() }.toMutableMap()
+            }
             .apply { values.removeAll { it.isEmpty() } }
     }
     private val corrections: MutableMap<String, Set<Correction>> by lazy { read<Map<String, Set<Correction>>>(CORRECTIONS).orEmpty().toMutableMap() }

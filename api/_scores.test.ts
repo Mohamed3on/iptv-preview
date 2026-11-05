@@ -68,3 +68,19 @@ test('Trakt and MDBList answers are cached; an exhausted MDBList quota keeps ear
   expect(cache['movie:2']).toMatchObject({ lb: 3.9 })
   expect(cache['movie:3']).toMatchObject({ lb: 4.4 })
 })
+
+test('Trakt limiting us (429, Cloudflare 1015) stops its phase after three in a row, keeping what was scored', async () => {
+  let asked = 0
+  const fake = (async (url: string) => {
+    asked++
+    if (url.includes('/search/tmdb/1')) return new Response(JSON.stringify([{ movie: { ids: { trakt: 11 } } }]))
+    if (url.includes('/movies/11/ratings')) return new Response(JSON.stringify({ distribution: { 10: 5 } }))
+    return new Response('error code: 1015', { status: 429, headers: { 'retry-after': '0' } })
+  }) as unknown as typeof fetch
+  const cache: ScoreCache = {}
+  const counts = await refreshScores(['movie:1', 'movie:2', 'movie:3'], new Set(), cache, { trakt: 'k' }, { fetch: fake, gap: 0, now: 1 })
+  expect(counts.trakt).toBe(1)
+  expect(cache['movie:1'].ta).toBe(1)
+  expect(cache['movie:2'].ta).toBeUndefined() // asked again next night
+  expect(asked).toBe(5) // movie:1's two, then three 429s
+})

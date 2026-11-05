@@ -109,7 +109,11 @@ export interface Keys { trakt?: string; mdblist?: string; scrape?: boolean }
 export interface RefreshOpts {
   fetch?: typeof fetch
   now?: number
-  /** Milliseconds between one service's requests (Trakt allows 1000 per 5 minutes). */
+  /**
+   * Milliseconds between one service's requests. Trakt allows 1000 per 5 minutes, but 3 a second for an hour got
+   * the box's IP blocked by Trakt's Cloudflare (429, error 1015): one a second leaves the server's own Trakt calls
+   * (sign-in, history) most of the budget. Trakt's backoff after a 429 is 30 × this, doubling.
+   */
   gap?: number
   /** MDBList requests this run may use (the free tier has 1000 a day). */
   mdbMax?: number
@@ -128,7 +132,7 @@ const IMDB = 'https://caching.graphql.imdb.com/'
  * titles with under 50 Trakt votes first, within its quota; IMDb weekly. Updates [cache] in place.
  */
 export async function refreshScores(ids: string[], fresh: Set<string>, cache: ScoreCache, keys: Keys, opts: RefreshOpts = {}) {
-  const { fetch: get = fetch, now = Date.now(), gap = 340, mdbMax = 1000, save } = opts
+  const { fetch: get = fetch, now = Date.now(), gap = 1000, mdbMax = 1000, save } = opts
   const tmdb = ids.flatMap((id) => {
     const p = parseTitleId(id)
     return p && p.season == null ? [{ id, kind: p.kind, n: p.tmdb }] : []
@@ -148,11 +152,20 @@ export async function refreshScores(ids: string[], fresh: Set<string>, cache: Sc
   if (keys.trakt) {
     const pace = paced()
     const headers = { 'content-type': 'application/json', 'trakt-api-version': '2', 'trakt-api-key': keys.trakt }
-    /** Trakt's JSON, null when it hasn't the title; throws on anything else (429 waits once). */
-    const trakt = async <T>(path: string, retry = true): Promise<T | null> => {
+    /**
+     * Trakt's JSON, null when it hasn't the title; throws on anything else. A 429 (Trakt's or its Cloudflare's 1015)
+     * waits its Retry-After or a doubling backoff, whichever is longer; the third in a row throws "Trakt limited".
+     */
+    let limited = 0
+    const trakt = async <T>(path: string): Promise<T | null> => {
       await pace()
       const r = await get(TRAKT + path, { headers })
-      if (r.status === 429 && retry) return Bun.sleep(Number(r.headers.get('retry-after') ?? 10) * 1000).then(() => trakt<T>(path, false))
+      if (r.status === 429) {
+        if (++limited >= 3) throw new Error('Trakt limited')
+        await Bun.sleep(Math.max(Number(r.headers.get('retry-after')) || 0, (gap / 1000) * 30 * 2 ** (limited - 1)) * 1000)
+        return trakt<T>(path)
+      }
+      limited = 0
       if (r.status === 404) return null
       if (!r.ok) throw new Error(`Trakt ${r.status}`)
       return r.json() as Promise<T>
@@ -177,8 +190,8 @@ export async function refreshScores(ids: string[], fresh: Set<string>, cache: Sc
         fails = 0
         await done()
       } catch (err) {
-        // A bad key, or Trakt down: the rest wait for tomorrow.
-        if (/Trakt 40[13]/.test(String(err)) || ++fails >= 5) { console.warn(`scores: ${err}; Trakt skipped`); break }
+        // A bad key, Trakt down or limiting us: what's scored is kept, the rest wait for tomorrow.
+        if (/Trakt (40[13]|limited)/.test(String(err)) || ++fails >= 5) { console.warn(`scores: ${err}; Trakt stopped after ${counts.trakt}`); break }
       }
     }
   }

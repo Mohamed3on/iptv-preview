@@ -553,14 +553,19 @@ private fun upNextIndex(episodes: List<Episode>, resume: Resume?, watched: Set<T
 private fun NextEpisode.place() = Resume(show.titleId, show.title.title, show.poster, show.title.year, 0, 0, 0, episode, label)
 
 /** A row of the library: one group's titles. [progress] is every saved place, by title id. */
+private const val CONTINUE_ROW = "h|continue"
+/** What was played (or a followed show's episode aired) within this long leads the screen as Up next; older is a Continue watching row. */
+private const val RECENT_MS = 7 * 86_400_000L
+
 private class MovieRow(val key: String, val title: String, val badge: String?, val movies: List<Movie>, val progress: Map<TitleId, Float>)
 
 /**
  * The owner's Watchlist when it has titles (R26), then the library's rows (TrueScore's recent and all-time, trending, new,
  * genres, languages; the provider's groups when TMDB's are missing); what is part-way through lives in Up next, not here.
- * [hideWatched] leaves watched titles out of every row (a row left empty goes).
+ * [hideWatched] leaves watched titles out of every row (a row left empty goes). What is part-way through but not recent
+ * ([continuing]) is a plain Continue watching row after TrueScore's.
  */
-private fun rowsOf(library: Catalog?, resume: List<Resume>, history: History?, watched: Set<TitleId>, hideWatched: Boolean): List<MovieRow> {
+private fun rowsOf(library: Catalog?, resume: List<Resume>, history: History?, watched: Set<TitleId>, hideWatched: Boolean, continuing: List<Movie>): List<MovieRow> {
     library ?: return emptyList()
     val progress = resume.filter { it.dur > 0 }.associate { it.title to it.pos.toFloat() / it.dur }
     fun shown(movies: List<Movie>) = if (hideWatched) movies.filter { it.titleId !in watched } else movies
@@ -568,10 +573,13 @@ private fun rowsOf(library: Catalog?, resume: List<Resume>, history: History?, w
     val mine = listOfNotNull(
         history?.watchlist?.let(::shown)?.map { library.find(it.titleId) ?: it }?.takeIf { it.isNotEmpty() }?.let { MovieRow("h|watchlist", "Watchlist", null, it, progress) },
     )
-    return mine + library.rows.mapNotNull { row ->
+    val rows = library.rows.mapNotNull { row ->
         val label = groupLabel(row.name)
         shown(row.movies).takeIf { it.isNotEmpty() }?.let { MovieRow("r|${row.id}", label.name, label.badge, it, progress) }
     }
+    val at = rows.indexOfLast { it.key.startsWith("r|ts-") } + 1
+    val later = continuing.takeIf { it.isNotEmpty() }?.let { MovieRow(CONTINUE_ROW, "Continue watching", null, it, progress) }
+    return mine + rows.take(at) + listOfNotNull(later) + rows.drop(at)
 }
 
 /** Which part of the browsing screen is up. */
@@ -606,16 +614,21 @@ private fun MoviesBrowse(
     val reduced = LocalReducedMotion.current
     val prefs = LocalContext.current.graph.prefs
     var hideWatched by remember { mutableStateOf(prefs.get(HIDE_WATCHED) == "1") }
-    val rows = remember(library, resume, history, watched, hideWatched) { rowsOf(library, resume, history, watched, hideWatched) }
     // Each saved place with its title as last played (its provider id, for its episodes and IPTV copy) and as the
     // library has it now (tier and score), newest first; one played only from Real-Debrid from its own name and poster (R21).
     // Then followed shows' next episodes, latest aired first: one takes the hero only when nothing is part-way through.
-    val upNext = remember(library, resume, nextUp) {
-        if (library == null) emptyList() else resume.map { r ->
+    // Only what was played, or aired, in the last week is Up next; the rest is the Continue watching row.
+    val (upNext, older) = remember(library, resume, nextUp) {
+        if (library == null) return@remember emptyList<Pair<Movie, Resume>>() to emptyList<Movie>()
+        val since = System.currentTimeMillis() - RECENT_MS
+        val sinceDay = java.time.LocalDate.now().minusDays(RECENT_MS / 86_400_000L).toString()
+        val all = resume.map { r ->
             val now = library.find(r.title)
-            (r.iptv?.let { if (now != null) it.copy(lib = now.lib, group = now.group) else it } ?: now ?: placeTitle(r)) to r
-        } + nextUp.map { n -> (library.find(n.show.titleId) ?: n.show) to n.place() }
+            Triple(r.iptv?.let { if (now != null) it.copy(lib = now.lib, group = now.group) else it } ?: now ?: placeTitle(r), r, r.at >= since)
+        } + nextUp.map { n -> Triple(library.find(n.show.titleId) ?: n.show, n.place(), n.air >= sinceDay) }
+        all.filter { it.third }.map { it.first to it.second } to all.filterNot { it.third }.map { it.first }
     }
+    val rows = remember(library, resume, history, watched, hideWatched, older) { rowsOf(library, resume, history, watched, hideWatched, older) }
     val newShows = remember(nextUp) { nextUp.filter { it.new }.mapTo(HashSet()) { it.show.titleId } }
     var page by remember { mutableStateOf(BrowsePage.UpNext) }
     var beforeSearch by remember { mutableStateOf(BrowsePage.UpNext) }
@@ -753,6 +766,7 @@ private fun MoviesBrowse(
                             rows, watched, content, active,
                             onFocused = { focused.value = it },
                             onOpen = onOpen,
+                            onRemove = onRemove,
                             // Up from the first row: back to Up next, else to Search.
                             onTop = { if (upNext.isNotEmpty()) page = BrowsePage.UpNext else runCatching { searchButton.requestFocus() } },
                         )
@@ -1317,7 +1331,7 @@ private fun rememberKeepClear(): BringIntoViewSpec {
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun Rows(rows: List<MovieRow>, watched: Set<TitleId>, focus: FocusRequester, active: Boolean, onFocused: (Movie) -> Unit, onOpen: (Movie) -> Unit, onTop: () -> Unit) {
+private fun Rows(rows: List<MovieRow>, watched: Set<TitleId>, focus: FocusRequester, active: Boolean, onFocused: (Movie) -> Unit, onOpen: (Movie) -> Unit, onRemove: (Movie) -> Unit, onTop: () -> Unit) {
     val density = LocalDensity.current
     val scope = rememberCoroutineScope()
     val first = remember { FocusRequester() }
@@ -1387,6 +1401,15 @@ private fun Rows(rows: List<MovieRow>, watched: Set<TitleId>, focus: FocusReques
                             opened = row.key to movie.id
                             onOpen(movie)
                         },
+                        // Continue watching: Menu takes a title out, as on Up next.
+                        // Focus stays in the row (the next card), else the rows' first when it was the last.
+                        onMenu = if (row.key != CONTINUE_ROW) null else { movie ->
+                            onRemove(movie)
+                            scope.launch {
+                                withFrameNanos {}
+                                if (row.movies.size > 1) runCatching { rowFocus[row.key]?.requestFocus() } else runCatching { focus.requestFocus() }
+                            }
+                        },
                         onVertical = { down ->
                             when {
                                 !down && i == 0 -> onTop()
@@ -1404,7 +1427,7 @@ private fun Rows(rows: List<MovieRow>, watched: Set<TitleId>, focus: FocusReques
 @Composable
 private fun PosterRow(
     row: MovieRow, watched: Set<TitleId>, rowFocus: FocusRequester, entry: FocusRequester?, startAt: Int, back: Pair<Int, FocusRequester>?,
-    onFocused: (Int, Movie) -> Unit, onOpen: (Movie) -> Unit, onVertical: (down: Boolean) -> Unit,
+    onFocused: (Int, Movie) -> Unit, onOpen: (Movie) -> Unit, onVertical: (down: Boolean) -> Unit, onMenu: ((Movie) -> Unit)? = null,
 ) {
     val own = remember { FocusRequester() }
     val restore = entry ?: own
@@ -1458,6 +1481,7 @@ private fun PosterRow(
                         onFocused(col, movie)
                     },
                     onClick = { onOpen(movie) },
+                    onMenu = onMenu?.let { remove -> { remove(movie) } },
                 )
             }
         }
@@ -1469,7 +1493,7 @@ private fun PosterRow(
  * none. Focus lifts it toward the viewer with an accent ring, on one spring read only while drawing.
  */
 @Composable
-private fun PosterCard(movie: Movie, progress: Float?, watched: Boolean = false, focus: FocusRequester?, back: FocusRequester? = null, onFocused: () -> Unit, onClick: () -> Unit) {
+private fun PosterCard(movie: Movie, progress: Float?, watched: Boolean = false, focus: FocusRequester?, back: FocusRequester? = null, onFocused: () -> Unit, onClick: () -> Unit, onMenu: (() -> Unit)? = null) {
     val watchlist = LocalContext.current.graph.watchlist
     val reduced = LocalReducedMotion.current
     val context = LocalPlatformContext.current
@@ -1494,8 +1518,8 @@ private fun PosterCard(movie: Movie, progress: Float?, watched: Boolean = false,
                 if (it.isFocused) onFocused() else told = false
             }
             .onKeyEvent {
-                if (remoteKey(it.nativeKeyEvent.keyCode) != RemoteKey.Menu || !watchlist.canHold(movie.titleId)) return@onKeyEvent false
-                if (it.type == KeyEventType.KeyDown) told = !watchlist.toggle(movie.titleId)
+                if (remoteKey(it.nativeKeyEvent.keyCode) != RemoteKey.Menu || (onMenu == null && !watchlist.canHold(movie.titleId))) return@onKeyEvent false
+                if (it.type == KeyEventType.KeyDown) if (onMenu != null) onMenu() else told = !watchlist.toggle(movie.titleId)
                 true
             }
             .clickable(interaction, indication = null, onClick = onClick)

@@ -119,8 +119,8 @@ private class TitlesAnswer(val name: String = "", val titles: List<LibTitle> = e
 /** `/api/app/search`'s or `/api/app/person`'s titles as cards. */
 fun parseTitles(text: String): List<Movie> = json.decodeFromString(TitlesAnswer.serializer(), text).titles.map { it.toMovie() }
 
-/** A followed show's next episode (`/api/app/history`): [episode] "S2 E4" ([label]), [new] when it aired after the show was last watched. */
-class NextEpisode(val show: Movie, val episode: TitleId, val label: String, val new: Boolean)
+/** A followed show's next episode (`/api/app/history`): [episode] "S2 E4" ([label]), [new] when it aired after the show was last watched, [air] its air date ("2026-11-04"). */
+class NextEpisode(val show: Movie, val episode: TitleId, val label: String, val new: Boolean, val air: String = "")
 
 /**
  * The owner's history from the box (U16): every film and episode Trakt and Letterboxd mark [watched] (merged with
@@ -134,11 +134,11 @@ class History(val watched: Set<TitleId>, val watchlist: List<Movie>, val next: L
 private class HistoryJson(val watched: List<TitleId> = emptyList(), val watchlist: List<LibTitle> = emptyList(), val next: List<NextJson> = emptyList(), val ratings: Map<TitleId, Int> = emptyMap(), val lbw: List<TitleId> = emptyList())
 
 @Serializable
-private class NextJson(val t: LibTitle, val ep: TitleId, val c: String, val new: Int = 0)
+private class NextJson(val t: LibTitle, val ep: TitleId, val c: String, val new: Int = 0, val air: String = "")
 
 fun parseHistory(text: String): History {
     val h = json.decodeFromString(HistoryJson.serializer(), text)
-    return History(h.watched.toHashSet(), h.watchlist.map { it.toMovie() }, h.next.map { NextEpisode(it.t.toMovie(), it.ep, it.c, it.new == 1) }, h.ratings, h.lbw.toHashSet())
+    return History(h.watched.toHashSet(), h.watchlist.map { it.toMovie() }, h.next.map { NextEpisode(it.t.toMovie(), it.ep, it.c, it.new == 1, it.air) }, h.ratings, h.lbw.toHashSet())
 }
 
 /** A movie's name as shown: [title] without the provider's [badge] prefix ("EN", "HDR") and the [year] pulled out. */

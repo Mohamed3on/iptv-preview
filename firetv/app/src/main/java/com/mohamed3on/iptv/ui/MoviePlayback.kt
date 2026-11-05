@@ -429,7 +429,7 @@ internal fun MoviePlayback(
                     }
                     AndroidKeyEvent.KEYCODE_MEDIA_REWIND -> if (down) seekBy(-JUMP_MS)
                     AndroidKeyEvent.KEYCODE_MEDIA_FAST_FORWARD -> if (down) seekBy(JUMP_MS)
-                    // Up takes the offer showing (▲), unused otherwise.
+                    // Up takes the offer or Skip intro showing (▲), unused otherwise.
                     AndroidKeyEvent.KEYCODE_DPAD_UP -> if (down && native.repeatCount == 0) session.accept()
                     AndroidKeyEvent.KEYCODE_DPAD_DOWN -> {}
                     else -> return@onKeyEvent false
@@ -829,6 +829,7 @@ private fun noticeText(n: Notice) = when (n) {
     is Notice.PinCleared -> NoticeText("Your pinned version won’t play here, so it’s unpinned")
     is Notice.TrialResult -> NoticeText(if (n.works) "${short(n.copy)} works here" else "${short(n.copy)} didn’t play here · back to the last version")
     is Notice.Subtitles -> NoticeText("${fetchedName(n.language)} subtitles from OpenSubtitles · timing in Options")
+    is Notice.SkipIntro -> NoticeText("Intro", "Skip")
 }
 
 private val NOTICE_WIDTH = 420.dp

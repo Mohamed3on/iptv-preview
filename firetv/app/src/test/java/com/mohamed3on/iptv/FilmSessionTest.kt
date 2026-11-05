@@ -78,6 +78,11 @@ private class FakeFilm(private val scope: CoroutineScope, private val clock: () 
         if (since == null) since = clock()
     }
 
+    override fun seek(position: Long) {
+        base = place.copy(position = position)
+        if (since != null) since = clock()
+    }
+
     override fun setListener(listener: FilmPlayer.Listener?) {
         this.listener = listener
     }

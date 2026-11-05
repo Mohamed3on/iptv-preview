@@ -762,6 +762,8 @@ App paths are under `firetv/app/src/main/java/com/mohamed3on/iptv/`, and app tes
   2. Go if at least 40% have timestamps. Otherwise record the figure in this plan and stop.
 - **Test expectation:** none until go; on go, one test that maps a timestamp response to a skip window.
 - **Verification:** Either the coverage figure is recorded and the unit closed, or a Skip intro prompt appears on a covered episode.
+- **Measured 2026-11-05: go, 29 of 30 episodes (97%).** Trakt wasn't signed in, so the owner's Real-Debrid torrent list stood in for history: the 30 newest episodes by date added (Breaking Bad S01E01–02, Friends S01E02, The Pitt S02E01–03 and S01E15, Ride or Die S01E01–08, Game of Thrones S04E05–09, Severance S02E02–10, Twin Peaks S01E01). Per source: IntroDB (`api.introdb.app/segments`, IMDb id) 25/30, TheIntroDB (`api.theintrodb.org/v2/media`, TMDB id) 20/30, SkipDB (`api.skipdb.tv/api/segments`, IMDb id) 20/30; all free and keyless. TheIntroDB and IntroDB together reach the 29 (SkipDB adds none); the miss, Severance S02E08, is marked "no intro" by IntroDB. Chapter names weren't counted: that needs the files. AniSkip wasn't needed (no anime among the 30). Nuvio and Stremio Kai use IntroDB; a Stremio webOS fork uses SkipDB. A re-measure on real Trakt history (`.cache/history.json` `eps.slice(0, 30)`) is possible once the owner signs in.
+- **Built:** `api/_intros.ts` asks TheIntroDB, then IntroDB, and keeps each episode's answer in `.cache/intros/` (30 days found, 1 day none). The answer rides in the episode's `/api/app/copies` answer as `intro: [startMs, endMs]`, so it is prefetched with the copies. `FilmSession` shows `Notice.SkipIntro` once while the intro plays (not in its last 3 s), and takes it away when playback leaves the intro. ▲ (`accept()`) seeks to the intro's end. The corner reads "Intro ▲ Skip".
 
 ---
 
@@ -826,4 +828,4 @@ Never stream between 01:50 and 02:50 UTC (the nightly quality probe needs the on
 - How Fire OS's "Dolby Digital Plus" and "Best available" audio settings change the reported encodings (U5, measured on the stick).
 - Season-pack file matching for episodes: Torrentio's file index first, checked against TMDB runtime within 10% (U3, U9).
 - Whether IMDb and Letterboxd histograms can be fetched from the box at all (U12).
-- The source of intro timestamps and its coverage (U17).
+- ~~The source of intro timestamps and its coverage (U17).~~ Settled 2026-11-05: TheIntroDB, then IntroDB; 97% of the last 30 episodes.

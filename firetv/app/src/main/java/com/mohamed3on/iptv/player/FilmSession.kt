@@ -28,6 +28,7 @@ interface FilmPlayer {
     fun stop()
     fun pause()
     fun play()
+    fun seek(position: Long)
     /** Where playback is now, with the languages chosen. */
     val place: Place
     /** The film's length in ms; 0 until known. */
@@ -44,15 +45,15 @@ interface FilmPlayer {
     }
 }
 
-/** A title's copies as discovery returns them; [rd] is each Real-Debrid copy's torrent, by copy id; [originalLanguage] when known. */
-class TitleCopies(val copies: List<Copy>, val rd: Map<String, RdCandidate> = emptyMap(), val originalLanguage: String? = null)
+/** A title's copies as discovery returns them; [rd] is each Real-Debrid copy's torrent, by copy id; [originalLanguage] when known; an episode's [intro] (ms) when known. */
+class TitleCopies(val copies: List<Copy>, val rd: Map<String, RdCandidate> = emptyMap(), val originalLanguage: String? = null, val intro: LongRange? = null)
 
 enum class FilmPhase { Stopped, Loading, Starting, Playing, Ended, Unavailable }
 
 /** R10's better copy once bandwidth recovers, R28's untested copy, KTD12's lighter copy for a pinned one that stalls. */
 enum class OfferKind { Better, Untested, Lighter }
 
-/** What the corner shows, one at a time. An offer shows [FilmSession.OFFER_MS] (▲ accepts), the rest [FilmSession.INFO_MS]. */
+/** What the corner shows, one at a time. An offer or Skip intro shows [FilmSession.OFFER_MS] (▲ accepts), the rest [FilmSession.INFO_MS]. */
 sealed interface Notice {
     data class Offer(val kind: OfferKind, val copy: Copy) : Notice
     /** An automatic step-down; Versions can reverse it (R13). */
@@ -62,6 +63,8 @@ sealed interface Notice {
     data class TrialResult(val copy: Copy, val works: Boolean) : Notice
     /** Subtitles in [language] ("en", "ar") came from OpenSubtitles and show (R30). */
     data class Subtitles(val language: String) : Notice
+    /** The intro plays; ▲ jumps to its [end] (R33). Goes once playback leaves it. */
+    data class SkipIntro(val end: Long) : Notice
 }
 
 /** For telemetry (/api/app/events). */
@@ -150,6 +153,9 @@ class FilmSession(
     private var pausedAt: Long? = null
     private var stale = false
     private var panel = false
+    private var intro: LongRange? = null
+    /** Skip intro is offered once a play. */
+    private var introRaised = false
 
     init {
         player.setListener(object : FilmPlayer.Listener {
@@ -197,8 +203,13 @@ class FilmSession(
         }
     }
 
-    /** ▲ on an offer: switches to its copy at the same place (a trial for an untested one). False when no offer shows. */
+    /** ▲ on an offer: switches to its copy at the same place (a trial for an untested one); on Skip intro, jumps past it. False when neither shows. */
     fun accept(): Boolean {
+        (notices.firstOrNull() as? Notice.SkipIntro)?.let {
+            dismiss(accepted = true)
+            player.seek(it.end)
+            return true
+        }
         val n = notices.firstOrNull() as? Notice.Offer ?: return false
         dismiss(accepted = true)
         if (n.kind == OfferKind.Better) better = null
@@ -279,6 +290,7 @@ class FilmSession(
         copies = t.copies + listOfNotNull(fallback?.takeIf { f -> t.copies.none { it.id == f.id } })
         torrents = t.rd
         t.originalLanguage?.let { originalLanguage = it }
+        t.intro?.let { intro = it }
         rerank()
         check()
     }
@@ -498,7 +510,7 @@ class FilmSession(
 
     private fun tick() {
         val t = now()
-        notices.firstOrNull()?.let { if (t - noticeAt >= if (it is Notice.Offer) OFFER_MS else INFO_MS) dismiss(accepted = false) }
+        notices.firstOrNull()?.let { if (t - noticeAt >= if (it is Notice.Offer || it is Notice.SkipIntro) OFFER_MS else INFO_MS) dismiss(accepted = false) }
         if (attempt && phase == FilmPhase.Starting && t - openedAt >= START_MS) return failed(StreamFailure.Timeout)
         if (phase != FilmPhase.Playing) return
         val copy = current ?: return
@@ -508,7 +520,19 @@ class FilmSession(
             rerank()
             trialOver(copy, works = true)
         }
+        skipIntro()
         offers(t, copy)
+    }
+
+    /** R33: while the intro plays (not in its last seconds), Skip intro shows once; leaving the intro takes it away. */
+    private fun skipIntro() {
+        val w = intro ?: return
+        val at = player.place.position
+        if (notices.firstOrNull() is Notice.SkipIntro && at !in w) dismiss(accepted = false)
+        if (!introRaised && notices.isEmpty() && pausedAt == null && at >= w.first && at < w.last - INTRO_TAIL_MS) {
+            introRaised = true
+            notify(Notice.SkipIntro(w.last))
+        }
     }
 
     /** KTD11: an offer waits for 5 min of bandwidth 1.3× the better copy's, or 10 s of play for an untested one; never late in the film. */
@@ -567,6 +591,7 @@ class FilmSession(
         const val WAIT_MS = 4_000L
         const val OFFER_MS = 12_000L
         const val INFO_MS = 6_000L
+        private const val INTRO_TAIL_MS = 3_000L
         private const val TICK_MS = 1_000L
         /** First frame of a film, over a connect and the 1.5 s start buffer. */
         private const val START_MS = 15_000L

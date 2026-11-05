@@ -6,6 +6,7 @@ import { mkdir, readFile, rename } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { getJson } from './_http.js'
+import { introFor, type Intro } from './_intros.js'
 import type { XtreamConfig } from './_lib.js'
 import { claimedPicture, measuredStream, streamLabels, type Measured, type ProbedStream } from './_quality-labels.js'
 import { flagLanguages, parseRelease, type Attrs } from './_release-name.js'
@@ -51,6 +52,8 @@ export interface Copies {
   /** Minutes (an episode's for shows); 0 unknown. */
   runtime: number
   sources: { iptv: Status; rd: Status }
+  /** An episode's intro, for Skip intro; absent when unknown or not in time. */
+  intro?: Intro
   copies: (IptvCopy | RdCopy)[]
 }
 
@@ -235,15 +238,17 @@ export async function titleCopies(title: string, iptv: Promise<IptvCopy[]>, wait
       .filter((c) => !(now - (refused[c.hash] ?? 0) < INFRINGING_MS))
       .map((c) => ({ ...c, kbps: t.runtime > 0 ? Math.round((c.size * 8) / (t.runtime * 60) / 1000) : 0 }))
   })
+  const intro = m && /:s\d+e\d+$/.test(title) ? meta.then((t) => introFor(title, t?.imdb)) : Promise.resolve(null)
   const late = Bun.sleep(waitMs).then(() => 'pending' as const)
   const settle = <T>(p: Promise<T>) => Promise.race([p.then((v) => ({ v }), () => 'unavailable' as const), late])
-  const [i, r, t] = await Promise.all([iptv.then((v) => ({ v }), () => 'unavailable' as const), settle(rd), settle(meta)])
+  const [i, r, t, o] = await Promise.all([iptv.then((v) => ({ v }), () => 'unavailable' as const), settle(rd), settle(meta), settle(intro)])
   const tmdb = typeof t === 'object' ? t.v : null
   return {
     titleId: title,
     originalLanguage: tmdb?.originalLanguage ?? '',
     runtime: tmdb?.runtime ?? 0,
     sources: { iptv: typeof i === 'object' ? 'ok' : i, rd: typeof r === 'object' ? 'ok' : r },
+    ...(typeof o === 'object' && o.v && { intro: o.v }),
     copies: [...(typeof i === 'object' ? i.v : []), ...(typeof r === 'object' ? r.v : [])],
   }
 }

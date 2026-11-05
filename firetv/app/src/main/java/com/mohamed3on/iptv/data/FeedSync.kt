@@ -399,9 +399,9 @@ class FeedSync(
     }
 }
 
-/** `/api/app/copies`: a title's copies, its original language (ISO 639-1, "" unknown) and each source's state ("ok", "pending", "unavailable"). */
+/** `/api/app/copies`: a title's copies, its original language (ISO 639-1, "" unknown), each source's state ("ok", "pending", "unavailable") and an episode's [intro] ([start, end] ms, empty unknown). */
 @Serializable
-data class CopiesAnswer(val titleId: String = "", val originalLanguage: String = "", val runtime: Int = 0, val sources: CopySources = CopySources(), val copies: List<ServerCopy> = emptyList())
+data class CopiesAnswer(val titleId: String = "", val originalLanguage: String = "", val runtime: Int = 0, val sources: CopySources = CopySources(), val copies: List<ServerCopy> = emptyList(), val intro: List<Long> = emptyList())
 
 /** `/api/app/subtitles`: [status] "ok", "none" or "quota" (no subtitles today); [subs] best first, English before Arabic. */
 @Serializable

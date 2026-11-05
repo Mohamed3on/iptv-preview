@@ -121,6 +121,7 @@ class ExoFilmPlayer(private val exo: ExoPlayer) : FilmPlayer {
     override fun stop() = exo.stop()
     override fun pause() = exo.pause()
     override fun play() = exo.play()
+    override fun seek(position: Long) = exo.seekTo(position)
     override val place get() = Place(exo.currentPosition, language(C.TRACK_TYPE_AUDIO), language(C.TRACK_TYPE_TEXT))
     override val duration get() = exo.duration.coerceAtLeast(0)
 

@@ -161,7 +161,7 @@ fun answerOf(a: CopiesAnswer): TitleAnswer {
     val copies = server.map { (id, s) -> copyOf(id, s) }
     val rd = server.filterValues { it.src == "rd" }.mapValues { (_, s) -> RdCandidate(s.hash, s.file, s.filename, s.cached) }
     return TitleAnswer(
-        TitleCopies(copies, rd, a.originalLanguage.ifEmpty { null }),
+        TitleCopies(copies, rd, a.originalLanguage.ifEmpty { null }, a.intro.takeIf { it.size == 2 }?.let { it[0]..it[1] }),
         rdPending = a.sources.rd == "pending", rdUnavailable = a.sources.rd == "unavailable", iptvUnavailable = a.sources.iptv == "unavailable",
         server = server,
     )

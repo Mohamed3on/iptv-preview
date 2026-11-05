@@ -363,6 +363,8 @@ fun MoviesLayer(
         live.stop()
         playing = next
         onPlaying(true)
+        // Closing the app mid-film reopens it playing from its saved place (a show: its episode up next).
+        graph.prefs.put(Check.LAST_SCREEN, "play:${next.show?.show?.titleId ?: next.title}")
     }
 
     fun episode(show: Movie, episodes: List<Episode>, index: Int, from: Long): Playing {
@@ -413,6 +415,7 @@ fun MoviesLayer(
     fun stopped() {
         playing = null
         onPlaying(false)
+        graph.prefs.put(Check.LAST_SCREEN, (pages.lastOrNull() as? LibraryPage.Title)?.let { "title:${it.movie.titleId}" } ?: "movies")
     }
 
     // firetv/check.sh (system/Check): the browsing screen is shown (two frames: its rows build a frame late), the
@@ -436,7 +439,7 @@ fun MoviesLayer(
         val title = lib.find(id) ?: Movie(id = -1, name = id, group = "", titleId = id)
         when (verb) {
             "title", "versions" -> push(LibraryPage.Title(title, versions = verb == "versions"))
-            "play" -> playFilm(title, fromStart = false)
+            "play" -> resumeTitle(title, fromStart = false)
         }
     }
 
@@ -468,7 +471,7 @@ fun MoviesLayer(
                     val top = i == pages.lastIndex
                     val active = open && playing == null && top
                     val hidden = playing != null || !top
-                    val back = { pages.removeAt(pages.lastIndex) }
+                    val back = { pages.removeAt(pages.lastIndex).also { if (pages.isEmpty()) graph.prefs.put(Check.LAST_SCREEN, "movies") } }
                     when (page) {
                         is LibraryPage.Cast -> PersonPage(page.person, watched, active, hidden, onOpen = { push(LibraryPage.Title(it)) }, onBack = { back() })
                         is LibraryPage.Title -> {
@@ -1613,6 +1616,7 @@ private fun FilmPage(
     LaunchedEffect(Unit) {
         withFrameNanos {}
         Check.log("title_shown", "title" to film.titleId)
+        graph.prefs.put(Check.LAST_SCREEN, "title:${film.titleId}")
     }
     LaunchedEffect(active, versions, unavailable, hasExtras) {
         if (!active || versions) return@LaunchedEffect

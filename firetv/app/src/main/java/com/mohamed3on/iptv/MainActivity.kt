@@ -103,7 +103,8 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        Check.request(intent.getStringExtra("open"))
+        // A launch reopens Movies & Shows (or the title page) it was closed on; a check target wins.
+        Check.request(intent.getStringExtra("open") ?: graph.prefs.get(Check.LAST_SCREEN))
         val sync = graph.sync
         // The pool lives from onStart to onStop (KTD7); multi-view takes its tiles' players from it.
         val pool = PlayerPool(this, graph.http)

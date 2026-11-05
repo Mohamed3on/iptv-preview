@@ -10,6 +10,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
  * Each event is one `IptvCheck` logcat line, `<event> ms=<since the last open> key=value …`.
  */
 object Check {
+    /** Prefs key: the screen to reopen on the next launch (`movies`, `title:<titleId>`), absent for live TV. */
+    const val LAST_SCREEN = "screen.last"
+
     /** The open target not yet acted on; whoever shows it sets it back to null. */
     val open = MutableStateFlow<String?>(null)
     @Volatile private var since = SystemClock.elapsedRealtime()

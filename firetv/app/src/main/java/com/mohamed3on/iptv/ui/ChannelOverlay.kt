@@ -34,6 +34,11 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.compositionLocalOf
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.CornerRadius
+import com.mohamed3on.iptv.ui.theme.Radius
+import com.mohamed3on.iptv.data.FAVOURITES
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.State
@@ -195,6 +200,13 @@ private fun teamWords(title: String): Set<String> =
 private fun Feed.bestOf(channel: Channel) = familyMembers(channel.family).firstOrNull() ?: channel
 
 private const val TROPHY = "🏆"
+
+/** Which section of the groups column [group] is in: Favourites, the 🏆 competitions, or the rest. */
+private fun groupSection(group: String) = when {
+    group == FAVOURITES -> 0
+    group.startsWith(TROPHY) -> 1
+    else -> 2
+}
 
 /** A group's name as shown: the 🏆 marker is for sorting, not for reading. */
 internal fun groupLabel(group: String) = group.removePrefix(TROPHY).trimStart()
@@ -412,6 +424,8 @@ fun ChannelOverlay(
     updateRow: LazyListScope.() -> Unit = {},
     entrance: () -> Float = { 1f },
     onLibrary: ((LibraryKind) -> Unit)? = null,
+    /** In pick mode (no [onPreview]), what OK does with the focused row's channel, said in its last line. */
+    pickHint: ((Channel) -> String?)? = null,
 ) {
     val reduced = LocalReducedMotion.current
     val stay by rememberUpdatedState(open)
@@ -894,15 +908,17 @@ fun ChannelOverlay(
                             )
                         }
                     }
-                    items(feed.groups, key = { "g|$it" }) { group ->
+                    itemsIndexed(feed.groups, key = { _, it -> "g|$it" }) { i, group ->
                         val here = source is GroupSource && source.name == group
+                        // A gap where a section starts: after Search to Shows, then Favourites, competitions, the rest.
+                        val starts = i == 0 || groupSection(feed.groups[i - 1]) != groupSection(group)
                         GroupRow(
                             group,
                             marked = here && inChannels,
                             focus = if (here) groupFocus else null,
                             onFocused = { showSoon(GroupSource(group)); groupKey = "g|$group"; wantChannels = false },
                             onClick = { enterChannels() },
-                            modifier = groupMotion(),
+                            modifier = groupMotion().then(if (starts) Modifier.padding(top = Space.l) else Modifier),
                         )
                     }
                 }
@@ -1004,6 +1020,12 @@ fun ChannelOverlay(
                                 wantChannels = true
                                 onKeyboard = false
                             }
+                            // The row a pane beside the list is about (its schedule, ☰) stays marked while focus is in the pane.
+                            val focusedHere = item.key == focusedKey
+                            CompositionLocalProvider(
+                                LocalHeld provides ((actions != null || details != null) && focusedHere),
+                                LocalRowHint provides (if (focusedHere) item.target?.let { pickHint?.invoke(it) } else null),
+                            ) {
                             when (item) {
                                 is ChannelItem -> {
                                     val on = item.channel.family == current?.family
@@ -1046,6 +1068,7 @@ fun ChannelOverlay(
                                 }
                                 is Note -> Empty(item.title, item.hint)
                             }
+                            }
                         }
                     }
                 }
@@ -1061,6 +1084,10 @@ fun ChannelOverlay(
             detailsShown?.let {
                 Details(
                     it, guide, clock, stay = { details != null }, onClose = ::closeDetails,
+                    onWatch = {
+                        closeDetails()
+                        choose(it, null)
+                    },
                     modifier = Modifier.padding(start = Space.xl, top = Space.safeY, bottom = Space.safeY).slideFade({ shownNow.value * staggered(entrance()) }, Edge.Right, reduced),
                 )
             }
@@ -1074,6 +1101,7 @@ fun ChannelOverlay(
             val shownNow = reveal()
             actionsShown?.let { row ->
                 RowActions(
+                    title = displayName(row.channel.name),
                     favourite = lineup.isFavourite(row.channel.family),
                     canMove = (source as? GroupSource)?.name == row.channel.group,
                     stay = { actions != null },
@@ -1096,7 +1124,7 @@ fun ChannelOverlay(
 
 /** ☰ on a channel row: add it to or take it off Favourites, and, in its own group, move it. Left, Back or ☰ close it. */
 @Composable
-private fun RowActions(favourite: Boolean, canMove: Boolean, stay: () -> Boolean, onFavourite: () -> Unit, onMove: () -> Unit, modifier: Modifier = Modifier) {
+private fun RowActions(title: String, favourite: Boolean, canMove: Boolean, stay: () -> Boolean, onFavourite: () -> Unit, onMove: () -> Unit, modifier: Modifier = Modifier) {
     val first = remember { FocusRequester() }
     LaunchedEffect(Unit) {
         withFrameNanos {}
@@ -1111,6 +1139,7 @@ private fun RowActions(favourite: Boolean, canMove: Boolean, stay: () -> Boolean
             .padding(Space.m),
         verticalArrangement = Arrangement.spacedBy(Space.xs),
     ) {
+        Text(title, style = Type.title, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(start = Space.l, end = Space.l, top = Space.s, bottom = Space.s))
         PanelRow(if (favourite) "Remove from Favourites" else "Add to Favourites", focus = first, onClick = onFavourite)
         if (canMove) PanelRow("Move", onClick = onMove)
     }
@@ -1154,6 +1183,9 @@ fun GroupRow(label: String, marked: Boolean, focus: FocusRequester?, onFocused: 
     }
 }
 
+/** True on the row whose schedule or ☰ pane is open beside the list. */
+internal val LocalHeld = compositionLocalOf { false }
+
 @Composable
 internal fun RowFrame(
     tile: Channel,
@@ -1168,6 +1200,7 @@ internal fun RowFrame(
             .height(ROW_HEIGHT)
             .then(if (focus != null) Modifier.focusRequester(focus) else Modifier)
             .onFocusChanged { if (it.isFocused) onFocused() }
+            .then(if (LocalHeld.current) Modifier.drawBehind { drawRoundRect(Palette.raised, cornerRadius = CornerRadius(Radius.row.toPx())) } else Modifier)
             .pressable(onClick)
             .padding(horizontal = Space.m),
         verticalAlignment = Alignment.CenterVertically,
@@ -1261,13 +1294,16 @@ internal const val MOVE_HINT = "Moving · Up/Down, then OK"
 /** On the playing row while the list previews: OK on it again goes full screen. */
 internal const val WATCH_HINT = "Playing · OK to watch full screen"
 
-/** A row's last line; [WATCH_HINT] fades in in its place once the row plays behind the list. */
+/** The focused row's note in pick mode (multi-view): what OK does with it. */
+internal val LocalRowHint = compositionLocalOf<String?> { null }
+
+/** A row's last line; [WATCH_HINT] (or the pick mode's [LocalRowHint]) fades in in its place. */
 @Composable
 internal fun LastLine(watchHint: Boolean, line: @Composable () -> Unit) {
-    if (!watchHint) return line()
+    val hint = LocalRowHint.current ?: WATCH_HINT.takeIf { watchHint } ?: return line()
     val shown = remember { Animatable(0f) }
     LaunchedEffect(Unit) { shown.animateTo(1f, Motion.spring(0.3f)) }
-    Box(Modifier.graphicsLayer { alpha = shown.value }) { Hint(WATCH_HINT) }
+    Box(Modifier.graphicsLayer { alpha = shown.value }) { Hint(hint) }
 }
 
 /** A quiet note in place of a row's last line. */

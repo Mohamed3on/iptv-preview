@@ -57,6 +57,7 @@ import com.mohamed3on.iptv.player.StreamPhase
 import com.mohamed3on.iptv.data.ChannelIdentity
 import com.mohamed3on.iptv.data.RouteKind
 import androidx.media3.common.Player
+import androidx.media3.common.VideoSize
 import com.mohamed3on.iptv.player.AudioTracks
 import com.mohamed3on.iptv.player.FrameRate
 import com.mohamed3on.iptv.player.LiveQuality
@@ -95,6 +96,8 @@ class MainActivity : ComponentActivity() {
     private val live = MutableStateFlow<Pair<Int, LiveQuality>?>(null)
     /** How the main player's stream is doing (health dot, info view); null when there is nothing to say. */
     private val health = MutableStateFlow<Health?>(null)
+    /** The main player's picture shape (width / height, pixel aspect included); 0 until known. */
+    private val aspect = MutableStateFlow(0f)
     private val telemetry by lazy { Telemetry(graph.http, BuildConfig.SERVER_URL, BuildConfig.APP_TOKEN, graph.scope) }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -110,8 +113,9 @@ class MainActivity : ComponentActivity() {
             val idleState = idle.collectAsState().value?.state?.collectAsState()?.value
             val liveQuality by live.collectAsState()
             val streamHealth by health.collectAsState()
+            val shape by aspect.collectAsState()
             IptvTheme(reducedMotion = Motion.reducedMotion(this)) {
-                Root(state, playing, tracks, surface, tiles, liveQuality, streamHealth, idleState, onRetry = { graph.scope.launch { sync.retry() } })
+                Root(state, playing, tracks, surface, shape, tiles, liveQuality, streamHealth, idleState, onRetry = { graph.scope.launch { sync.retry() } })
             }
         }
         // While visible: on resume refresh anything older than 1h, then channels every 30 min, guide every 3h.
@@ -131,6 +135,12 @@ class MainActivity : ComponentActivity() {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 val player = pool.acquire()
                 player.exo.setVideoSurfaceView(surface)
+                val sizes = object : Player.Listener {
+                    override fun onVideoSizeChanged(videoSize: VideoSize) {
+                        if (videoSize.width > 0 && videoSize.height > 0) aspect.value = videoSize.width * videoSize.pixelWidthHeightRatio / videoSize.height
+                    }
+                }
+                player.exo.addListener(sizes)
                 val s = StreamSession(player, graph.route, this, SystemClock::elapsedRealtime)
                 val frameRate = FrameRate(window, player.exo, s.state, this)
                 val tracks = AudioTracks(player.exo)
@@ -165,6 +175,7 @@ class MainActivity : ComponentActivity() {
                 try {
                     awaitCancellation()
                 } finally {
+                    player.exo.removeListener(sizes)
                     tiles.close()
                     session.value = null
                     audio.value = null
@@ -269,6 +280,7 @@ private fun Root(
     session: StreamSession?,
     audio: AudioTracks?,
     surface: SurfaceView,
+    aspect: Float,
     tiles: MultiView<ExoStreamPlayer>,
     live: Pair<Int, LiveQuality>?,
     health: Health?,
@@ -282,7 +294,7 @@ private fun Root(
             val lineup = LocalContext.current.graph.lineup
             val arranged by lineup.version.collectAsState()
             val feed = remember(state.feed, arranged) { lineup.applyTo(state.feed) }
-            PlayerScreen(feed, session, audio, surface, tiles, live, health)
+            PlayerScreen(feed, session, audio, surface, aspect, tiles, live, health)
             when (idle) {
                 Idle.Asking -> StillWatching()
                 Idle.TimedOut -> IdleStopped()

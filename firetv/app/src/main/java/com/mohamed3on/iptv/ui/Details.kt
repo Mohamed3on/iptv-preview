@@ -1,6 +1,7 @@
 package com.mohamed3on.iptv.ui
 
 import androidx.compose.foundation.focusGroup
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
@@ -74,9 +75,10 @@ private data class Slot(val programme: Programme) : Line {
  * A channel's schedule from now to the end of the guide (R6), beside the channel column. Synthetic
  * filler is left out (it only repeats the channel's name); with nothing left, it says "No guide".
  * Left closes it, as Back does (the overlay handles Back). [stay] keeps focus inside while open.
+ * The focused programme opens to its description; OK on any of them watches the channel ([onWatch]).
  */
 @Composable
-internal fun Details(channel: Channel, guide: GuideDb?, clock: State<Long>, stay: () -> Boolean, onClose: () -> Unit, modifier: Modifier = Modifier) {
+internal fun Details(channel: Channel, guide: GuideDb?, clock: State<Long>, stay: () -> Boolean, onClose: () -> Unit, onWatch: () -> Unit, modifier: Modifier = Modifier) {
     val schedule by produceState<List<Programme>?>(null, channel.tvgId, guide) {
         snapshotFlow { clock.value }.collectLatest { now ->
             value = withContext(Dispatchers.IO) {
@@ -129,7 +131,7 @@ internal fun Details(channel: Channel, guide: GuideDb?, clock: State<Long>, stay
             items(lines, key = { it.key }, contentType = { it::class }) { line ->
                 when (line) {
                     is Day -> Text(line.label, style = Type.caption, modifier = Modifier.padding(start = Space.m, top = Space.l, bottom = Space.xs))
-                    is Slot -> ScheduleRow(line.programme, clock, if (line.programme == programmes.first()) first else null)
+                    is Slot -> ScheduleRow(line.programme, clock, if (line.programme == programmes.first()) first else null, onWatch)
                 }
             }
         }
@@ -137,28 +139,33 @@ internal fun Details(channel: Channel, guide: GuideDb?, clock: State<Long>, stay
 }
 
 @Composable
-private fun ScheduleRow(programme: Programme, clock: State<Long>, focus: FocusRequester?) {
+private fun ScheduleRow(programme: Programme, clock: State<Long>, focus: FocusRequester?, onWatch: () -> Unit) {
     val interaction = remember { MutableInteractionSource() }
     val focused by interaction.collectIsFocusedAsState()
     val airing = programme.start <= clock.value
-    Row(
+    Column(
         Modifier
             .fillMaxWidth()
             .then(if (focus != null) Modifier.focusRequester(focus) else Modifier)
             .focusLift(focused)
-            .focusable(interactionSource = interaction)
+            .clickable(interaction, indication = null, onClick = onWatch)
             .padding(horizontal = Space.m, vertical = Space.s),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(Space.s),
+        verticalArrangement = Arrangement.spacedBy(Space.xs),
     ) {
-        Text(clockTime(programme.start), style = Type.caption.tabular, modifier = Modifier.width(TIME_WIDTH))
-        if (airing && programme.match) LiveMark()
-        Text(
-            remember(programme) { cleanTitle(programme.title) },
-            style = if (airing) Type.body.copy(color = Palette.textPrimary) else Type.body,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Space.s)) {
+            Text(clockTime(programme.start), style = Type.caption.tabular, modifier = Modifier.width(TIME_WIDTH))
+            if (airing && programme.match) LiveMark()
+            Text(
+                remember(programme) { cleanTitle(programme.title) },
+                style = if (airing) Type.body.copy(color = Palette.textPrimary) else Type.body,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        // Lined up under the title, past the time.
+        if (focused && programme.descr.isNotBlank()) {
+            Text(programme.descr, style = Type.caption, maxLines = 5, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(start = TIME_WIDTH + Space.s))
+        }
     }
 }
 

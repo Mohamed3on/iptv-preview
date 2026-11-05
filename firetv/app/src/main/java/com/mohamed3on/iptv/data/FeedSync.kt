@@ -111,8 +111,21 @@ class FeedSync(
         }
     }
 
-    /** A show's episodes, in order; fetched each time a show is opened (the server caches them). */
-    suspend fun episodes(seriesId: Int): Result<List<Episode>> = withContext(Dispatchers.IO) {
+    /** A film's plot and running time; fetched when it is first focused, then kept for the app session. */
+    suspend fun movieInfo(id: Int): Result<MovieInfo> = withContext(Dispatchers.IO) {
+        movieInfos[id]?.let { return@withContext Result.success(it) }
+        runCatching {
+            val request = Request.Builder().url("$baseUrl/api/app/movie?t=$token&id=$id").build()
+            client.newCall(request).execute().use { res ->
+                if (!res.isSuccessful) throw IOException("HTTP ${res.code}")
+                parseMovieInfo(res.body.string()).also { movieInfos[id] = it }
+            }
+        }
+    }
+    private val movieInfos = java.util.concurrent.ConcurrentHashMap<Int, MovieInfo>()
+
+    /** A show's plot and episodes, in order; fetched each time a show is opened (the server caches them). */
+    suspend fun episodes(seriesId: Int): Result<ShowEpisodes> = withContext(Dispatchers.IO) {
         runCatching {
             val request = Request.Builder().url("$baseUrl/api/app/episodes?t=$token&id=$seriesId").build()
             client.newCall(request).execute().use { res ->

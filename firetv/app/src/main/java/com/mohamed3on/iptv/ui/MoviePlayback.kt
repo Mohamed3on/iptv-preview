@@ -142,7 +142,7 @@ private class MovieState {
  * [onSave] keeps the place (ms); [onEnded] follows the end, after the place is saved as finished.
  */
 @Composable
-internal fun MoviePlayback(movie: Movie, from: Long, url: String, onSave: (pos: Long, dur: Long) -> Unit, onEnded: () -> Unit, onClose: () -> Unit) {
+internal fun MoviePlayback(movie: Movie, from: Long, url: String, onSave: (pos: Long, dur: Long) -> Unit, onEnded: () -> Unit, onClose: () -> Unit, onNext: (() -> Unit)? = null) {
     val context = LocalContext.current
     val graph = context.graph
     val window = LocalActivity.current?.window
@@ -416,6 +416,8 @@ internal fun MoviePlayback(movie: Movie, from: Long, url: String, onSave: (pos: 
                     exo.play()
                     position.longValue = 0
                 },
+                // Its place is kept here; leaving then saves nothing, so Continue watching names the next episode.
+                onNext = onNext?.let { next -> { save(); ui.started = false; next() } },
                 modifier = Modifier.slideFade({ shown.value }, Edge.Right, reduced),
             )
         }
@@ -496,9 +498,9 @@ private fun PauseMark() {
 
 private enum class PanelPage { Main, Audio, Subtitles }
 
-/** Menu while a movie plays: audio track (when there is a choice), subtitles (when there are any) and Play from beginning. */
+/** Menu while a movie plays: audio track (when there is a choice), subtitles (when there are any), a show's Next episode and Play from beginning. */
 @Composable
-private fun MoviePanel(audio: AudioState, subtitles: SubtitleState, onSubtitle: (SubtitleOption?) -> Unit, open: Boolean, onAudio: (com.mohamed3on.iptv.player.AudioOption) -> Unit, onFromStart: () -> Unit, modifier: Modifier) {
+private fun MoviePanel(audio: AudioState, subtitles: SubtitleState, onSubtitle: (SubtitleOption?) -> Unit, open: Boolean, onAudio: (com.mohamed3on.iptv.player.AudioOption) -> Unit, onFromStart: () -> Unit, onNext: (() -> Unit)?, modifier: Modifier) {
     val stay by rememberUpdatedState(open)
     var page by remember { mutableStateOf(PanelPage.Main) }
     Column(
@@ -529,6 +531,7 @@ private fun MoviePanel(audio: AudioState, subtitles: SubtitleState, onSubtitle: 
                 fun take() = (if (firstTaken) null else first).also { firstTaken = true }
                 if (audio.options.size > 1) PanelRow("Audio", audio.selected?.let(::languageName), focus = take()) { page = PanelPage.Audio }
                 if (subtitles.options.isNotEmpty()) PanelRow("Subtitles", subtitles.selected?.let(::subtitleName) ?: "Off", focus = take()) { page = PanelPage.Subtitles }
+                if (onNext != null) PanelRow("Next episode", focus = take(), onClick = onNext)
                 PanelRow("Play from beginning", focus = take(), onClick = onFromStart)
             }
             PanelPage.Audio -> audio.options.forEachIndexed { i, option ->
@@ -549,14 +552,15 @@ private fun MoviePanel(audio: AudioState, subtitles: SubtitleState, onSubtitle: 
 private fun Unavailable(onBack: () -> Unit) {
     Box(Modifier.fillMaxSize().background(Scrim), contentAlignment = Alignment.Center) {
         Column(Modifier.widthIn(max = CARD_WIDTH).material().padding(Space.xxl), verticalArrangement = Arrangement.spacedBy(Space.m)) {
-            Text("This movie isn’t available right now", style = Type.title)
+            val shows = LocalLibrary.current == LibraryKind.Shows
+            Text(if (shows) "This episode isn’t available right now" else "This movie isn’t available right now", style = Type.title)
             Text("The provider didn’t send it. Try another, or this one again later.", style = Type.body)
             val button = remember { FocusRequester() }
             LaunchedEffect(Unit) {
                 withFrameNanos {}
                 runCatching { button.requestFocus() }
             }
-            ActionButton("Back to movies", onBack, Modifier.padding(top = Space.m).focusRequester(button))
+            ActionButton(if (shows) "Back to shows" else "Back to movies", onBack, Modifier.padding(top = Space.m).focusRequester(button))
         }
     }
 }

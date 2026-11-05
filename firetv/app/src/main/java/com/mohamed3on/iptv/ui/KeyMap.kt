@@ -7,7 +7,7 @@ import com.mohamed3on.iptv.data.Watched
 import com.mohamed3on.iptv.data.resolve
 
 /** The remote keys the full-screen player answers to (R10). */
-enum class RemoteKey { Up, Down, Left, Right, Ok, Menu, Back, FastForward, Rewind }
+enum class RemoteKey { Up, Down, Left, Right, Ok, Menu, Back, FastForward, Rewind, PlayPause }
 
 fun remoteKey(keyCode: Int): RemoteKey? = when (keyCode) {
     KeyEvent.KEYCODE_DPAD_UP -> RemoteKey.Up
@@ -19,6 +19,7 @@ fun remoteKey(keyCode: Int): RemoteKey? = when (keyCode) {
     KeyEvent.KEYCODE_BACK -> RemoteKey.Back
     KeyEvent.KEYCODE_MEDIA_FAST_FORWARD -> RemoteKey.FastForward
     KeyEvent.KEYCODE_MEDIA_REWIND -> RemoteKey.Rewind
+    KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE -> RemoteKey.PlayPause
     else -> null
 }
 
@@ -79,7 +80,7 @@ fun keyAction(key: RemoteKey, screen: PlayerKeys, feed: Feed): KeyAction {
     if (key == RemoteKey.Menu) return KeyAction.OpenPanel
     if (screen.multiView) return when (key) {
         RemoteKey.Ok, RemoteKey.Back -> KeyAction.Promote
-        RemoteKey.FastForward, RemoteKey.Rewind -> KeyAction.Ignore
+        RemoteKey.FastForward, RemoteKey.Rewind, RemoteKey.PlayPause -> KeyAction.Ignore
         else -> KeyAction.MoveTile(key)
     }
     val current = screen.current ?: return KeyAction.Ignore
@@ -94,6 +95,8 @@ fun keyAction(key: RemoteKey, screen: PlayerKeys, feed: Feed): KeyAction {
         }
         // OK shows more each press: the info view, then the channel list.
         RemoteKey.Ok -> if (screen.info) KeyAction.OpenOverlay(current) else KeyAction.ShowInfo
+        // Live can't pause: Play/Pause shows what is on (the info view), and hides it again.
+        RemoteKey.PlayPause -> if (screen.info) KeyAction.HideInfo else KeyAction.ShowInfo
         RemoteKey.Menu -> KeyAction.OpenPanel // handled above, with or without a channel
         RemoteKey.Back -> {
             if (screen.info) return KeyAction.HideInfo

@@ -127,7 +127,7 @@ fun QuickPanel(
                             }.requestFocus()
                         }
                         // First, so ☰ then OK favourites the channel playing.
-                        if (favourite != null) PanelRow("Favourite", checked = favourite, focus = favouriteRow, onClick = onFavourite)
+                        if (favourite != null) PanelRow(if (favourite) "Remove from Favourites" else "Add to Favourites", focus = favouriteRow, onClick = onFavourite)
                         if (hasAudio) {
                             PanelRow("Audio", audio.selected?.let(::languageName), focus = audioRow) { page = Page.Audio }
                         }

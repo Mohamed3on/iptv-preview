@@ -100,7 +100,9 @@ import com.mohamed3on.iptv.player.Health
 import com.mohamed3on.iptv.player.AudioOption
 import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.input.key.onPreviewKeyEvent
+import kotlin.math.abs
 import kotlin.math.roundToInt
+import androidx.compose.foundation.layout.aspectRatio
 import java.util.Locale
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -120,6 +122,9 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
 private const val BANNER_MS = 4_000L
+private const val SCREEN_ASPECT = 16f / 9f
+/** Within this of 16:9 a picture fills the screen, so a rounding never leaves hairline bars. */
+private const val ASPECT_SLACK = 0.03f
 private val LOGO_SIZE = DpSize(128.dp, 72.dp)
 private val TUNING_SIZE = 16.dp
 private val PROGRESS_WIDTH = 200.dp
@@ -145,12 +150,14 @@ private const val STATS_OUT_MS = 120
  * [tiles] has any, they replace the full-screen video (U11).
  */
 @Composable
-fun PlayerScreen(feed: Feed, session: StreamSession?, audio: AudioTracks?, surface: SurfaceView, tiles: MultiView<ExoStreamPlayer>, live: Pair<Int, LiveQuality>?, health: Health?) {
+fun PlayerScreen(feed: Feed, session: StreamSession?, audio: AudioTracks?, surface: SurfaceView, aspect: Float, tiles: MultiView<ExoStreamPlayer>, live: Pair<Int, LiveQuality>?, health: Health?) {
     val grid by tiles.state.collectAsState()
     var movie by remember { mutableStateOf(false) }
     Box(Modifier.fillMaxSize().background(Color.Black)) {
         // Gone, not just stopped, in multi-view and under a movie: its last frame would fight their surfaces.
-        if (grid.tiles.isEmpty() && !movie) AndroidView(factory = { surface }, modifier = Modifier.fillMaxSize())
+        // The picture keeps its shape: a 4:3 channel is pillarboxed, never stretched; widescreen fills the screen.
+        val fill = aspect <= 0f || abs(aspect - SCREEN_ASPECT) < ASPECT_SLACK
+        if (grid.tiles.isEmpty() && !movie) AndroidView(factory = { surface }, modifier = Modifier.align(Alignment.Center).then(if (fill) Modifier.fillMaxSize() else Modifier.aspectRatio(aspect)))
         if (session != null) PlayerChrome(feed, session, audio, tiles, grid, live, health, onMovie = { movie = it })
     }
 }
@@ -465,6 +472,18 @@ private fun PlayerChrome(
                     entrance = { shown.value },
                     // Watching, not picking a tile: Movies and Shows are among the list's groups.
                     onLibrary = if (pick == null && !multiView) ({ library = it; movies = true }) else null,
+                    pickHint = pick?.let { purpose ->
+                        val onScreen = if (multiView) grid.tiles.map { it.channel.family } else listOfNotNull(state.requested?.family)
+                        val hint: (Channel) -> String? = { channel ->
+                            if (channel.family in onScreen) "Already on screen"
+                            else when (purpose) {
+                                Pick.MultiView -> "Multi-view · OK to watch beside this one"
+                                Pick.AddTile -> "Add tile · OK to add this channel"
+                                Pick.ReplaceTile -> "Replace tile · OK to put it in the selected tile"
+                            }
+                        }
+                        hint
+                    },
                 )
             }
         }
@@ -591,7 +610,7 @@ private fun Banner(
                 AnimatedVisibility(info == null, enter = fadeIn(tween(Motion.FADE_MS)), exit = fadeOut(tween(STATS_OUT_MS))) { Badges(badges) }
                 if (tuning) Tuning()
             }
-            Guide(channel, guide, clock)
+            Guide(channel, guide, clock, describe = info != null)
             // The stats unfold under the guide and fold away, rather than the banner jumping a line.
             val reduced = LocalReducedMotion.current
             val kept = remember { arrayOfNulls<StreamInfo>(1) }
@@ -600,7 +619,14 @@ private fun Banner(
                 visible = info != null,
                 enter = fadeIn(tween(Motion.FADE_MS)) + if (reduced) EnterTransition.None else expandVertically(Motion.panel()),
                 exit = fadeOut(tween(STATS_OUT_MS)) + if (reduced) ExitTransition.None else shrinkVertically(Motion.panel()),
-            ) { kept[0]?.let { StreamStats(it, badges) } }
+            ) {
+                kept[0]?.let {
+                    Column(verticalArrangement = Arrangement.spacedBy(Space.s)) {
+                        StreamStats(it, badges)
+                        KeyHints()
+                    }
+                }
+            }
         }
         Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(Space.xs)) {
             if (note != null) Text(note, style = Type.headline, maxLines = 1)
@@ -611,9 +637,12 @@ private fun Banner(
     }
 }
 
-/** Now and next. Synthetic rows (name-as-title filler) show nothing: event slot names outrun the guide. */
+/**
+ * Now and next, with now's description when [describe] (the info view). Synthetic rows (name-as-title
+ * filler) show nothing: event slot names outrun the guide.
+ */
 @Composable
-private fun Guide(channel: Channel, guide: GuideDb?, clock: State<Long>) {
+private fun Guide(channel: Channel, guide: GuideDb?, clock: State<Long>, describe: Boolean) {
     // Re-read each minute; recomposes only when the programmes themselves change.
     val nowNext by remember(channel.tvgId, guide) {
         derivedStateOf {
@@ -639,6 +668,7 @@ private fun Guide(channel: Channel, guide: GuideDb?, clock: State<Long>) {
                 modifier = Modifier.widthIn(max = PROGRESS_WIDTH),
             )
         }
+        if (describe && now.descr.isNotBlank()) Text(now.descr, style = Type.body, maxLines = 2, overflow = TextOverflow.Ellipsis)
     }
     if (next != null && !next.synthetic) {
         Text("Next · ${clockTime(next.start)} ${cleanTitle(next.title)}", style = Type.body, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -757,6 +787,20 @@ private fun StreamStats(info: StreamInfo, badges: List<String>) {
         }
     }
 }
+
+/** The remote's keys, under the info view's stats: the ones nothing else on screen points at. */
+@Composable
+private fun KeyHints() {
+    Column(Modifier.padding(top = Space.xs), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        for (line in KEY_HINTS) Text(line, style = Type.caption, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    }
+}
+
+private val KEY_HINTS = listOf(
+    "OK again: channel list · Left: groups · Right: recent · Hold OK: search · Menu: options",
+    "Rewind, Fast-forward: the previous or next live match",
+    "In the list: Right: schedule · Menu: favourite or move · Rewind, Fast-forward: top, bottom",
+)
 
 /** "720p50", "1080p25", "4K50": the measured picture in one word. */
 private fun pictureLabel(q: LiveQuality): String {

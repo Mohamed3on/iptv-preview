@@ -55,10 +55,17 @@ data class Episode(val id: Int, val season: Int, val episode: Int, val title: St
     val code get() = "S$season E$episode"
 }
 
+/** A show's plot and episodes, from `/api/app/episodes`. */
 @Serializable
-private class Episodes(val episodes: List<Episode>)
+data class ShowEpisodes(val episodes: List<Episode>, val plot: String = "")
 
-fun parseEpisodes(text: String): List<Episode> = json.decodeFromString(Episodes.serializer(), text).episodes
+fun parseEpisodes(text: String): ShowEpisodes = json.decodeFromString(ShowEpisodes.serializer(), text)
+
+/** A film's plot, running time ([secs], 0 when unknown), genres and rating ("" when unknown), from `/api/app/movie`. */
+@Serializable
+data class MovieInfo(val plot: String = "", val secs: Int = 0, val genre: String = "", val rating: String = "")
+
+fun parseMovieInfo(text: String): MovieInfo = json.decodeFromString(MovieInfo.serializer(), text)
 
 /** Parses and validates the movie list; throws on anything that is not one with at least one movie. */
 fun parseMovies(text: String): Movies {
@@ -139,6 +146,14 @@ class ResumeStore(private val store: KeyValueStore, private val key: String = "m
         _entries.value.firstOrNull { it.movie.id == movie.id && it.episode == episode }?.let { resumeAt(it.pos, it.dur) } ?: 0L
 
     fun find(movie: Movie): Resume? = _entries.value.firstOrNull { it.movie.id == movie.id }
+
+    /** Takes [movie] (or a show) out of Continue watching. */
+    fun remove(movie: Movie) {
+        val next = _entries.value.filter { it.movie.id != movie.id }
+        if (next == _entries.value) return
+        _entries.value = next
+        store.put(key, json.encodeToString(serializer, next))
+    }
 
     fun save(movie: Movie, pos: Long, dur: Long, episode: Int? = null, label: String? = null) {
         val rest = _entries.value.filter { it.movie.id != movie.id }

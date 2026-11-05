@@ -86,6 +86,10 @@ import com.mohamed3on.iptv.data.Episode
 import com.mohamed3on.iptv.data.Feed
 import com.mohamed3on.iptv.data.episodeUrl
 import com.mohamed3on.iptv.data.Movie
+import com.mohamed3on.iptv.data.MovieInfo
+import androidx.compose.runtime.produceState
+import androidx.compose.ui.focus.FocusDirection
+import androidx.compose.ui.platform.LocalFocusManager
 import com.mohamed3on.iptv.data.Movies
 import com.mohamed3on.iptv.data.Resume
 import com.mohamed3on.iptv.data.SyncError
@@ -124,7 +128,9 @@ private const val POSTER_FADE_MS = 150
 private val CARD_SHAPE = RoundedCornerShape(Radius.row)
 private val RING = 3.dp
 private val EDGE = 48.dp
-private val HERO_HEIGHT = 104.dp
+private val HERO_HEIGHT = 156.dp
+/** A film's plot in the hero: two lines at a readable measure. */
+private val PLOT_WIDTH = 720.dp
 /** Type.headline's line: a row's title above its cards. */
 private val ROW_TITLE = 27.dp
 /** Where a card's top sits inside its row: under the title and the row's lift room. */
@@ -146,7 +152,7 @@ enum class LibraryKind(val title: String, val noun: String) {
 }
 
 /** The library on screen, for the wording of its search, loading and error states. */
-private val LocalLibrary = staticCompositionLocalOf { LibraryKind.Movies }
+internal val LocalLibrary = staticCompositionLocalOf { LibraryKind.Movies }
 
 /** A show's episode on screen: the show, its episodes, and which one plays. */
 private data class ShowPlay(val show: Movie, val episodes: List<Episode>, val index: Int) {
@@ -218,6 +224,15 @@ fun MoviesLayer(
         return Playing(movie, from, feed.route.episodeUrl(graph.route.effective.value, e.id, e.ext), ShowPlay(show, episodes, index))
     }
 
+    /** The episode after [s] plays, if there is one. */
+    fun nextEpisode(s: ShowPlay?): Boolean {
+        val next = s?.takeIf { it.index < it.episodes.lastIndex } ?: return false
+        // Continue watching moves on to the next episode even if it is left in its first minute.
+        store.save(next.show, 0, 0, next.episodes[next.index + 1].id, next.episodes[next.index + 1].code)
+        playing = episode(next.show, next.episodes, next.index + 1, 0)
+        return true
+    }
+
     fun stopped() {
         playing = null
         onPlaying(false)
@@ -231,6 +246,7 @@ fun MoviesLayer(
                 watched = if (kind == LibraryKind.Movies) watched else emptySet(),
                 failed = failed,
                 onRetry = { attempt++ },
+                onRemove = store::remove,
                 active = open && playing == null && detail == null,
                 hidden = playing != null || detail != null,
                 shown = shown,
@@ -264,16 +280,9 @@ fun MoviesLayer(
                             if (dur > 0 && pos >= dur * 0.95) watchedStore.mark(p.movie.id)
                             if (s == null) store.save(p.movie, pos, dur) else store.save(s.show, pos, dur, s.episode.id, s.episode.code)
                         },
-                        onEnded = {
-                            val next = s?.takeIf { it.index < it.episodes.lastIndex }
-                            if (next == null) stopped()
-                            else {
-                                // Continue watching moves on to the next episode even if it is left in its first minute.
-                                store.save(next.show, 0, 0, next.episodes[next.index + 1].id, next.episodes[next.index + 1].code)
-                                playing = episode(next.show, next.episodes, next.index + 1, 0)
-                            }
-                        },
+                        onEnded = { if (!nextEpisode(s)) stopped() },
                         onClose = ::stopped,
+                        onNext = s?.takeIf { it.index < it.episodes.lastIndex }?.let { { nextEpisode(it) } },
                     )
                 }
             }
@@ -308,6 +317,7 @@ private fun MoviesBrowse(
     watched: Set<Int>,
     failed: SyncError?,
     onRetry: () -> Unit,
+    onRemove: (Movie) -> Unit,
     active: Boolean,
     hidden: Boolean,
     shown: () -> Float,
@@ -385,7 +395,7 @@ private fun MoviesBrowse(
             }
             when (kind) {
                 3 -> SearchGrid(library!!, query, { query = it }, results, keys, onFocused = { focused.value = it }, onPlay = onPlay)
-                2 -> Rows(rows, watched, content, active, onFocused = { focused.value = it }, onPlay = onPlay)
+                2 -> Rows(rows, watched, content, active, onFocused = { focused.value = it }, onPlay = onPlay, onRemove = onRemove)
                 1 -> Unavailable(content, onRetry)
                 0 -> LoadingMovies(content)
                 else -> {}
@@ -427,18 +437,28 @@ private fun Hero(focused: State<Movie?>, resume: List<Resume>, placeholder: Stri
                     listOfNotNull(r.label, r.takeIf { it.dur > 0 && it.pos > 0 }?.let { leftLabel(it.dur - it.pos) }).joinToString(" · ").ifEmpty { null }
                 }
             }
+            // A film's plot, running time and genres, fetched once focus rests on it (shows have theirs on their page).
+            val graph = LocalContext.current.graph
+            val films = LocalLibrary.current == LibraryKind.Movies
+            val info by produceState<MovieInfo?>(null, m.id) { if (films) value = graph.sync.movieInfo(m.id).getOrNull() }
+            val genre = info?.genre?.split(',', '/')?.map(String::trim)?.filter(String::isNotEmpty)?.take(2)?.joinToString(", ")?.ifEmpty { null }
+            val runtime = info?.secs?.takeIf { it > 0 }?.let { runtimeLabel(it * 1000L) }
             Row(horizontalArrangement = Arrangement.spacedBy(Space.m), verticalAlignment = Alignment.CenterVertically) {
                 title.badge?.let { Badges(remember(it) { listOf(it) }) }
-                Text(listOfNotNull(title.year, groupLabel(m.group).name, left).joinToString(" · "), style = Type.body, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(listOfNotNull(title.year, runtime, genre ?: groupLabel(m.group).name, left).joinToString(" · "), style = Type.body, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
+            info?.plot?.ifBlank { null }?.let { Text(it, style = Type.body, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = PLOT_WIDTH)) }
         }
     }
 }
 
 /** "1 h 12 min left", "42 min left". */
-private fun leftLabel(ms: Long): String {
+private fun leftLabel(ms: Long): String = "${runtimeLabel(ms)} left"
+
+/** "2 h 10 min", "42 min". */
+private fun runtimeLabel(ms: Long): String {
     val min = (ms / 60_000).coerceAtLeast(1)
-    return if (min >= 60) "${min / 60} h ${min % 60} min left" else "$min min left"
+    return if (min >= 60) "${min / 60} h ${min % 60} min" else "$min min"
 }
 
 /**
@@ -448,7 +468,7 @@ private fun leftLabel(ms: Long): String {
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun Rows(rows: List<MovieRow>, watched: Set<Int>, focus: FocusRequester, active: Boolean, onFocused: (Movie) -> Unit, onPlay: (Movie) -> Unit) {
+private fun Rows(rows: List<MovieRow>, watched: Set<Int>, focus: FocusRequester, active: Boolean, onFocused: (Movie) -> Unit, onPlay: (Movie) -> Unit, onRemove: (Movie) -> Unit) {
     val density = LocalDensity.current
     val first = remember { FocusRequester() }
     // The card each row was left on, for a row built again after scrolling far away.
@@ -516,6 +536,7 @@ private fun Rows(rows: List<MovieRow>, watched: Set<Int>, focus: FocusRequester,
                             played = row.key to movie.id
                             onPlay(movie)
                         },
+                        onRemove = if (row.key == CONTINUE) onRemove else null,
                     )
                 }
             }
@@ -524,7 +545,8 @@ private fun Rows(rows: List<MovieRow>, watched: Set<Int>, focus: FocusRequester,
 }
 
 @Composable
-private fun PosterRow(row: MovieRow, watched: Set<Int>, entry: FocusRequester?, startAt: Int, back: Pair<Int, FocusRequester>?, onFocused: (Int, Movie) -> Unit, onPlay: (Movie) -> Unit) {
+private fun PosterRow(row: MovieRow, watched: Set<Int>, entry: FocusRequester?, startAt: Int, back: Pair<Int, FocusRequester>?, onFocused: (Int, Movie) -> Unit, onPlay: (Movie) -> Unit, onRemove: ((Movie) -> Unit)? = null) {
+    val focusManager = LocalFocusManager.current
     val own = remember { FocusRequester() }
     val restore = entry ?: own
     val at = startAt.coerceIn(0, (row.movies.size - 1).coerceAtLeast(0))
@@ -539,6 +561,7 @@ private fun PosterRow(row: MovieRow, watched: Set<Int>, entry: FocusRequester?, 
         Row(Modifier.padding(start = EDGE), horizontalArrangement = Arrangement.spacedBy(Space.m), verticalAlignment = Alignment.CenterVertically) {
             Text(row.title, style = Type.headline, maxLines = 1)
             row.badge?.let { Badges(remember(it) { listOf(it) }) }
+            if (onRemove != null) Text("Menu removes a title", style = Type.caption, maxLines = 1)
         }
         LazyRow(
             state = state,
@@ -547,6 +570,16 @@ private fun PosterRow(row: MovieRow, watched: Set<Int>, entry: FocusRequester?, 
                 .graphicsLayer { translationX = nudge.value * Space.s.toPx() }
                 .onKeyEvent {
                     val code = it.nativeKeyEvent.keyCode
+                    // Menu in Continue watching: the focused title leaves it, focus first stepping to a neighbour (or the row below).
+                    if (code == AndroidKeyEvent.KEYCODE_MENU && onRemove != null) {
+                        if (it.type == KeyEventType.KeyDown && it.nativeKeyEvent.repeatCount == 0) {
+                            val movie = row.movies.getOrNull(focusedCol[0]) ?: return@onKeyEvent true
+                            val side = if (focusedCol[0] < row.movies.lastIndex) FocusDirection.Right else FocusDirection.Left
+                            if (row.movies.size == 1 || !focusManager.moveFocus(side)) focusManager.moveFocus(FocusDirection.Down)
+                            onRemove(movie)
+                        }
+                        return@onKeyEvent true
+                    }
                     val left = code == AndroidKeyEvent.KEYCODE_DPAD_LEFT
                     val edge = (left && focusedCol[0] == 0) || (code == AndroidKeyEvent.KEYCODE_DPAD_RIGHT && focusedCol[0] == row.movies.lastIndex)
                     if (edge && !reduced && it.type == KeyEventType.KeyDown && it.nativeKeyEvent.repeatCount == 0) scope.launch {
@@ -757,11 +790,12 @@ private sealed interface EpisodeLine {
 private fun ShowDetail(show: Movie, resume: Resume?, watched: Set<Int>, active: Boolean, hidden: Boolean, onPlay: (List<Episode>, Int) -> Unit, onBack: () -> Unit) {
     val graph = LocalContext.current.graph
     var episodes by remember { mutableStateOf<List<Episode>?>(null) }
+    var plot by remember { mutableStateOf("") }
     var failed by remember { mutableStateOf(false) }
     var attempt by remember { mutableStateOf(0) }
     LaunchedEffect(attempt) {
         failed = false
-        graph.sync.episodes(show.id).onSuccess { episodes = it }.onFailure { failed = true }
+        graph.sync.episodes(show.id).onSuccess { episodes = it.episodes; plot = it.plot }.onFailure { failed = true }
     }
     val lines = remember(episodes) {
         buildList {
@@ -830,6 +864,11 @@ private fun ShowDetail(show: Movie, resume: Resume?, watched: Set<Int>, active: 
                     state = list,
                     contentPadding = PaddingValues(top = Space.l, bottom = Space.xxxl),
                 ) {
+                    // The show's plot heads the list (so focus on an early episode keeps it in view, and it scrolls away under the fade).
+                    // Scrolling to a line uses its index in [lines] less one, which with this item first is the line before it.
+                    if (plot.isNotEmpty()) item(key = "plot") {
+                        Text(plot, style = Type.body, maxLines = 4, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(horizontal = Space.l).widthIn(max = PLOT_WIDTH))
+                    }
                     items(lines, key = { if (it is EpisodeLine.Item) it.episode.id else "s${(it as EpisodeLine.Season).season}" }) { line ->
                         when (line) {
                             is EpisodeLine.Season -> Text("Season ${line.season}", style = Type.headline, modifier = Modifier.padding(start = Space.l, top = Space.l, bottom = Space.s))

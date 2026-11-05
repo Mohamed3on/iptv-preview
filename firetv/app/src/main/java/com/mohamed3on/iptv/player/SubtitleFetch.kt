@@ -55,7 +55,7 @@ fun osHash(head: ByteArray, tail: ByteArray, size: Long): String {
 /**
  * Subtitles from the box for a copy with no English ones (R30, KTD18). Each copy is looked up as it opens: its
  * OpenSubtitles hash from two 64 KB range reads in parallel, then the box's list. Once its tracks are known and none
- * is English, the best one shows at once for a film not in English ([onPicked] hears it). The app draws the lines
+ * is English, the best one shows at once: subtitles are always on by default ([onPicked] hears it). The app draws the lines
  * from the file's cues at the player's position ([at]), so loading a file or moving its timing never touches
  * playback. Main thread, like the player.
  */
@@ -157,13 +157,15 @@ class SubtitleFetch(
         fun language(type: Int, selected: Boolean) = groups.filter { it.type == type }.flatMap { g ->
             (0 until g.length).filter { !selected || g.isTrackSelected(it) }.map { g.getTrackFormat(it).language }
         }
+        // Subtitles are on by default (owner's choice): the file's own English track, else a fetched one.
         if (language(C.TRACK_TYPE_TEXT, false).any { it?.startsWith("en") == true }) {
-            if (wanted) player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
+            player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
                 .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false).setPreferredTextLanguage("en").build()
             return
         }
         val audio = language(C.TRACK_TYPE_AUDIO, true).firstOrNull { it != null && it != C.LANGUAGE_UNDETERMINED } ?: original()
-        if (found == null || (!wanted && (audio == null || audio.startsWith("en")))) return
+        // Only English is worth showing over English audio; Arabic stays the fallback for other languages.
+        if (found == null || (!found.lang.startsWith("en") && (audio == null || audio.startsWith("en")))) return
         select(found)
         if (!wanted) onPicked(found)
     }

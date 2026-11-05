@@ -125,22 +125,21 @@ class FeedSync(
     /** A film's plot and running time; fetched when it is first focused, then kept for the app session. */
     suspend fun movieInfo(id: Int): Result<MovieInfo> = withContext(Dispatchers.IO) {
         movieInfos[id]?.let { return@withContext Result.success(it) }
-        runCatching {
-            val request = Request.Builder().url("$baseUrl/api/app/movie?t=$token&id=$id").build()
-            client.newCall(request).execute().use { res ->
-                if (!res.isSuccessful) throw IOException("HTTP ${res.code}")
-                parseMovieInfo(res.body.string()).also { movieInfos[id] = it }
-            }
-        }
+        runCatching { parseMovieInfo(get("movie?id=$id")).also { movieInfos[id] = it } }
     }
     private val movieInfos = java.util.concurrent.ConcurrentHashMap<Int, MovieInfo>()
 
-    /** GET /api/app/[path] (query already in it) as text; throws on failure. */
-    private fun get(path: String): String =
-        client.newCall(Request.Builder().url("$baseUrl/api/app/$path&t=$token").build()).execute().use { res ->
-            if (!res.isSuccessful) throw IOException("HTTP ${res.code}")
+    private class HttpStatus(val code: Int) : IOException("HTTP $code")
+
+    /** GET /api/app/[path] (its query in it), or POST it [body] as JSON; the answer as text, [HttpStatus] when refused. */
+    private fun get(path: String, body: String? = null): String {
+        val request = Request.Builder().url("$baseUrl/api/app/$path${if ('?' in path) '&' else '?'}t=$token")
+        if (body != null) request.post(okhttp3.RequestBody.create("application/json".toMediaTypeOrNull(), body))
+        return client.newCall(request.build()).execute().use { res ->
+            if (!res.isSuccessful) throw HttpStatus(res.code)
             res.body.string()
         }
+    }
 
     private fun q(s: String) = java.net.URLEncoder.encode(s, "UTF-8")
 
@@ -216,9 +215,8 @@ class FeedSync(
                     else -> kotlinx.serialization.json.JsonPrimitive(v.toString())
                 }
             }).toString()
-            val request = Request.Builder().url("$baseUrl/api/app/film-quality?t=$token")
-                .post(okhttp3.RequestBody.create("application/json".toMediaTypeOrNull(), body)).build()
-            client.newCall(request).execute().use { res -> if (res.isSuccessful) movieInfos.remove(id) }
+            get("film-quality", body)
+            movieInfos.remove(id)
         }
     }
     private val filmsReported = java.util.Collections.synchronizedSet(HashSet<Int>())
@@ -233,56 +231,35 @@ class FeedSync(
     suspend fun episodes(seriesId: Int, fresh: Boolean = false): Result<ShowEpisodes> = withContext(Dispatchers.IO) {
         showCache[seriesId]?.takeIf { !fresh && System.currentTimeMillis() - it.first < SHOW_KEEP_MS }?.let { return@withContext Result.success(it.second) }
         runCatching {
-            val request = Request.Builder().url("$baseUrl/api/app/episodes?t=$token&id=$seriesId").build()
-            client.newCall(request).execute().use { res ->
-                if (!res.isSuccessful) throw IOException("HTTP ${res.code}")
-                parseEpisodes(res.body.string()).also {
-                    showCache[seriesId] = System.currentTimeMillis() to it
-                    onEpisodes(it.episodes)
-                }
+            parseEpisodes(get("episodes?id=$seriesId")).also {
+                showCache[seriesId] = System.currentTimeMillis() to it
+                onEpisodes(it.episodes)
             }
         }
     }
 
     /** Title ids for the provider ids marks were saved under (the one-time move to title ids); throws on failure. */
     suspend fun titleIds(request: TitleIdRequest): TitleIdMap = withContext(Dispatchers.IO) {
-        val body = json.encodeToString(TitleIdRequest.serializer(), request)
-        val call = Request.Builder().url("$baseUrl/api/app/title-ids?t=$token")
-            .post(okhttp3.RequestBody.create("application/json".toMediaTypeOrNull(), body)).build()
-        client.newCall(call).execute().use { res ->
-            if (!res.isSuccessful) throw IOException("HTTP ${res.code}")
-            json.decodeFromString(TitleIdMap.serializer(), res.body.string())
-        }
+        json.decodeFromString(TitleIdMap.serializer(), get("title-ids", json.encodeToString(TitleIdRequest.serializer(), request)))
     }
+
     /** Every copy of a film or episode the box knows, IPTV's and Real-Debrid's (/api/app/copies); not kept here (FilmCopies keeps them). */
     suspend fun copies(title: TitleId): Result<CopiesAnswer> = withContext(Dispatchers.IO) {
-        runCatching {
-            val q = java.net.URLEncoder.encode(title, "UTF-8")
-            client.newCall(Request.Builder().url("$baseUrl/api/app/copies?t=$token&title=$q").build()).execute().use { res ->
-                if (!res.isSuccessful) throw IOException("HTTP ${res.code}")
-                json.decodeFromString(CopiesAnswer.serializer(), res.body.string())
-            }
-        }
+        runCatching { json.decodeFromString(CopiesAnswer.serializer(), get("copies?title=${q(title)}")) }
     }
 
     /** English, then Arabic, subtitles for the copy playing (/api/app/subtitles): its OpenSubtitles [hash] ("" unknown) and release [name] pick the best. */
     suspend fun subtitles(title: TitleId, hash: String, size: Long, name: String): Result<SubtitlesAnswer> = withContext(Dispatchers.IO) {
-        runCatching {
-            fun q(s: String) = java.net.URLEncoder.encode(s, "UTF-8")
-            client.newCall(Request.Builder().url("$baseUrl/api/app/subtitles?t=$token&title=${q(title)}&hash=$hash&size=$size&name=${q(name)}").build()).execute().use { res ->
-                if (!res.isSuccessful) throw IOException("HTTP ${res.code}")
-                json.decodeFromString(SubtitlesAnswer.serializer(), res.body.string())
-            }
-        }
+        runCatching { json.decodeFromString(SubtitlesAnswer.serializer(), get("subtitles?title=${q(title)}&hash=$hash&size=$size&name=${q(name)}")) }
     }
 
     /** One subtitle file as SRT text; null when today's downloads are spent (HTTP 429). */
     suspend fun subtitle(id: String): Result<String?> = withContext(Dispatchers.IO) {
         runCatching {
-            client.newCall(Request.Builder().url("$baseUrl/api/app/subtitle?t=$token&id=$id").build()).execute().use { res ->
-                if (res.code == 429) return@use null
-                if (!res.isSuccessful) throw IOException("HTTP ${res.code}")
-                res.body.string()
+            try {
+                get("subtitle?id=$id")
+            } catch (e: HttpStatus) {
+                if (e.code == 429) null else throw e
             }
         }
     }
@@ -293,8 +270,7 @@ class FeedSync(
             val body = kotlinx.serialization.json.buildJsonObject {
                 put("hashes", kotlinx.serialization.json.JsonArray(hashes.map(::JsonPrimitive)))
             }.toString()
-            client.newCall(Request.Builder().url("$baseUrl/api/app/rd-infringing?t=$token")
-                .post(okhttp3.RequestBody.create("application/json".toMediaTypeOrNull(), body)).build()).execute().close()
+            get("rd-infringing", body)
         }
     }
 

@@ -239,6 +239,7 @@ Quiet until focused; the press is felt on the same frame as the key.
 ### Chips and Badges
 - **Quality badges:** one quiet caption line joined with " · " ("4K · 50fps · Atmos"), no capsules, so they never compete with the name.
 - **Live mark and info pills:** caption text in its status colour on a 16% tint of that colour, 6dp radius, 6 x 1dp padding. Drawn in one canvas from cached text layouts because rows show them by the dozen.
+- **Picture tier:** the same pill, and the word alone on a card's corner: Reference in green, Great in text-primary, OK in text-secondary, Soft in amber. Never the accent: a tier is a quality, not a state.
 
 ### Cards / Containers
 - **Panel (material):** Night Glass, 20dp radius, 1dp lit edge, 32dp padding for dialogs; modal panels sit over the modal scrim.

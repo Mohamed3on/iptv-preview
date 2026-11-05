@@ -924,7 +924,7 @@ internal fun TierChip(tier: String) {
 
 private fun tierColor(tier: String) = when (tier) {
     "Reference" -> Palette.good
-    "Great" -> Palette.accent
+    "Great" -> Palette.textPrimary
     "Soft" -> Palette.warning
     else -> Palette.textSecondary
 }

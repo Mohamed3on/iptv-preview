@@ -2,8 +2,9 @@
 // provider's 4K and Blu-ray films and its shows, each looked up on TMDB once (a title the last build already
 // knew keeps its details). Run nightly on the box by deploy/iptv-library.timer. Without TMDB_TOKEN, or when
 // every TMDB list fails, nothing is written and the app keeps the last library (or the provider's rows).
-// Then it scores the titles (api/_scores.ts: Trakt, MDBList, and IMDb's histograms with SCRAPE_IMDB=1), sorts each
-// row by score and cuts it to 60. Each key is optional: without one its source is skipped, and rows keep their order.
+// Each row keeps its 150 most popular candidates on TMDB (provider titles included), plus the owner's Watchlist
+// and Recommended; those are scored (api/_scores.ts: Trakt, MDBList, and IMDb's histograms with SCRAPE_IMDB=1), then
+// each row is sorted by score and cut to 60. Each key is optional: without one its source is skipped, and rows keep their order.
 // First it reads the owner's Trakt and Letterboxd history into .cache/history.json (api/_history.ts).
 // Usage: bun scripts/build-library.ts   (XTREAM_*, TMDB_TOKEN, TRAKT_CLIENT_ID, MDBLIST_KEY from env / .env.local)
 import { readFile } from 'node:fs/promises'
@@ -11,13 +12,14 @@ import { configFromEnv } from '../api/_lib.js'
 import { assemble, fromTmdb, LIBRARY_FILE, LIBRARY_FULL_FILE, providerTitles, rowDefs, saveLibrary, withProviderCopies, type Library, type LibTitle, type TmdbItem } from '../api/_library.js'
 import { loadScores, onScreen, ranked, refreshScores, saveScores, scoreTitles } from '../api/_scores.js'
 import { parseTitleId, tmdbGet, type Kind } from '../api/_tmdb.js'
-import { loadHistory, refreshHistory, saveHistory } from '../api/_history.js'
+import { historyTitles, loadHistory, refreshHistory, saveHistory } from '../api/_history.js'
 import { readOnlyTokens } from '../api/_trakt.js'
 
 // The owner's history first (seconds): Trakt read whole, recommendations included, and the Letterboxd feed.
 // Only the server refreshes Trakt's tokens.
 readOnlyTokens()
-await refreshHistory(await loadHistory(), { full: true }).then((h) => saveHistory(h)).catch((e) => console.log(`history not read: ${e}`))
+const kept = await loadHistory()
+const history = await refreshHistory(kept, { full: true }).then(async (h) => (await saveHistory(h), h)).catch((e) => (console.log(`history not read: ${e}`), kept))
 
 if (!process.env.TMDB_TOKEN) {
   console.log('TMDB_TOKEN unset: library not built')
@@ -54,9 +56,10 @@ const gn: Record<string, string> = Object.fromEntries((await Promise.all(['movie
   tmdbGet<{ genres: { id: number; name: string }[] }>(`genre/${k}/list`).then((r) => r.genres, () => [])))).flat().map((g) => [g.id, g.name]))
 
 const prev = await readFile(LIBRARY_FULL_FILE, 'utf8').catch(() => readFile(LIBRARY_FILE, 'utf8')).then((s) => JSON.parse(s) as Library, () => null)
-// TMDB details by title id: this run's rows, then the last build's (without its tiers and scores).
+// TMDB details by title id: this run's rows, then the last build's (without its tiers and scores; looked up again
+// when it predates popularity, which picks row candidates).
 const known = new Map<string, LibTitle>()
-for (const { t: _t, e: _e, s: _s, sn: _n, se: _se, lb: _l, ir: _i, ...meta } of [...seeds.flat(), ...(prev?.titles ?? [])]) if (meta.l && !known.has(meta.id)) known.set(meta.id, meta)
+for (const { t: _t, e: _e, s: _s, sn: _n, se: _se, lb: _l, ir: _i, ...meta } of [...seeds.flat(), ...(prev?.titles ?? [])]) if (meta.l && meta.pp !== undefined && !known.has(meta.id)) known.set(meta.id, meta)
 const cfg = configFromEnv()
 const provider = await providerTitles(cfg)
 const missing = [...new Set(provider.map((p) => p.t.id))].filter((id) => parseTitleId(id) && !known.has(id))
@@ -68,13 +71,13 @@ await pool(missing, 6, async (id) => {
 
 const full = await withProviderCopies(assemble(defs, seeds, provider.map(({ t, group }) => ({ group, t: known.has(t.id) ? { ...known.get(t.id)!, ...(t.t && { t: t.t }), ...(t.e && { e: t.e }) } : t })), prev, gn), cfg)
 await saveLibrary(full, LIBRARY_FULL_FILE)
-// Rows sorted by the scores known so far go out at once. The APIs are asked in that order (about an hour on
+// Rows sorted by the scores known so far go out at once. The APIs are asked in that order (about 25 minutes on
 // the first nights, at one Trakt request a second), then the rows are sorted again.
 const scores = await loadScores()
 await saveLibrary(ranked(full, scoreTitles(scores)))
 const fresh = new Set(full.rows.find((r) => r.id === 'new')?.i.map((i) => full.titles[i].id))
 const env = process.env
-const asked = await refreshScores(onScreen(ranked(full, scoreTitles(scores), Infinity)), fresh, scores,
+const asked = await refreshScores([...new Set([...historyTitles(history), ...onScreen(ranked(full, scoreTitles(scores), Infinity))])], fresh, scores,
   { trakt: env.TRAKT_CLIENT_ID, mdblist: env.MDBLIST_KEY, scrape: env.SCRAPE_IMDB === '1' },
   { mdbMax: Number(env.MDBLIST_DAILY) || 1000, save: () => saveScores(scores) })
 await saveScores(scores)

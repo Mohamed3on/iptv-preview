@@ -87,7 +87,7 @@ export function scoreTitles(cache: ScoreCache): Map<string, Score> {
  * cut to [cap] titles, then only the titles some row still holds.
  */
 export function ranked(lib: Library, scores: Map<string, Score>, cap = ROW_CAP): Library {
-  const all = lib.titles.map(({ s: _s, sn: _n, se: _e, lb: _l, ir: _i, ...t }) => ({ ...t, ...scores.get(t.id) }))
+  const all = lib.titles.map(({ s: _s, sn: _n, se: _e, lb: _l, ir: _i, pp: _p, ...t }) => ({ ...t, ...scores.get(t.id) }))
   const rows = lib.rows.map((r) => {
     const known = r.i.map((i) => all[i].s).filter((s): s is number => s !== undefined)
     const mid = known.length ? median(known) : 0

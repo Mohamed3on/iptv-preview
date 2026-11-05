@@ -320,6 +320,7 @@ flowchart TB
 - KTD17. **Library and scores are built by a nightly box job, not on request.**
   - Built by `deploy/iptv-library.timer` and written atomically to `.cache/library.json` and `.cache/scores.json`.
   - Trakt is paced at 3 requests a second. MDBList uses its daily quota, rows on screen first.
+  - Only each row's top 150 candidates in TMDB popularity order (provider titles by their own popularity), plus the Watchlist and Recommended titles, are scored; rows are then sorted by score and cut to 60. Titles cut from rows stay reachable through search.
   - If TMDB is down or unset, `/api/app/library` serves the provider rows. Governs R15–R19.
 - KTD18. **OpenSubtitles through the box, matched by file hash.**
   - The stick computes the OpenSubtitles hash from two 64 KB range reads plus the file size. The box searches by hash, then by TMDB id, downloads within the account's daily quota, and caches per hash.
@@ -649,7 +650,7 @@ App paths are under `firetv/app/src/main/java/com/mohamed3on/iptv/`, and app tes
 - **Files:** `api/_library.ts` (new), `scripts/build-library.ts` (new), `deploy/iptv-library.service` and `deploy/iptv-library.timer` (new), `deploy/sync.sh` (enable the timer), `api/app.ts` (`/api/app/library`), `api/_library.test.ts` (new).
 - **Approach:**
   1. Rows: trending films and shows (week), new releases, a set of genres, and language rows: English, Arabic, Russian, then the rest (`with_original_language`, `vote_count.gte` for films).
-  2. Merge in provider titles so the provider's catalogue stays findable. Each title gets its best known tier from IPTV copies plus copies seen earlier.
+  2. Merge in provider titles so the provider's catalogue stays findable. Each title gets its best known tier from IPTV copies plus copies seen earlier. Each row then keeps its 150 most popular candidates on TMDB (KTD17); the rest stay findable through search.
   3. Write atomically. The endpoint serves `library.json`, or the provider rows when it is missing or stale beyond 3 days.
 - **Test scenarios:**
   - A TMDB fixture with films in `en`, `ar`, `ru` and `ko` puts them in the matching language rows, with `ko` under "Other".

@@ -165,10 +165,11 @@ interface VodInfo {
 /**
  * Title ids for provider ids the app saved before it keyed marks by title (POST /api/app/title-ids):
  * every film and show maps (an `iptv:` id when it has no TMDB id); an episode maps only when its show's
- * episode list could be read, so the app retries the rest later.
+ * episode list could be read, so the app retries the rest later. An unreadable catalogue fails the call
+ * (the app retries) rather than mapping films to `iptv:` ids the app would keep for good.
  */
 export async function titleIds(cfg: XtreamConfig, req: { movies?: number[]; shows?: number[]; episodes?: { series: number; id: number }[] }) {
-  const [film, show] = await Promise.all([filmTitleOf(cfg).catch(() => (id: number) => filmTitle('', id)), showTitleOf(cfg)])
+  const [film, show] = await Promise.all([filmTitleOf(cfg), showTitleOf(cfg)])
   const episodes: Record<string, string> = {}
   for (const series of new Set(req.episodes?.map((e) => e.series))) {
     const wanted = new Set(req.episodes!.filter((e) => e.series === series).map((e) => e.id))

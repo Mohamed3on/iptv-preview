@@ -18,6 +18,7 @@ import com.mohamed3on.iptv.data.TitleMigration
 import com.mohamed3on.iptv.data.TraktSync
 import com.mohamed3on.iptv.data.VpnMonitor
 import com.mohamed3on.iptv.data.WatchedStore
+import com.mohamed3on.iptv.data.Watchlist
 import com.mohamed3on.iptv.data.WatchHistory
 import com.mohamed3on.iptv.player.Capacity
 import com.mohamed3on.iptv.player.CopyChoices
@@ -97,6 +98,8 @@ class AppGraph(context: Context) {
     val migration = TitleMigration(prefs, resume, showResume, watchedMovies, watchedEpisodes)
     /** Typical film bandwidth per source, hour band and route (VPN on or off). */
     val capacity = Capacity(prefs, vpn = { vpnActive.value })
+    /** The Trakt watchlist with the owner's own changes applied at once (title page button, ☰ on a card). */
+    val watchlist by lazy { Watchlist(sync, scope) }
     /** Movies & Shows searches that led to a title, offered under an empty search box. */
     val recentSearches = RecentSearches(prefs)
     /** Marks, corrections and pins the copy ranker reads. */

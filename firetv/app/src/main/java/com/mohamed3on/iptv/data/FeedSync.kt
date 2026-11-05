@@ -281,6 +281,16 @@ class FeedSync(
         }
     }
 
+    /** Puts a film or show on the Trakt watchlist, or takes it off, through the box: false when that failed. */
+    suspend fun setWatchlist(title: TitleId, on: Boolean): Boolean = withContext(Dispatchers.IO) {
+        runCatching {
+            get("watchlist", kotlinx.serialization.json.buildJsonObject {
+                put("title", JsonPrimitive(title))
+                put("on", JsonPrimitive(on))
+            }.toString())
+        }.isSuccess
+    }
+
     private val json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
     private val showCache = java.util.concurrent.ConcurrentHashMap<Int, Pair<Long, ShowEpisodes>>()
     private val SHOW_KEEP_MS = 30 * 60_000L

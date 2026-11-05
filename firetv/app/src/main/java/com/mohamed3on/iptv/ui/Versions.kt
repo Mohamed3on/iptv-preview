@@ -277,7 +277,6 @@ private fun VersionRow(r: Ranked, reason: String, data: VersionsData, focus: Foc
             FitText(copyLabels(c).joinToString(" · ").ifEmpty { "Quality unknown" }, style = Type.headline, active = focused, modifier = Modifier.weight(1f))
             when {
                 c.id == data.playing -> Text("Playing", style = Type.caption.copy(color = Palette.accent), maxLines = 1)
-                r.pinned -> Text("Pinned", style = Type.caption.copy(color = Palette.accent), maxLines = 1)
             }
         }
         if (status.isNotEmpty()) FitText(status, style = Type.caption.copy(color = Palette.textSecondary), active = focused)

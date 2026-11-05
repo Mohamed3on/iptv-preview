@@ -1092,6 +1092,15 @@ private val CHIP_TEXT = Type.caption.copy(color = Palette.textPrimary)
  * the one OK will press reads from across the room.
  */
 @Composable
+/** "+ Watchlist" / "✓ Watchlist" on a title page: OK puts the film or show on the Trakt watchlist or takes it off. */
+private fun WatchlistButton(title: TitleId) {
+    val watchlist = LocalContext.current.graph.watchlist
+    if (!watchlist.canHold(title)) return
+    val ids by watchlist.ids.collectAsState()
+    PageButton(if (title in ids) "✓ Watchlist" else "+ Watchlist", { watchlist.toggle(title) })
+}
+
+@Composable
 private fun PageButton(label: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
     val reduced = LocalReducedMotion.current
     val interaction = remember { MutableInteractionSource() }
@@ -1398,6 +1407,7 @@ private fun PosterRow(
  */
 @Composable
 private fun PosterCard(movie: Movie, progress: Float?, watched: Boolean = false, focus: FocusRequester?, back: FocusRequester? = null, onFocused: () -> Unit, onClick: () -> Unit) {
+    val watchlist = LocalContext.current.graph.watchlist
     val reduced = LocalReducedMotion.current
     val context = LocalPlatformContext.current
     val density = LocalDensity.current
@@ -1418,6 +1428,11 @@ private fun PosterCard(movie: Movie, progress: Float?, watched: Boolean = false,
             .onFocusChanged {
                 focused = it.isFocused
                 if (it.isFocused) onFocused()
+            }
+            .onKeyEvent {
+                if (remoteKey(it.nativeKeyEvent.keyCode) != RemoteKey.Menu || !watchlist.canHold(movie.titleId)) return@onKeyEvent false
+                if (it.type == KeyEventType.KeyDown) watchlist.toggle(movie.titleId)
+                true
             }
             .clickable(interaction, indication = null, onClick = onClick)
             .graphicsLayer {
@@ -1451,6 +1466,13 @@ private fun PosterCard(movie: Movie, progress: Float?, watched: Boolean = false,
             ProgressLine({ progress }, Modifier.align(Alignment.BottomCenter).padding(horizontal = Space.s, vertical = Space.s))
         }
         if (watched) WatchedMark(Modifier.align(Alignment.TopEnd).padding(Space.s))
+        if (focused && watchlist.canHold(movie.titleId)) {
+            val onList = movie.titleId in watchlist.ids.collectAsState().value
+            Text(
+                if (onList) "✓ Watchlist · ☰" else "☰ Watchlist", style = CHIP_TEXT, maxLines = 1,
+                modifier = Modifier.align(Alignment.BottomStart).padding(Space.xs).background(CHIP_GROUND, CHIP_SHAPE).padding(horizontal = Space.xs + 2.dp, vertical = 1.dp),
+            )
+        }
         val learnt = movie.lib?.takeIf { !it.known }?.let { LocalContext.current.graph.sync.scores[movie.titleId] }
         val chip = remember(movie.lib, learnt) { movie.lib?.let { cardChip(it, learnt ?: it) } }
         if (chip != null) Text(
@@ -1671,6 +1693,7 @@ private fun FilmPage(
                             PageButton(if (started) "Resume" else "Play", { onPlay(false) }, Modifier.focusRequester(primary))
                             if (started) PageButton("Start over", { onPlay(true) })
                             PageButton("Versions", { versions = true }, Modifier.focusRequester(versionsButton))
+                            WatchlistButton(film.titleId)
                         }
                     }
                 }
@@ -2025,6 +2048,7 @@ private fun ShowPage(
                                 next != null -> {
                                     PageButton("${if (started) "Resume" else "Play"} ${next.code}", { onPlay(episodes, target, false) }, Modifier.focusRequester(primary))
                                     if (started) PageButton("Start over", { onPlay(episodes, target, true) })
+                                    WatchlistButton(show.titleId)
                                 }
                                 failed -> PageButton("Try again", { attempt++ }, Modifier.focusRequester(primary))
                                 // Something holds focus meanwhile, so Back still answers.

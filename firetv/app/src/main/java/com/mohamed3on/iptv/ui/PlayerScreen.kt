@@ -533,6 +533,8 @@ private fun PlayerChrome(
                     grid.tiles.forEach { it.session.useRoute(kind) }
                 },
                 refreshStatus = refreshStatus,
+                favourite = state.requested?.takeIf { !multiView }?.let { graph.lineup.isFavourite(it.family) },
+                onFavourite = { state.requested?.let { graph.lineup.toggleFavourite(it.family) } },
                 onRefresh = {
                     if (refreshStatus != REFRESHING) {
                         refreshStatus = REFRESHING

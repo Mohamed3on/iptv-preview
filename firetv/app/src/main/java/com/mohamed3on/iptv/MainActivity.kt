@@ -37,6 +37,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
@@ -156,7 +157,7 @@ class MainActivity : ComponentActivity() {
                     }
                 }
                 launch {
-                    val feed = sync.state.filterIsInstance<FeedState.Ready>().first().feed
+                    val feed = graph.lineup.applyTo(sync.state.filterIsInstance<FeedState.Ready>().first().feed)
                     startChannel(feed)?.let { s.zap(it, feed) }
                 }
                 session.value = s
@@ -278,7 +279,10 @@ private fun Root(
         FeedState.Loading -> Loading()
         is FeedState.Failed -> SyncFailed(state.error, onRetry)
         is FeedState.Ready -> Box(Modifier.fillMaxSize()) {
-            PlayerScreen(state.feed, session, audio, surface, tiles, live, health)
+            val lineup = LocalContext.current.graph.lineup
+            val arranged by lineup.version.collectAsState()
+            val feed = remember(state.feed, arranged) { lineup.applyTo(state.feed) }
+            PlayerScreen(feed, session, audio, surface, tiles, live, health)
             when (idle) {
                 Idle.Asking -> StillWatching()
                 Idle.TimedOut -> IdleStopped()

@@ -67,6 +67,9 @@ fun QuickPanel(
     /** Fetches the channels and guide now; [refreshStatus] is how the last press went, null before one. */
     onRefresh: () -> Unit,
     refreshStatus: String?,
+    /** Whether the channel playing is a favourite; null hides the row (nothing playing, multi-view). */
+    favourite: Boolean? = null,
+    onFavourite: () -> Unit = {},
     modifier: Modifier = Modifier,
     open: Boolean = true,
     views: @Composable ColumnScope.() -> Unit = {},
@@ -77,6 +80,7 @@ fun QuickPanel(
     var openedFrom by remember { mutableStateOf<Page?>(null) }
     val audioRow = remember { FocusRequester() }
     val connectionRow = remember { FocusRequester() }
+    val favouriteRow = remember { FocusRequester() }
 
     Column(
         modifier
@@ -119,9 +123,11 @@ fun QuickPanel(
                             when (openedFrom) {
                                 Page.Audio -> audioRow
                                 Page.Connection -> connectionRow
-                                else -> if (hasAudio) audioRow else connectionRow
+                                else -> if (favourite != null) favouriteRow else if (hasAudio) audioRow else connectionRow
                             }.requestFocus()
                         }
+                        // First, so ☰ then OK favourites the channel playing.
+                        if (favourite != null) PanelRow("Favourite", checked = favourite, focus = favouriteRow, onClick = onFavourite)
                         if (hasAudio) {
                             PanelRow("Audio", audio.selected?.let(::languageName), focus = audioRow) { page = Page.Audio }
                         }

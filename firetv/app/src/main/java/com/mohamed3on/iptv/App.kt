@@ -8,6 +8,7 @@ import coil3.SingletonImageLoader
 import coil3.network.okhttp.OkHttpNetworkFetcherFactory
 import coil3.request.crossfade
 import com.mohamed3on.iptv.data.FeedSync
+import com.mohamed3on.iptv.data.Lineup
 import com.mohamed3on.iptv.data.PrefsStore
 import com.mohamed3on.iptv.data.Route
 import com.mohamed3on.iptv.data.ResumeStore
@@ -59,6 +60,8 @@ class AppGraph(context: Context) {
     val prefs = PrefsStore(context.getSharedPreferences("iptv", Context.MODE_PRIVATE))
     val route = Route(prefs, VpnMonitor(context).active, scope)
     val history = WatchHistory(prefs)
+    /** Favourites and each group's own channel order. */
+    val lineup = Lineup(prefs)
     /** Where each movie was left (v2). */
     val resume = ResumeStore(prefs)
     /** Where each show was left: its episode and place. */

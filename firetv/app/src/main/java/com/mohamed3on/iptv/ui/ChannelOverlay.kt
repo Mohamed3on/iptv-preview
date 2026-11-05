@@ -10,6 +10,7 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.gestures.BringIntoViewSpec
+import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.gestures.LocalBringIntoViewSpec
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -58,9 +59,13 @@ import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.layout
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import com.mohamed3on.iptv.graph
+import com.mohamed3on.iptv.ui.theme.material
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
@@ -555,6 +560,12 @@ fun ChannelOverlay(
     var details by remember(opens) { mutableStateOf<Channel?>(null) }
     // The pane keeps its channel while it slides away.
     var detailsShown by remember(opens) { mutableStateOf<Channel?>(null) }
+    // ☰ on a channel row: its actions beside the list (Favourites, Move). Move then carries that row
+    // with Up/Down until any other key puts it down; each step is saved at once.
+    val lineup = LocalContext.current.graph.lineup
+    var actions by remember(opens) { mutableStateOf<ChannelItem?>(null) }
+    var actionsShown by remember(opens) { mutableStateOf<ChannelItem?>(null) }
+    var moving by remember(opens) { mutableStateOf<String?>(null) }
     val rowFocus = remember { FocusRequester() }
     val groupFocus = remember { FocusRequester() }
     val keyFocus = remember { FocusRequester() }
@@ -706,6 +717,17 @@ fun ChannelOverlay(
         focusChannels()
     }
 
+    fun closeActions() {
+        actions = null
+        focusChannels()
+    }
+
+    fun moveRow(down: Boolean) {
+        val group = (source as? GroupSource)?.name ?: return
+        val row = items?.firstOrNull { it.key == moving } as? ChannelItem ?: return
+        lineup.move(group, feed.channelsIn(group).map { it.family }, row.channel.family, down)
+    }
+
     /** A row chosen: tuned behind the list to preview it, or, when it is the one playing, watched full screen. */
     fun choose(channel: Channel, context: List<Channel>?) {
         val preview = onPreview
@@ -753,12 +775,28 @@ fun ChannelOverlay(
         }
     }
 
+    // The row being moved stays in view: the list scrolls a row at a time as it nears an edge.
+    val rowStep = with(density) { (ROW_HEIGHT + Space.xs).toPx() }
+    LaunchedEffect(items) {
+        val i = items?.indexOfFirst { it.key == moving }?.takeIf { it >= 0 } ?: return@LaunchedEffect
+        val was = focusedIndex
+        focusedIndex = i
+        val seen = listState.layoutInfo.visibleItemsInfo.takeIf { it.isNotEmpty() } ?: return@LaunchedEffect
+        if (i > was && i >= seen.last().index - 1) listState.animateScrollBy(rowStep)
+        if (i < was && i <= seen.first().index + 1) listState.animateScrollBy(-rowStep)
+    }
+
     Row(
         modifier
             .fillMaxHeight()
             .padding(horizontal = Space.safeX)
             .onKeyEvent {
-                if (details == null || remoteKey(it.nativeKeyEvent.keyCode) != RemoteKey.Back) return@onKeyEvent false
+                val key = remoteKey(it.nativeKeyEvent.keyCode)
+                if (actions != null && (key == RemoteKey.Back || key == RemoteKey.Left || key == RemoteKey.Menu)) {
+                    if (it.type == KeyEventType.KeyDown) closeActions()
+                    return@onKeyEvent true
+                }
+                if (details == null || key != RemoteKey.Back) return@onKeyEvent false
                 if (it.type == KeyEventType.KeyDown) closeDetails()
                 true
             }
@@ -771,7 +809,7 @@ fun ChannelOverlay(
     ) {
         // In with the list, first; and out of the way of the schedule (Right on a channel), folding to
         // nothing with the gap after it. It stays built meanwhile, so closing the schedule builds nothing.
-        val aside = animateFloatAsState(if (details == null) 1f else 0f, if (reduced) tween(Motion.FADE_MS) else Motion.panel(), label = "aside")
+        val aside = animateFloatAsState(if (details == null && actions == null) 1f else 0f, if (reduced) tween(Motion.FADE_MS) else Motion.panel(), label = "aside")
         Box(
             Modifier.layout { measurable, constraints ->
                 val placeable = measurable.measure(constraints)
@@ -881,8 +919,26 @@ fun ChannelOverlay(
                     }
                 }
                 .onFocusChanged { inChannels = it.hasFocus }
+                .onPreviewKeyEvent {
+                    val code = it.nativeKeyEvent.keyCode
+                    if (moving == null || remoteKey(code) == null) return@onPreviewKeyEvent false
+                    val step = code == AndroidKeyEvent.KEYCODE_DPAD_UP || code == AndroidKeyEvent.KEYCODE_DPAD_DOWN
+                    if (step && it.type == KeyEventType.KeyDown) moveRow(down = code == AndroidKeyEvent.KEYCODE_DPAD_DOWN)
+                    // Any other key puts the row down, on its release, so OK never also tunes it.
+                    if (!step && it.type == KeyEventType.KeyUp) moving = null
+                    true
+                }
                 .onKeyEvent {
                     val code = it.nativeKeyEvent.keyCode
+                    if (code == AndroidKeyEvent.KEYCODE_MENU) {
+                        val row = items?.firstOrNull { item -> item.key == focusedKey } as? ChannelItem
+                        if (row == null || onKeyboard) return@onKeyEvent false
+                        if (it.type == KeyEventType.KeyDown) {
+                            actions = row
+                            actionsShown = row
+                        }
+                        return@onKeyEvent true
+                    }
                     if (code == AndroidKeyEvent.KEYCODE_DPAD_UP || code == AndroidKeyEvent.KEYCODE_DPAD_DOWN) {
                         val list = items
                         if (list == null || onKeyboard) return@onKeyEvent false
@@ -940,6 +996,7 @@ fun ChannelOverlay(
                                         item.channel, nowNext[item.channel.tvgId], clock,
                                         playing = on, watchHint = watchHint && on, focus = focus, onFocused = onFocused,
                                         onClick = { choose(item.channel, null) },
+                                        moving = item.key == moving,
                                     )
                                 }
                                 is LiveItem -> {
@@ -993,6 +1050,53 @@ fun ChannelOverlay(
                 )
             }
         }
+
+        AnimatedVisibility(
+            visible = actions != null,
+            enter = EnterTransition.None,
+            exit = ExitTransition.None,
+        ) {
+            val shownNow = reveal()
+            actionsShown?.let { row ->
+                RowActions(
+                    favourite = lineup.isFavourite(row.channel.family),
+                    canMove = (source as? GroupSource)?.name == row.channel.group,
+                    stay = { actions != null },
+                    onFavourite = {
+                        lineup.toggleFavourite(row.channel.family)
+                        closeActions()
+                    },
+                    onMove = {
+                        actions = null
+                        moving = row.key
+                        focusChannels()
+                    },
+                    modifier = Modifier.padding(start = Space.xl, top = Space.safeY).slideFade({ shownNow.value * staggered(entrance()) }, Edge.Right, reduced),
+                )
+            }
+        }
+    }
+}
+
+/** ☰ on a channel row: add it to or take it off Favourites, and, in its own group, move it. Left, Back or ☰ close it. */
+@Composable
+private fun RowActions(favourite: Boolean, canMove: Boolean, stay: () -> Boolean, onFavourite: () -> Unit, onMove: () -> Unit, modifier: Modifier = Modifier) {
+    val first = remember { FocusRequester() }
+    LaunchedEffect(Unit) {
+        withFrameNanos {}
+        runCatching { first.requestFocus() }
+    }
+    Column(
+        modifier
+            .width(DETAILS_WIDTH)
+            .material()
+            .focusProperties { onExit = { if (stay()) cancelFocusChange() } }
+            .focusGroup()
+            .padding(Space.m),
+        verticalArrangement = Arrangement.spacedBy(Space.xs),
+    ) {
+        PanelRow(if (favourite) "Remove from Favourites" else "Add to Favourites", focus = first, onClick = onFavourite)
+        if (canMove) PanelRow("Move", onClick = onMove)
     }
 }
 
@@ -1074,6 +1178,7 @@ internal fun ChannelRow(
     onFocused: () -> Unit,
     onClick: () -> Unit,
     badges: Boolean = true,
+    moving: Boolean = false,
 ) {
     val lines = remember(channel, guide) { guide?.let { rowLines(channel, it) } }
     val name = remember(channel.name) { displayName(channel.name) }
@@ -1096,7 +1201,7 @@ internal fun ChannelRow(
             }
         }
         val next = lines?.next
-        LastLine(watchHint) {
+        if (moving) Hint(MOVE_HINT) else LastLine(watchHint) {
             Text(remember(next) { next?.let { "Next · ${clockTime(it.start)} ${cleanTitle(it.title)}" } ?: "" }, style = Type.caption, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
     }
@@ -1133,6 +1238,9 @@ internal fun Progress(programme: Programme, clock: State<Long>) {
         modifier = Modifier.width(INLINE_PROGRESS),
     )
 }
+
+/** On a row being moved (☰, Move). */
+internal const val MOVE_HINT = "Moving · Up/Down, then OK"
 
 /** On the playing row while the list previews: OK on it again goes full screen. */
 internal const val WATCH_HINT = "Playing · OK to watch full screen"

@@ -426,6 +426,8 @@ fun MoviesLayer(
             playing?.let { p ->
                 key(p) {
                     val s = p.show
+                    // Past 90% the play is logged to Trakt, once this play.
+                    val trakt = remember { graph.trakt.play(s?.episode?.titleId ?: p.movie.titleId) }
                     // The player words its states for a film or an episode.
                     CompositionLocalProvider(LocalLibrary provides if (s != null) LibraryKind.Shows else LibraryKind.Movies) {
                         MoviePlayback(
@@ -435,6 +437,7 @@ fun MoviesLayer(
                             fallback = p.fallback,
                             iptvUrl = iptvUrl(p),
                             onSave = { pos, dur ->
+                                trakt(pos, dur)
                                 if (dur > 0 && pos >= dur * 0.95) (if (s != null) graph.watchedEpisodes else graph.watchedMovies).mark(s?.episode?.titleId ?: p.movie.titleId)
                                 if (s == null) graph.resume.save(p.movie, pos, dur) else graph.showResume.save(s.show, pos, dur, s.episode.titleId, s.episode.code)
                             },

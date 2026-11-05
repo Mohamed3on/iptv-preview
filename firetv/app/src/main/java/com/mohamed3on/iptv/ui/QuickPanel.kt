@@ -37,7 +37,17 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.tv.material3.Text
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.em
 import com.mohamed3on.iptv.data.RouteChoice
+import com.mohamed3on.iptv.data.TraktStatus
+import com.mohamed3on.iptv.data.TraktSync
+import com.mohamed3on.iptv.graph
+import com.mohamed3on.iptv.ui.theme.tabular
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import com.mohamed3on.iptv.data.RouteKind
 import com.mohamed3on.iptv.player.AudioOption
 import com.mohamed3on.iptv.player.AudioState
@@ -51,7 +61,7 @@ import java.util.Locale
 
 private val PANEL_WIDTH = 420.dp
 
-private enum class Page { Main, Audio, Connection }
+private enum class Page { Main, Audio, Connection, Trakt }
 
 /**
  * The Menu sheet beside the still-playing video: audio track (R13), connection route with the
@@ -83,6 +93,10 @@ fun QuickPanel(
     val audioRow = remember { FocusRequester() }
     val connectionRow = remember { FocusRequester() }
     val favouriteRow = remember { FocusRequester() }
+    val traktRow = remember { FocusRequester() }
+    val trakt = LocalContext.current.graph.trakt
+    val traktStatus by trakt.status.collectAsState()
+    LaunchedEffect(Unit) { trakt.refresh() }
 
     Column(
         modifier
@@ -114,6 +128,7 @@ fun QuickPanel(
                         Page.Main -> "Options"
                         Page.Audio -> "Audio"
                         Page.Connection -> "Connection"
+                        Page.Trakt -> "Trakt"
                     },
                     style = Type.title,
                     modifier = Modifier.padding(start = Space.l, bottom = Space.l),
@@ -125,6 +140,7 @@ fun QuickPanel(
                             when (openedFrom) {
                                 Page.Audio -> audioRow
                                 Page.Connection -> connectionRow
+                                Page.Trakt -> traktRow
                                 else -> if (favourite != null) favouriteRow else if (hasAudio) audioRow else connectionRow
                             }.requestFocus()
                         }
@@ -137,6 +153,7 @@ fun QuickPanel(
                         // Multi-view (U11).
                         Column(verticalArrangement = Arrangement.spacedBy(Space.xs), content = views)
                         PanelRow("Refresh guide", refreshStatus, onClick = onRefresh)
+                        PanelRow("Trakt", traktValue(traktStatus), focus = traktRow) { page = Page.Trakt }
                         // TMDB's terms ask for this credit wherever its data shows.
                         Spacer(Modifier.weight(1f))
                         Text(
@@ -174,6 +191,7 @@ fun QuickPanel(
                             modifier = Modifier.padding(start = Space.l, top = Space.m),
                         )
                     }
+                    Page.Trakt -> TraktPage(trakt, traktStatus)
                 }
             }
         }
@@ -215,6 +233,51 @@ internal fun Modifier.pressable(onClick: () -> Unit): Modifier {
     val interaction = remember { MutableInteractionSource() }
     val focused by interaction.collectIsFocusedAsState()
     return focusLift(focused).clickable(interaction, indication = null, onClick = onClick)
+}
+
+private fun traktValue(s: TraktStatus?) = when (s?.state) {
+    null -> null
+    "on" -> s.user.ifEmpty { "Connected" }
+    "reconnect" -> "Reconnect"
+    "waiting" -> "Waiting for code"
+    else -> "Not connected"
+}
+
+/**
+ * Trakt's sign-in (KTD19), focus on each state's one action: Connect; the code to enter and Cancel while it
+ * waits (the box is asked every few seconds until it is entered); Try again once it expired or was declined;
+ * the account and Disconnect; Reconnect when Trakt signed the app out.
+ */
+@Composable
+private fun TraktPage(trakt: TraktSync, status: TraktStatus?) {
+    val scope = rememberCoroutineScope()
+    val action = remember { FocusRequester() }
+    val state = status?.state
+    val s = status ?: TraktStatus()
+    LaunchedEffect(state) {
+        runCatching { action.requestFocus() }
+        while (state == "waiting") {
+            delay(3_000)
+            trakt.refresh()
+        }
+    }
+    val (message, label, verb) = when (state) {
+        null -> Triple("The box didn't answer.", "Try again", null)
+        "waiting" -> Triple("On your phone, go to ${s.url.substringAfter("://")} and enter", "Cancel", "cancel")
+        "expired" -> Triple("The code expired before it was entered.", "Try again", "connect")
+        "denied" -> Triple("Trakt sign-in was declined.", "Try again", "connect")
+        "on" -> Triple("Signed in as ${s.user}. Films and episodes you finish are added to your Trakt history.", "Disconnect", "disconnect")
+        "reconnect" -> Triple("Trakt signed this app out. Finished plays wait here until you connect again.", "Reconnect", "connect")
+        else -> Triple("Add the films and episodes you finish to your Trakt history.", "Connect", "connect")
+    }
+    Text(message, style = Type.body, modifier = Modifier.padding(horizontal = Space.l))
+    if (state == "waiting") Text(
+        s.code,
+        style = Type.display.copy(letterSpacing = 0.08.em).tabular,
+        modifier = Modifier.padding(Space.l),
+    )
+    Spacer(Modifier.size(Space.s))
+    PanelRow(label, focus = action) { scope.launch { if (verb == null) trakt.refresh() else trakt.act(verb) } }
 }
 
 private fun routeName(kind: RouteKind) = if (kind == RouteKind.Vpn) "VPN" else "Plain"

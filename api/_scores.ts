@@ -49,8 +49,11 @@ export function letterboxdFilms(now = Date.now()) {
   if (!lbx.watched && now - lbx.at >= 60e3) (lbx.at = now), readStore()
   return lbx.byId
 }
-/** When the store [letterboxdFilms] holds was written (ms; 0 before any). */
-export const storeAt = () => (letterboxdFilms(), lbx.mtime)
+/**
+ * When the store [letterboxdFilms] holds was written (ms; 0 before any), the file looked at first: a library request
+ * catches what the watch can miss (Bun's reports writes and renames, not a bare mtime change).
+ */
+export const storeAt = () => (letterboxdFilms(), readStore(), lbx.mtime)
 
 /** Reads the store when it changed since the last read; true when it did. */
 function readStore() {

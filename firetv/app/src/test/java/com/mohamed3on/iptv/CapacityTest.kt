@@ -12,7 +12,8 @@ import java.time.ZoneOffset
 class CapacityTest {
     private val evening = 20 * 3_600_000L // 20:00 UTC
     private val day = 12 * 3_600_000L
-    private val capacity = Capacity(MapStore(), ZoneOffset.UTC)
+    private var vpnOn = false
+    private val capacity = Capacity(MapStore(), ZoneOffset.UTC) { vpnOn }
 
     /** Readings once a second: [seconds] filling at [mbps], then one idle second. */
     private fun BandwidthMeter.burst(from: Long, seconds: Int, mbps: Int, bytes: Long = 0): Long {
@@ -26,11 +27,17 @@ class CapacityTest {
     }
 
     @Test
-    fun typicalIsTheLowQuartileOfTheBandsSessions() {
+    fun typicalIsTheMedianOfTheBandsSessionsKeptApartByVpn() {
         listOf(30f, 35f, 40f, 80f, 90f).forEach { capacity.record(listOf(Burst(evening, Iptv, it))) }
-        assertEquals(35f, capacity.typicalMbps(Iptv, evening)!!, 0.01f)
+        assertEquals(40f, capacity.typicalMbps(Iptv, evening)!!, 0.01f)
         assertNull(capacity.typicalMbps(Iptv, day))
         assertNull(capacity.typicalMbps(Capacity.Source.RealDebrid, evening))
+        vpnOn = true
+        assertNull(capacity.typicalMbps(Iptv, evening)) // the VPN has its own history
+        capacity.record(listOf(Burst(evening, Iptv, 11f)))
+        assertEquals(11f, capacity.typicalMbps(Iptv, evening)!!, 0.01f)
+        vpnOn = false
+        assertEquals(40f, capacity.typicalMbps(Iptv, evening)!!, 0.01f)
     }
 
     @Test

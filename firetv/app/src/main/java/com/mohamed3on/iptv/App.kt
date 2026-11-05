@@ -76,7 +76,8 @@ class AppGraph(context: Context) {
     /** The one HTTP client: feed sync now, Media3's OkHttp data source later. */
     val http = OkHttpClient()
     val prefs = PrefsStore(context.getSharedPreferences("iptv", Context.MODE_PRIVATE))
-    val route = Route(prefs, VpnMonitor(context).active, scope)
+    private val vpnActive = VpnMonitor(context).active
+    val route = Route(prefs, vpnActive, scope)
     val history = WatchHistory(prefs)
     /** Favourites and each group's own channel order. */
     val lineup = Lineup(prefs)
@@ -93,8 +94,8 @@ class AppGraph(context: Context) {
     val dismissed = WatchedStore(prefs, "titles.upnext.dismissed")
     /** Carries the marks saved under provider ids over to title ids, once. */
     val migration = TitleMigration(prefs, resume, showResume, watchedMovies, watchedEpisodes)
-    /** Typical film bandwidth per source and hour band. */
-    val capacity = Capacity(prefs)
+    /** Typical film bandwidth per source, hour band and route (VPN on or off). */
+    val capacity = Capacity(prefs, vpn = { vpnActive.value })
     /** Marks, corrections and pins the copy ranker reads. */
     val copyChoices = CopyChoices(prefs)
     val sync = FeedSync(http, BuildConfig.SERVER_URL, BuildConfig.APP_TOKEN, context.filesDir, prefs, onEpisodes = migration::adoptEpisodes)

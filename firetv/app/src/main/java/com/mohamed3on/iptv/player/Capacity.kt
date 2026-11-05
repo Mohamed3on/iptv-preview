@@ -16,11 +16,17 @@ interface Bandwidth {
 }
 
 /**
- * Typical capacity per source and hour band, learnt from film sessions: each session leaves one sample
- * per (source, band), the median of its loading bursts there; the last [KEEP] per bucket are kept, and the
- * typical capacity is their 25th percentile, so one bad film tail can't decide the next pick.
+ * Typical capacity per source, hour band and route (VPN on or off, whose speed differs a lot), learnt from film
+ * sessions: each session leaves one sample per (source, band), the median of its loading bursts there; the last
+ * [KEEP] per bucket are kept, and the typical capacity is their median, so one bad film can't decide the next pick
+ * without the pick turning timid (owner: "don't be too conservative").
  */
-class Capacity(private val store: KeyValueStore, private val zone: ZoneId = ZoneId.systemDefault()) {
+class Capacity(
+    private val store: KeyValueStore,
+    private val zone: ZoneId = ZoneId.systemDefault(),
+    /** Whether the stick's VPN is on now: VPN sessions are learnt and read apart from the home line's. */
+    private val vpn: () -> Boolean = { false },
+) {
     enum class Source { Iptv, RealDebrid }
 
     /** Local hours: night 01–09, day 09–18, evening peak 18–01. */
@@ -32,7 +38,7 @@ class Capacity(private val store: KeyValueStore, private val zone: ZoneId = Zone
         else -> Band.Evening
     }
 
-    fun typicalMbps(source: Source, at: Long): Float? = samples(source, band(at)).sorted().let { it.getOrNull((it.size - 1) / 4) }
+    fun typicalMbps(source: Source, at: Long): Float? = samples(source, band(at)).sorted().let { it.getOrNull((it.size - 1) / 2) }
 
     /** Ends a session: one sample per bucket its [bursts] fell in. Returns what it stored, for the log. */
     fun record(bursts: List<Burst>): Map<Pair<Source, Band>, Float> =
@@ -40,7 +46,7 @@ class Capacity(private val store: KeyValueStore, private val zone: ZoneId = Zone
             median(rates).also { put(bucket.first, bucket.second, (samples(bucket.first, bucket.second) + it).takeLast(KEEP)) }
         }
 
-    private fun key(source: Source, band: Band) = "capacity.${source.name}.${band.name}"
+    private fun key(source: Source, band: Band) = "capacity.${source.name}.${band.name}" + if (vpn()) ".vpn" else ""
     private fun samples(source: Source, band: Band) = store.get(key(source, band))?.split(',')?.mapNotNull(String::toFloatOrNull).orEmpty()
     private fun put(source: Source, band: Band, mbps: List<Float>) = store.put(key(source, band), mbps.joinToString(","))
 

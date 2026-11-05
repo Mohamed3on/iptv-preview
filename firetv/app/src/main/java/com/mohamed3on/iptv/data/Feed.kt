@@ -40,6 +40,8 @@ data class Feed(
     val channels: List<Channel>,
     /** The backup provider's fronts and account, when the server has one; its feeds are ids from [BACKUP_ID]. */
     val backup: ProviderRoute? = null,
+    /** The Real-Debrid API token, when the server has one ([RealDebrid] makes every call from the stick, KTD2). */
+    val realDebrid: String? = null,
 ) {
     private val byGroup by lazy { channels.groupBy { it.group } }
     @kotlinx.serialization.Transient private val rowsByGroup = java.util.concurrent.ConcurrentHashMap<String, List<Channel>>()

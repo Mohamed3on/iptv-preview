@@ -53,6 +53,8 @@ class FeedSync(
     private val _guide = MutableStateFlow<GuideDb?>(null)
     /** The open cached guide; replaced (and the old one closed) after each validated download. */
     val guide: StateFlow<GuideDb?> = _guide
+    /** The Real-Debrid token from the feed, for [RealDebrid]; null until a feed is loaded or when the server has none. */
+    val realDebridToken: String? get() = (_state.value as? FeedState.Ready)?.feed?.realDebrid
     /** The 4K films and UFC replays (v2). */
     val movies = Library("movies")
     /** The shows (series), in the same shape; each show's episodes come from [episodes]. */

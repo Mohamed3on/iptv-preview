@@ -7,6 +7,7 @@ import * as app from './api/app'
 import epg from './api/epg'
 import playlist from './api/playlist'
 import proxy from './api/proxy'
+import { accessToken } from './api/_trakt'
 
 type Handler = (req: Request) => Promise<Response>
 type Entry = { body: Blob; init: ResponseInit; fresh: number; stale: number }
@@ -73,6 +74,8 @@ export async function handle(req: Request): Promise<Response> {
     return res
   }
   if (pathname === '/api/app/events' && req.method === 'POST') return app.events(req)
+  if (pathname === '/api/app/trakt') return app.traktSignIn(req)
+  if (pathname === '/api/app/trakt-history' && req.method === 'POST') return app.traktHistory(req)
   if (pathname === '/api/app/title-ids' && req.method === 'POST') return app.titleIds(req)
   if (pathname === '/api/app/rd-infringing' && req.method === 'POST') {
     const res = await app.rdInfringing(req)
@@ -87,6 +90,8 @@ export async function handle(req: Request): Promise<Response> {
 }
 
 if (import.meta.main) {
+  // Keeps a Trakt sign-in alive across restarts: reading the token schedules its refresh.
+  accessToken().catch(() => {})
   Bun.serve({
     hostname: '127.0.0.1',
     port: Number(process.env.PORT ?? 8790),

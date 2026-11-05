@@ -14,6 +14,7 @@ import com.mohamed3on.iptv.data.Route
 import com.mohamed3on.iptv.data.LIBRARY_CHECK
 import com.mohamed3on.iptv.data.ResumeStore
 import com.mohamed3on.iptv.data.TitleMigration
+import com.mohamed3on.iptv.data.TraktSync
 import com.mohamed3on.iptv.data.VpnMonitor
 import com.mohamed3on.iptv.data.WatchedStore
 import com.mohamed3on.iptv.data.WatchHistory
@@ -47,6 +48,7 @@ class App : Application(), SingletonImageLoader.Factory {
             graph.sync.refresh(Duration.ZERO, Duration.ZERO) // launch refresh; playback never waits on it (R25)
             // The movie library is read once the first tune has had the stick to itself, so Movies opens at once.
             delay(5.seconds)
+            launch { graph.trakt.flush() } // plays finished while the box was out of reach
             graph.sync.library.loadCached()
             graph.sync.library.sync(LIBRARY_CHECK)
             graph.sync.movies.loadCached()
@@ -93,6 +95,8 @@ class AppGraph(context: Context) {
     val setup by lazy { Setup(context) }
     /** Events the server keeps for the stick (/api/app/events). */
     val telemetry by lazy { Telemetry(http, BuildConfig.SERVER_URL, BuildConfig.APP_TOKEN, scope) }
+    /** Trakt through the box: the Options sign-in and finished plays, queued until logged. */
+    val trakt by lazy { TraktSync(http, BuildConfig.SERVER_URL, BuildConfig.APP_TOKEN, prefs, scope) }
     /** Real-Debrid from the stick's own IP; one instance, so its account list and answers are shared. */
     val debrid by lazy { RealDebrid(http, { sync.realDebridToken }, onInfringing = ::refused) }
     /** Each title's copies, ranked and checked ahead of Play. Touch [setup] on the main thread first. */

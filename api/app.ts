@@ -16,6 +16,8 @@
 // GET /api/app/subtitles?t=TOKEN&title=…&hash=…&size=…&name=… — English and Arabic subtitles for the copy playing.
 // GET /api/app/subtitle?t=TOKEN&id=… — one of them as SRT.
 // GET /api/app/title, /api/app/search, /api/app/person ?t=TOKEN — title pages, search and person pages (see _browse.ts).
+// GET /api/app/trakt?t=TOKEN — the Trakt sign-in; POST it { action: connect | cancel | disconnect } to change it.
+// POST /api/app/trakt-history?t=TOKEN — { title, at } a film or episode finished on the stick, for Trakt history.
 import { appendFile, mkdir, rename, stat } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import { buildAppFeed, buildAppGuide } from './_app-feed.js'
@@ -30,6 +32,7 @@ import { subtitleFile, subtitlesFor } from './_subtitles.js'
 import { knownTitles, personTitles, searchTitles, titleDetails } from './_browse.js'
 import { loadScores, ranked, scoreTitles } from './_scores.js'
 import { tmdbFacts, tmdbGet } from './_tmdb.js'
+import * as trakt from './_trakt.js'
 import { blurayMovies, filmTitleOf, searchVod } from './_vod.js'
 
 const forbidden = () => new Response('Forbidden', { status: 403 })
@@ -377,4 +380,35 @@ export async function person(req: Request): Promise<Response> {
   } catch (e) {
     return new Response(e instanceof Error ? e.message : 'upstream error', { status: 502 })
   }
+}
+
+// GET /api/app/trakt?t=TOKEN — the Trakt sign-in as Options show it (see _trakt.ts); POST { action } connects
+// (a new device code), cancels a code or disconnects, and answers the new state.
+export async function traktSignIn(req: Request): Promise<Response> {
+  if (!appTokenOk(req.url)) return forbidden()
+  const headers = { 'Cache-Control': 'no-store' }
+  if (req.method !== 'POST') return Response.json(await trakt.status(), { headers })
+  const action = ((await req.json().catch(() => null)) as { action?: unknown } | null)?.action
+  try {
+    if (action === 'connect') return Response.json(await trakt.connect(), { headers })
+    if (action === 'cancel') trakt.cancel()
+    else if (action === 'disconnect') await trakt.disconnect()
+    else return new Response('Bad action', { status: 400 })
+    return Response.json(await trakt.status(), { headers })
+  } catch (e) {
+    return new Response(e instanceof Error ? e.message : 'upstream error', { status: 502 })
+  }
+}
+
+// POST /api/app/trakt-history?t=TOKEN — { title: movie:N | tv:N:sNeM, at: epoch ms } a play the stick finished: 204 once
+// Trakt has it (a duplicate too), 503 while Trakt isn't signed in and 502 when it fails, so the stick keeps it for later.
+export async function traktHistory(req: Request): Promise<Response> {
+  if (!appTokenOk(req.url)) return forbidden()
+  const r = (await req.json().catch(() => null)) as { title?: unknown; at?: unknown } | null
+  if (!r || typeof r.title !== 'string' || !COPY_TITLE.test(r.title) || !Number.isSafeInteger(r.at) || (r.at as number) < 1.5e12 || (r.at as number) > Date.now() + 864e5) {
+    return new Response('Bad play', { status: 400 })
+  }
+  const result = await trakt.logPlay(r.title, r.at as number)
+  if (result === 'ok') return new Response(null, { status: 204 })
+  return new Response(result === 'off' ? 'Trakt not connected' : 'Trakt failed', { status: result === 'off' ? 503 : 502 })
 }

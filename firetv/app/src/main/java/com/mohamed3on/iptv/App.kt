@@ -14,6 +14,7 @@ import com.mohamed3on.iptv.data.ResumeStore
 import com.mohamed3on.iptv.data.VpnMonitor
 import com.mohamed3on.iptv.data.WatchedStore
 import com.mohamed3on.iptv.data.WatchHistory
+import com.mohamed3on.iptv.system.VoiceFix
 import com.mohamed3on.iptv.update.Updater
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -38,6 +39,7 @@ class App : Application(), SingletonImageLoader.Factory {
             delay(5.seconds)
             graph.sync.movies.loadCached()
         }
+        graph.scope.launch { VoiceFix.onceThisBoot(this@App) }
     }
 
     /** Channel logos load through the shared HTTP client; the banner swaps them on every zap, so no crossfade. */

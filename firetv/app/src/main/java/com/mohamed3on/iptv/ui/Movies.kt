@@ -170,6 +170,7 @@ import com.mohamed3on.iptv.ui.theme.Palette
 import com.mohamed3on.iptv.ui.theme.ProgressLine
 import com.mohamed3on.iptv.ui.theme.Radius
 import com.mohamed3on.iptv.ui.theme.Space
+import com.mohamed3on.iptv.ui.theme.FitText
 import com.mohamed3on.iptv.ui.theme.Type
 import com.mohamed3on.iptv.ui.theme.edgeFade
 import com.mohamed3on.iptv.ui.theme.material
@@ -944,7 +945,7 @@ private fun UpNextPage(
             label = "upnext",
         ) { (m, r, i) ->
             Column(Modifier.padding(start = EDGE).widthIn(max = UPNEXT_WIDTH), verticalArrangement = Arrangement.spacedBy(Space.xs)) {
-                Text(m.title.title, style = BIG_TITLE, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                FitText(m.title.title, style = BIG_TITLE, active = true)
                 MetaLine(m, i)
                 Row(Modifier.padding(top = Space.xs), horizontalArrangement = Arrangement.spacedBy(Space.m), verticalAlignment = Alignment.CenterVertically) {
                     Text(listOfNotNull(r.label, r.takeIf { it.dur > 0 && it.pos > 0 }?.let { leftLabel(it.dur - it.pos) }).joinToString(" · "), style = Type.headline, maxLines = 1)
@@ -1066,7 +1067,7 @@ private fun MetaLine(movie: Movie, info: MovieInfo?, extra: String? = null, tier
         listOfNotNull(scored?.scoreLabel(), averages).joinToString(" · ").ifEmpty { null }?.let { Text(it, style = SCORE_STYLE, maxLines = 1) }
         movie.title.badge?.let { Badges(remember(it) { listOf(it) }) }
         val group = movie.group.takeIf { movie.lib != null } ?: groupLabel(movie.group).name
-        Text(listOfNotNull(movie.title.year, extra, runtime, genre ?: group.ifEmpty { null }, rating).joinToString(" · "), style = Type.body, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        FitText(listOfNotNull(movie.title.year, extra, runtime, genre ?: group.ifEmpty { null }, rating).joinToString(" · "), style = Type.body, active = true)
     }
 }
 
@@ -1169,7 +1170,7 @@ private fun WideCard(movie: Movie, saved: Resume, new: Boolean, onFocused: () ->
         Box(Modifier.fillMaxSize().drawBehind { drawRect(Brush.verticalGradient(0.4f to Color.Transparent, 1f to Color(0xE6000000))) })
         Column(Modifier.align(Alignment.BottomStart).padding(horizontal = Space.s, vertical = Space.s), verticalArrangement = Arrangement.spacedBy(Space.xs)) {
             if (new) Text(NEW_EPISODE, style = NEW_STYLE, maxLines = 1)
-            Text(listOfNotNull(movie.title.title, saved.label).joinToString(" · "), style = Type.caption.copy(color = Palette.textPrimary), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            FitText(listOfNotNull(movie.title.title, saved.label).joinToString(" · "), style = Type.caption.copy(color = Palette.textPrimary), active = focused)
             if (saved.dur > 0) ProgressLine({ saved.pos.toFloat() / saved.dur })
         }
     }
@@ -1193,7 +1194,7 @@ private fun Hero(movie: Movie?, info: MovieInfo?, resume: List<Resume>, placehol
                 Text(placeholder, style = Type.display, maxLines = 1)
                 return@Column
             }
-            Text(m.title.title, style = Type.display, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            FitText(m.title.title, style = Type.display, active = true)
             // A show also says which episode it is on: "S1 E3 · 40 min left".
             val left = remember(m, resume) {
                 resume.firstOrNull { it.title == m.titleId }?.let { r ->
@@ -1654,8 +1655,8 @@ private fun FilmPage(
                     info?.plot?.ifBlank { null }?.let { Text(it, style = Type.body, maxLines = if (unavailable) 4 else 6, overflow = TextOverflow.Ellipsis) }
                     // The provider's facts name people only as text; TMDB's are the row below.
                     if (info?.people.isNullOrEmpty()) {
-                        info?.cast?.ifBlank { null }?.let { Text("Starring $it", style = Type.caption, maxLines = 1, overflow = TextOverflow.Ellipsis) }
-                        info?.director?.substringBefore(",")?.trim()?.ifBlank { null }?.let { Text("Directed by $it", style = Type.caption, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                        info?.cast?.ifBlank { null }?.let { Text("Starring $it", style = Type.caption, maxLines = 2) }
+                        info?.director?.substringBefore(",")?.trim()?.ifBlank { null }?.let { Text("Directed by $it", style = Type.caption, maxLines = 2) }
                     }
                     if (unavailable) {
                         Text("No copy available", style = Type.headline.copy(color = Palette.warning), modifier = Modifier.padding(top = Space.s).focusRequester(noCopy).focusable())
@@ -1714,7 +1715,7 @@ private fun PlaysLine(title: TitleId, fallback: List<String>?, modifier: Modifie
     Row(modifier.height(PLAYS_HEIGHT), horizontalArrangement = Arrangement.spacedBy(Space.s), verticalAlignment = Alignment.CenterVertically) {
         if (text == null) return@Row
         copy?.let(::copyTier)?.let { TierChip(it) }
-        Text("Plays: $text", style = Type.body, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        FitText("Plays: $text", style = Type.body, active = true)
     }
 }
 
@@ -1892,7 +1893,7 @@ private fun PersonPage(person: Person, watched: Set<TitleId>, active: Boolean, h
         ) {
             item(key = "name", span = { GridItemSpan(maxLineSpan) }) {
                 Column(verticalArrangement = Arrangement.spacedBy(Space.xs)) {
-                    Text(person.name, style = BIG_TITLE, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(person.name, style = BIG_TITLE, maxLines = 2)
                     Text(
                         when {
                             !list.isNullOrEmpty() -> "${list.size} films and shows, best rated first"
@@ -2014,7 +2015,7 @@ private fun ShowPage(
                         val seasons = episodes?.map { it.season }?.distinct()?.size
                         MetaLine(show, info ?: data?.info, extra = seasons?.let { if (it == 1) "1 season" else "$it seasons" })
                         (info?.plot?.ifBlank { null } ?: data?.plot?.ifBlank { null })?.let { Text(it, style = Type.body, maxLines = 6, overflow = TextOverflow.Ellipsis) }
-                        if (info?.people.isNullOrEmpty()) data?.cast?.ifBlank { null }?.let { Text("Starring $it", style = Type.caption, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                        if (info?.people.isNullOrEmpty()) data?.cast?.ifBlank { null }?.let { Text("Starring $it", style = Type.caption, maxLines = 2) }
                         val next = target?.let { episodes[it] }
                         // The copy the episode up next plays on, prepared as the page opens; TMDB's episodes have no IPTV copy of their own.
                         if (next != null) key(next.titleId) { PlaysLine(next.titleId, fallback = if (next.id > 0) listOf("IPTV") + next.quality else null) }
@@ -2110,7 +2111,7 @@ private fun EpisodeRow(episode: Episode, watched: Boolean, progress: Float?, foc
             if (progress != null) ProgressLine({ progress }, Modifier.align(Alignment.BottomCenter).padding(horizontal = Space.xs, vertical = Space.xs))
         }
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(Space.xs)) {
-            Text(listOfNotNull("${episode.episode}", title).joinToString(". "), style = Type.headline, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            FitText(listOfNotNull("${episode.episode}", title).joinToString(". "), style = Type.headline, active = focused)
             Row(horizontalArrangement = Arrangement.spacedBy(Space.s), verticalAlignment = Alignment.CenterVertically) {
                 if (episode.secs > 0) Text("${(episode.secs + 30) / 60} min", style = Type.caption, maxLines = 1)
                 if (watched) Text("Watched", style = Type.caption.copy(color = Palette.accent), maxLines = 1)
@@ -2131,7 +2132,7 @@ private fun EpisodePlays(title: TitleId) {
     val plays = p?.plays
     LaunchedEffect(plays) { if (plays != null) Check.log("plays", "title" to title, "copy" to plays.id, "src" to plays.source) }
     val text = plays?.let { (listOf(sourceName(it.source)) + copyLabels(it).take(2)).joinToString(" · ") } ?: return
-    Text("Plays: $text · Menu for versions", style = Type.caption, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    FitText("Plays: $text · Menu for versions", style = Type.caption, active = true)
 }
 
 private val GENERIC_EPISODE = Regex("""(?i)episode\s*\d+""")

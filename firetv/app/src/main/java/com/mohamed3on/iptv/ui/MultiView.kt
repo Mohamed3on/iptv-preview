@@ -49,6 +49,7 @@ import com.mohamed3on.iptv.ui.theme.Motion
 import com.mohamed3on.iptv.ui.theme.Palette
 import com.mohamed3on.iptv.ui.theme.Radius
 import com.mohamed3on.iptv.ui.theme.Space
+import com.mohamed3on.iptv.ui.theme.FitText
 import com.mohamed3on.iptv.ui.theme.Type
 import com.mohamed3on.iptv.ui.theme.material
 import kotlinx.coroutines.CoroutineScope
@@ -248,11 +249,9 @@ private fun TileStatus(session: StreamSession) {
         Phase.Offline -> "Channel unavailable"
         Phase.Stopped, Phase.Playing -> return
     }
-    Text(
+    FitText(
         message,
         style = Type.caption.copy(color = Palette.textPrimary),
-        maxLines = 1,
-        overflow = TextOverflow.Ellipsis,
         modifier = Modifier.padding(Space.m).material(Radius.chip).padding(horizontal = Space.m, vertical = Space.xs),
     )
 }
@@ -267,15 +266,13 @@ private fun Caption(channel: Channel, guide: GuideDb?, clock: State<Long>, selec
         }
     }
     Row(modifier, horizontalArrangement = Arrangement.spacedBy(Space.s), verticalAlignment = Alignment.CenterVertically) {
-        Text(
+        FitText(
             remember(channel.name) { displayName(channel.name) },
             style = Type.caption.copy(color = if (selected) Palette.textPrimary else Palette.textSecondary),
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f, fill = false),
         )
         val programme = now?.takeUnless { it.synthetic } ?: return@Row
         if (programme.match) LiveMark()
-        Text(programme.title, style = Type.caption, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+        FitText(programme.title, style = Type.caption, modifier = Modifier.weight(1f, fill = false))
     }
 }

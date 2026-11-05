@@ -60,6 +60,7 @@ import com.mohamed3on.iptv.ui.theme.Motion
 import com.mohamed3on.iptv.ui.theme.Palette
 import com.mohamed3on.iptv.ui.theme.Radius
 import com.mohamed3on.iptv.ui.theme.Space
+import com.mohamed3on.iptv.ui.theme.FitText
 import com.mohamed3on.iptv.ui.theme.Type
 import com.mohamed3on.iptv.ui.theme.focusLift
 import kotlinx.coroutines.delay
@@ -381,16 +382,16 @@ internal fun HitRow(hit: SearchHit, clock: State<Long>, playing: Boolean, watchH
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Space.s)) {
             if (playing) PlayingDot()
             if (live && p.match) LiveMark()
-            Text(title, style = Type.headline, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            FitText(title, style = Type.headline)
         }
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Space.s)) {
-            Text(
+            FitText(
                 if (live) channel else "$channel · ${startLabel(p.start, clock.value)}",
-                style = Type.body, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f),
+                style = Type.body, modifier = Modifier.weight(1f),
             )
             if (live) Progress(p, clock)
         }
         if (hint) Hint("Starts at ${clockTime(p.start)}")
-        else LastLine(watchHint) { Text(hit.comp ?: groupLabel(hit.tune.group), style = Type.caption, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+        else LastLine(watchHint) { FitText(hit.comp ?: groupLabel(hit.tune.group), style = Type.caption) }
     }
 }

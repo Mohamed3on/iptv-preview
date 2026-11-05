@@ -29,6 +29,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.foundation.layout.size
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.input.key.KeyEventType
@@ -54,6 +55,7 @@ import com.mohamed3on.iptv.player.AudioState
 import com.mohamed3on.iptv.ui.theme.Motion
 import com.mohamed3on.iptv.ui.theme.Palette
 import com.mohamed3on.iptv.ui.theme.Space
+import com.mohamed3on.iptv.ui.theme.FitText
 import com.mohamed3on.iptv.ui.theme.Type
 import com.mohamed3on.iptv.ui.theme.focusLift
 import com.mohamed3on.iptv.ui.theme.material
@@ -208,16 +210,18 @@ fun PanelRow(
     modifier: Modifier = Modifier,
     onClick: () -> Unit,
 ) {
+    var focused by remember { mutableStateOf(false) }
     Row(
         modifier
             .fillMaxWidth()
             .then(if (focus != null) Modifier.focusRequester(focus) else Modifier)
+            .onFocusChanged { focused = it.isFocused }
             .pressable(onClick)
             .padding(horizontal = Space.l, vertical = Space.m),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(Space.m),
     ) {
-        Text(label, style = Type.headline, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+        FitText(label, style = Type.headline, active = focused, modifier = Modifier.weight(1f))
         // A value that changes in place ("Refreshing…" → "Up to date") cross-fades.
         if (value != null) AnimatedContent(
             targetState = value,

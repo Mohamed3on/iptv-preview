@@ -96,6 +96,7 @@ import com.mohamed3on.iptv.ui.theme.ListScrim
 import com.mohamed3on.iptv.ui.theme.Scrim
 import com.mohamed3on.iptv.ui.theme.edgeFade
 import com.mohamed3on.iptv.ui.theme.Space
+import com.mohamed3on.iptv.ui.theme.FitText
 import com.mohamed3on.iptv.ui.theme.Type
 import com.mohamed3on.iptv.player.Health
 import com.mohamed3on.iptv.player.AudioOption
@@ -667,7 +668,7 @@ private fun Guide(channel: Channel, guide: GuideDb?, clock: State<Long>, describ
     if (now != null) {
         Row(horizontalArrangement = Arrangement.spacedBy(Space.s), verticalAlignment = Alignment.CenterVertically) {
             if (now.match) LiveMark()
-            Text(remember(now) { if (now.match) fixtureOf(now.title) else cleanTitle(now.title) }, style = Type.headline, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(remember(now) { if (now.match) fixtureOf(now.title) else cleanTitle(now.title) }, style = Type.headline, maxLines = 2)
         }
         Row(horizontalArrangement = Arrangement.spacedBy(Space.m), verticalAlignment = Alignment.CenterVertically) {
             Text("${clockTime(now.start)} – ${clockTime(now.stop)}", style = Type.caption.tabular)
@@ -679,7 +680,7 @@ private fun Guide(channel: Channel, guide: GuideDb?, clock: State<Long>, describ
         if (describe && now.descr.isNotBlank()) Text(now.descr, style = Type.body, maxLines = 2, overflow = TextOverflow.Ellipsis)
     }
     if (next != null && !next.synthetic) {
-        Text("Next · ${clockTime(next.start)} ${cleanTitle(next.title)}", style = Type.body, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text("Next · ${clockTime(next.start)} ${cleanTitle(next.title)}", style = Type.body, maxLines = 2)
     }
 }
 
@@ -800,7 +801,7 @@ private fun StreamStats(info: StreamInfo, badges: List<String>) {
 @Composable
 private fun KeyHints() {
     Column(Modifier.padding(top = Space.xs), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-        for (line in KEY_HINTS) Text(line, style = Type.caption, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        for (line in KEY_HINTS) FitText(line, style = Type.caption)
     }
 }
 

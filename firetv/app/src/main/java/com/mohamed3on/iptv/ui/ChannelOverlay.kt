@@ -90,6 +90,8 @@ import com.mohamed3on.iptv.ui.theme.Motion
 import com.mohamed3on.iptv.ui.theme.Palette
 import com.mohamed3on.iptv.ui.theme.ProgressLine
 import com.mohamed3on.iptv.ui.theme.Space
+import com.mohamed3on.iptv.ui.theme.FitText
+import com.mohamed3on.iptv.ui.theme.LocalFocused
 import com.mohamed3on.iptv.ui.theme.Type
 import com.mohamed3on.iptv.ui.theme.reveal
 import com.mohamed3on.iptv.ui.theme.slideFade
@@ -1170,7 +1172,7 @@ fun GroupRow(label: String, marked: Boolean, focus: FocusRequester?, onFocused: 
         contentAlignment = Alignment.CenterStart,
     ) {
         if (marked) Box(Modifier.size(MARKER).clip(RoundedCornerShape(MARKER.width)).background(Palette.accent))
-        Text(name, style = if (focused || marked) Type.headline else groupIdle, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(horizontal = Space.l))
+        FitText(name, style = if (focused || marked) Type.headline else groupIdle, active = focused, modifier = Modifier.padding(horizontal = Space.l))
     }
 }
 
@@ -1185,12 +1187,13 @@ internal fun RowFrame(
     onClick: () -> Unit,
     lines: @Composable ColumnScope.() -> Unit,
 ) {
+    var focused by remember { mutableStateOf(false) }
     Row(
         Modifier
             .fillMaxWidth()
             .height(ROW_HEIGHT)
             .then(if (focus != null) Modifier.focusRequester(focus) else Modifier)
-            .onFocusChanged { if (it.isFocused) onFocused() }
+            .onFocusChanged { focused = it.isFocused; if (it.isFocused) onFocused() }
             .then(if (LocalHeld.current) Modifier.drawBehind { drawRoundRect(Palette.raised, cornerRadius = CornerRadius(Radius.row.toPx())) } else Modifier)
             .pressable(onClick)
             .padding(horizontal = Space.m),
@@ -1198,7 +1201,7 @@ internal fun RowFrame(
         horizontalArrangement = Arrangement.spacedBy(Space.l),
     ) {
         LogoTile(tile, TILE)
-        Column(Modifier.weight(1f), content = lines)
+        Column(Modifier.weight(1f)) { CompositionLocalProvider(LocalFocused provides focused) { lines() } }
     }
 }
 
@@ -1225,7 +1228,7 @@ internal fun ChannelRow(
     RowFrame(channel, focus, onFocused, onClick) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Space.s)) {
             if (playing) PlayingDot()
-            Text(name, style = Type.headline, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+            FitText(name, style = Type.headline, modifier = Modifier.weight(1f, fill = false))
             if (badges) Badges(channel.badges)
         }
         val now = lines?.now
@@ -1234,7 +1237,7 @@ internal fun ChannelRow(
                 lines?.noGuide == true -> Text("No guide", style = Type.body, maxLines = 1)
                 now != null -> {
                     if (now.match) LiveMark()
-                    Text(remember(now) { cleanTitle(now.title) }, style = Type.body, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                    FitText(remember(now) { cleanTitle(now.title) }, style = Type.body, modifier = Modifier.weight(1f))
                     Progress(now, clock)
                 }
                 else -> Text("", style = Type.body)
@@ -1242,7 +1245,7 @@ internal fun ChannelRow(
         }
         val next = lines?.next
         if (moving) Hint(MOVE_HINT) else LastLine(watchHint) {
-            Text(remember(next) { next?.let { "Next · ${clockTime(it.start)} ${cleanTitle(it.title)}" } ?: "" }, style = Type.caption, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            FitText(remember(next) { next?.let { "Next · ${clockTime(it.start)} ${cleanTitle(it.title)}" } ?: "" }, style = Type.caption)
         }
     }
 }
@@ -1260,13 +1263,13 @@ private fun LiveRow(entry: LiveEntry, clock: State<Long>, playing: Boolean, watc
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Space.s)) {
             if (playing) PlayingDot()
             if (programme != null) LiveMark()
-            Text(title, style = Type.headline, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            FitText(title, style = Type.headline)
         }
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Space.s)) {
-            Text(if (programme == null) "Not confirmed" else if (entry.alsoOn.isNotEmpty()) "$channel · +${entry.alsoOn.size} more" else channel, style = Type.body, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+            FitText(if (programme == null) "Not confirmed" else if (entry.alsoOn.isNotEmpty()) "$channel · +${entry.alsoOn.size} more" else channel, style = Type.body, modifier = Modifier.weight(1f))
             if (programme != null) Progress(programme, clock)
         }
-        LastLine(watchHint) { Text(entry.comp ?: groupLabel(entry.via.group), style = Type.caption, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+        LastLine(watchHint) { FitText(entry.comp ?: groupLabel(entry.via.group), style = Type.caption) }
     }
 }
 
@@ -1300,7 +1303,7 @@ internal fun LastLine(watchHint: Boolean, line: @Composable () -> Unit) {
 /** A quiet note in place of a row's last line. */
 @Composable
 internal fun Hint(text: String) {
-    Text(text, style = Type.caption.copy(color = Palette.textSecondary), maxLines = 1, overflow = TextOverflow.Ellipsis)
+    FitText(text, style = Type.caption.copy(color = Palette.textSecondary))
 }
 
 /** The channel playing now. */

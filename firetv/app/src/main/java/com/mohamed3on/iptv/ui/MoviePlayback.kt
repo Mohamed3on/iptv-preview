@@ -582,7 +582,7 @@ private fun Controls(
     Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(Space.m)) {
         Row(horizontalArrangement = Arrangement.spacedBy(Space.m), verticalAlignment = Alignment.CenterVertically) {
             movie.title.badge?.let { Badges(remember(it) { listOf(it) }) }
-            Text(movie.title.title, style = Type.title, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+            Text(movie.title.title, style = Type.title, maxLines = 2, modifier = Modifier.weight(1f, fill = false))
             movie.title.year?.let { Text(it, style = Type.body) }
             Box(Modifier.weight(1f))
             AnimatedContent(

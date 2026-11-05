@@ -27,6 +27,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
@@ -57,6 +58,7 @@ import java.time.Instant
 import com.mohamed3on.iptv.ui.theme.ActivityLine
 import com.mohamed3on.iptv.ui.theme.Palette
 import com.mohamed3on.iptv.ui.theme.Space
+import com.mohamed3on.iptv.ui.theme.FitText
 import com.mohamed3on.iptv.ui.theme.Type
 import kotlin.math.roundToInt
 
@@ -252,13 +254,15 @@ private fun VersionRow(r: Ranked, reason: String, data: VersionsData, focus: Foc
     val c = r.copy
     val status = listOfNotNull(
         reason.ifEmpty { null },
-        rdState(c, data.rd, data.answer?.copies?.rd?.get(c.id)?.cached == true),
+        rdState(c, data.rd),
         onClear?.let { "Menu clears" },
     ).joinToString(" · ")
+    var focused by remember { mutableStateOf(false) }
     Column(
         modifier
             .fillMaxWidth()
             .then(if (focus != null) Modifier.focusRequester(focus) else Modifier)
+            .onFocusChanged { focused = it.isFocused }
             .onKeyEvent {
                 if (onClear == null || remoteKey(it.nativeKeyEvent.keyCode) != RemoteKey.Menu) return@onKeyEvent false
                 if (it.type == KeyEventType.KeyDown) onClear()
@@ -270,16 +274,17 @@ private fun VersionRow(r: Ranked, reason: String, data: VersionsData, focus: Foc
     ) {
         Row(horizontalArrangement = Arrangement.spacedBy(Space.s), verticalAlignment = Alignment.CenterVertically) {
             copyTier(c)?.let { TierChip(it) }
-            Text(copyLabels(c).joinToString(" · ").ifEmpty { "Quality unknown" }, style = Type.headline, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+            FitText(copyLabels(c).joinToString(" · ").ifEmpty { "Quality unknown" }, style = Type.headline, active = focused, modifier = Modifier.weight(1f))
             when {
                 c.id == data.playing -> Text("Playing", style = Type.caption.copy(color = Palette.accent), maxLines = 1)
                 r.pinned -> Text("Pinned", style = Type.caption.copy(color = Palette.accent), maxLines = 1)
             }
         }
-        if (status.isNotEmpty()) Text(status, style = Type.caption.copy(color = Palette.textSecondary), maxLines = 1, overflow = TextOverflow.Ellipsis)
-        Text(
+        if (status.isNotEmpty()) FitText(status, style = Type.caption.copy(color = Palette.textSecondary), active = focused)
+        FitText(
             listOfNotNull(sourceName(c.source), sizeLabel(data.answer?.size(c.id) ?: 0), data.answer?.name(c.id)?.ifEmpty { null }).joinToString(" · "),
-            style = Type.caption, maxLines = 1, overflow = TextOverflow.Ellipsis,
+            style = Type.caption,
+            active = focused,
         )
     }
 }
@@ -350,13 +355,13 @@ internal fun sizeLabel(bytes: Long): String? = when {
 internal fun copyLine(c: Copy, answer: TitleAnswer?): String =
     (listOf(sourceName(c.source)) + (copyLabels(c) - setOfNotNull(VIDEO[c.codec])) + listOfNotNull(sizeLabel(answer?.size(c.id) ?: 0))).joinToString(" · ")
 
-private fun rdState(c: Copy, rd: Map<String, RdCheck>, cached: Boolean): String? {
+/** Only a Real-Debrid copy that failed its check says so; a ready or not-yet-checked one reads as plain Real-Debrid. */
+private fun rdState(c: Copy, rd: Map<String, RdCheck>): String? {
     if (c.source != Source.RealDebrid) return null
     return when (val r = rd[c.id]) {
-        is RdCheck.Ready -> "ready"
+        is RdCheck.Ready, null -> null
         RdCheck.NotCached -> "not cached"
         is RdCheck.Failed -> if (r.error.permanent) "refused by Real-Debrid" else "check failed"
-        null -> if (cached) "likely ready, not checked yet" else "not checked"
     }
 }
 

@@ -9,6 +9,7 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
@@ -18,13 +19,24 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.FloatState
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.BlendMode
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.tv.material3.Text
@@ -49,6 +61,47 @@ fun ActionButton(label: String, onClick: () -> Unit, modifier: Modifier = Modifi
             .clickable(interaction, indication = null, onClick = onClick)
             .padding(horizontal = Space.xl, vertical = Space.m),
     )
+}
+
+/** True inside the focused row or card: the [FitText] lines in it scroll. */
+val LocalFocused = compositionLocalOf { false }
+
+/**
+ * One line that never ends in "…". Past its edge it clips behind a short fade; while [active] (its row or
+ * card has focus, or a fixed slot on a page at rest) it scrolls the rest into view after a second's pause,
+ * and starts over from the beginning when focus leaves. Only a line that overflows draws the fade, in a
+ * layer the size of the line; with reduced motion it never scrolls.
+ */
+@Composable
+fun FitText(text: String, style: TextStyle, modifier: Modifier = Modifier, color: Color = Color.Unspecified, active: Boolean = LocalFocused.current) {
+    val reduced = LocalReducedMotion.current
+    val width = remember { mutableFloatStateOf(0f) }
+    Text(
+        text,
+        style = style,
+        color = color,
+        maxLines = 1,
+        softWrap = false,
+        onTextLayout = { width.floatValue = it.multiParagraph.width },
+        modifier = modifier
+            .fadeEnd(width)
+            .then(if (active && !reduced) Modifier.basicMarquee(iterations = Int.MAX_VALUE, initialDelayMillis = 1000, velocity = 30.dp) else Modifier),
+    )
+}
+
+private val FADE = 24.dp
+
+/** Fades the last [FADE] of a line whose text ([textWidth] wide) runs past it. */
+private fun Modifier.fadeEnd(textWidth: FloatState): Modifier = graphicsLayer {
+    compositingStrategy = if (textWidth.floatValue > size.width) CompositingStrategy.Offscreen else CompositingStrategy.Auto
+}.drawWithCache {
+    val fade = FADE.toPx().coerceAtMost(size.width)
+    val from = size.width - fade
+    val brush = Brush.horizontalGradient(0f to Color.Black, 1f to Color.Transparent, startX = from, endX = size.width)
+    onDrawWithContent {
+        drawContent()
+        if (textWidth.floatValue > size.width) drawRect(brush, Offset(from, 0f), Size(fade, size.height), blendMode = BlendMode.DstIn)
+    }
 }
 
 /**

@@ -5,12 +5,12 @@
 // feed). /api/app/history serves them with titles in the library's shape, with ETag/304 like the library.
 // Watched marks are the union of Trakt, Letterboxd and the stick's own marks (merged on the stick); the
 // stick's are never written back to Trakt. A source that fails keeps what it gave last and says so in `src`.
-import { mkdir, readFile, rename } from 'node:fs/promises'
-import { dirname } from 'node:path'
+import { readFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
+import { writeAtomic } from './_fs.js'
 import { byScore, decorate, type Known } from './_browse.js'
 import type { LibTitle } from './_library.js'
-import { episodeTitle, tmdbEpisodes, tmdbTitle, type Kind, type TmdbEpisode } from './_tmdb.js'
+import { episodeTitle, parseTitleId, tmdbEpisodes, tmdbTitle, type Kind, type TmdbEpisode } from './_tmdb.js'
 import { accessToken, revoked, status, traktHeaders } from './_trakt.js'
 
 const API = 'https://api.trakt.tv'
@@ -122,11 +122,7 @@ export async function refreshHistory(prev: Kept | null, { full = false } = {}): 
 export const loadHistory = (file = HISTORY_FILE) => readFile(file, 'utf8').then((s) => JSON.parse(s) as Kept, () => null)
 
 /** Writes the history atomically (temp + rename): the server and the nightly build both write it. */
-export async function saveHistory(h: Kept, file = HISTORY_FILE): Promise<void> {
-  await mkdir(dirname(file), { recursive: true })
-  await Bun.write(file + '.tmp', JSON.stringify(h))
-  await rename(file + '.tmp', file)
-}
+export const saveHistory = (h: Kept, file = HISTORY_FILE) => writeAtomic(file, h)
 
 const FRESH_MS = 10 * 60e3
 let reading: Promise<Kept | null> | null = null
@@ -146,7 +142,11 @@ export function currentHistory(): Promise<Kept | null> {
 export interface Followed { last: number; season: number; episode: number }
 
 const FOLLOW_MS = 183 * 864e5
-const EPISODE = /^(tv:\d+):s(\d+)e(\d+)$/
+/** An episode id's show, season and episode; null for anything else. */
+const episodeOf = (id = '') => {
+  const p = parseTitleId(id)
+  return p?.kind === 'tv' && p.season != null ? ([`tv:${p.tmdb}`, p.season, p.episode!] as const) : null
+}
 
 /**
  * Shows the owner follows: watched on Trakt in the last 6 months (unless hidden from its progress), or on the
@@ -164,14 +164,14 @@ export function followed(h: Kept | null, local: string[], now = Date.now()): Map
   for (const [id, last] of Object.entries(h?.shows ?? {})) if (now - last < FOLLOW_MS && !hidden.has(id)) out.set(id, { last, season: 0, episode: 0 })
   for (const l of local) {
     const [, ep, at] = l.match(/^(.+)@(\d+)$/) ?? []
-    const m = ep?.match(EPISODE)
+    const m = episodeOf(ep)
     if (!m || now - Number(at) >= FOLLOW_MS) continue
-    if (!out.has(m[1])) out.set(m[1], { last: 0, season: 0, episode: 0 })
-    further(m[1], +m[2], +m[3], Number(at))
+    if (!out.has(m[0])) out.set(m[0], { last: 0, season: 0, episode: 0 })
+    further(...m, Number(at))
   }
   for (const e of h?.eps ?? []) {
-    const m = e.match(EPISODE)
-    if (m) further(m[1], +m[2], +m[3])
+    const m = episodeOf(e)
+    if (m) further(...m)
   }
   return out
 }

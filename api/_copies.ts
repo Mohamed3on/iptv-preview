@@ -2,16 +2,16 @@
 // torrents Torrentio knows (Real-Debrid candidates; the stick checks which are cached). The box
 // describes, the stick ranks. IPTV copies never wait on Torrentio: it gets a short budget, after which
 // the answer says `sources.rd: 'pending'` and the lookup carries on into the cache for the next ask.
-import { mkdir, readFile, rename } from 'node:fs/promises'
-import { dirname } from 'node:path'
+import { readFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
+import { writeAtomic } from './_fs.js'
 import { getJson } from './_http.js'
 import { introFor, type Intro } from './_intros.js'
 import type { XtreamConfig } from './_lib.js'
 import { claimedPicture, measuredStream, streamLabels, type Measured, type ProbedStream } from './_quality-labels.js'
 import { flagLanguages, parseRelease, type Attrs } from './_release-name.js'
 import { episodeEntries, measuredFilms } from './_shows.js'
-import { tmdbTitle } from './_tmdb.js'
+import { parseTitleId, tmdbTitle } from './_tmdb.js'
 import { filmEntries } from './_vod.js'
 
 export interface IptvCopy extends Attrs {
@@ -144,17 +144,6 @@ export function torrentioCandidates(streams: Stream[]): Candidate[] {
   })
 }
 
-/** Writes [data] to [file] atomically (temp + rename), one write at a time per file. */
-const writes = new Map<string, Promise<void>>()
-function writeAtomic(file: string, data: unknown) {
-  const next = (writes.get(file) ?? Promise.resolve()).then(async () => {
-    await mkdir(dirname(file), { recursive: true })
-    await Bun.write(file + '.tmp', JSON.stringify(data))
-    await rename(file + '.tmp', file)
-  }).catch(() => {})
-  writes.set(file, next)
-  return next
-}
 const readJson = <T>(file: string, empty: T) => readFile(file, 'utf8').then((s) => JSON.parse(s) as T).catch(() => empty)
 
 // Torrentio answers per IMDb id (and season and episode), asked with the Real-Debrid key so copies carry
@@ -186,7 +175,7 @@ async function torrentio(path: string): Promise<Candidate[]> {
       .then((r) => {
         all[path] = { at: Date.now(), copies: torrentioCandidates(r.streams ?? []) }
         for (const [k, e] of Object.entries(all)) if (Date.now() - e.at > KEEP_MS) delete all[k]
-        writeAtomic(cacheFile(), all)
+        writeAtomic(cacheFile(), all).catch(() => {})
         return all[path].copies
       }, (e) => {
         failed.set(path, Date.now())
@@ -216,7 +205,7 @@ export async function markInfringing(hashes: string[]): Promise<boolean> {
   if (!fresh.length) return false
   for (const h of fresh) all[h] = Date.now()
   for (const [h, at] of Object.entries(all)) if (Date.now() - at > INFRINGING_MS) delete all[h]
-  await writeAtomic(infringingFile(), all)
+  await writeAtomic(infringingFile(), all).catch(() => {})
   return true
 }
 
@@ -225,20 +214,19 @@ export async function markInfringing(hashes: string[]): Promise<boolean> {
  * candidates, which get [waitMs] before the answer goes out without them (`sources.rd: 'pending'`).
  */
 export async function titleCopies(title: string, iptv: Promise<IptvCopy[]>, waitMs = 2500): Promise<Copies> {
-  const m = title.match(/^(movie|tv):(\d+)/)
-  const meta = m ? tmdbTitle(m[1] as 'movie' | 'tv', m[2]) : Promise.resolve(null)
+  const p = parseTitleId(title)
+  const meta = p ? tmdbTitle(p.kind, p.tmdb) : Promise.resolve(null)
   const rd = meta.then(async (t): Promise<RdCopy[]> => {
-    if (!m) return [] // a provider-only title: nothing to look up
+    if (!p) return [] // a provider-only title: nothing to look up
     if (!t) throw new Error('no TMDB details')
     if (!t.imdb) return []
-    const ep = title.match(/:s(\d+)e(\d+)$/)
-    const [copies, refused] = await Promise.all([torrentio(ep ? `series/${t.imdb}:${ep[1]}:${ep[2]}` : `movie/${t.imdb}`), infringing()])
+    const [copies, refused] = await Promise.all([torrentio(p.season != null ? `series/${t.imdb}:${p.season}:${p.episode}` : `movie/${t.imdb}`), infringing()])
     const now = Date.now()
     return copies
       .filter((c) => !(now - (refused[c.hash] ?? 0) < INFRINGING_MS))
       .map((c) => ({ ...c, kbps: t.runtime > 0 ? Math.round((c.size * 8) / (t.runtime * 60) / 1000) : 0 }))
   })
-  const intro = m && /:s\d+e\d+$/.test(title) ? meta.then((t) => introFor(title, t?.imdb)) : Promise.resolve(null)
+  const intro = p?.season != null ? meta.then((t) => introFor(title, t?.imdb)) : Promise.resolve(null)
   const late = Bun.sleep(waitMs).then(() => 'pending' as const)
   const settle = <T>(p: Promise<T>) => Promise.race([p.then((v) => ({ v }), () => 'unavailable' as const), late])
   const [i, r, t, o] = await Promise.all([iptv.then((v) => ({ v }), () => 'unavailable' as const), settle(rd), settle(meta), settle(intro)])

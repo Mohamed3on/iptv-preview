@@ -3,7 +3,8 @@
 // categories keeps the 4K one's copy. A category's 4K and plain versions are one group. The
 // provider's series list is ~72MB, so it is pulled at most once a day and the trimmed list kept
 // on disk (the old copy is served if a pull fails); a show's episodes are fetched when it's opened.
-import { readFile, stat, writeFile } from 'node:fs/promises'
+import { readFile, stat } from 'node:fs/promises'
+import { writeAtomic } from './_fs.js'
 import { apiGet, plainCategory, type XtreamConfig } from './_lib.js'
 import { categoryLabels, claimedPicture, measuredStream, pictureTier, probedPicture, streamLabels, type Measured, type ProbedStream } from './_quality-labels.js'
 import { episodeTitle, filmTitle, showTitle, tmdbTitle } from './_tmdb.js'
@@ -105,7 +106,7 @@ export async function showList(cfg: XtreamConfig): Promise<ShowList> {
     ])
     const list = buildShowList(cats, series)
     if (!list.movies.length) throw new Error('no shows')
-    await writeFile(FILE, JSON.stringify(list))
+    await writeAtomic(FILE, list)
     return list
   })().finally(() => (pulling = null))
   return pulling.catch((e) => {
@@ -282,6 +283,6 @@ export async function saveMeasuredFilm(id: number, m: Measured): Promise<boolean
   const all = await measuredFilms()
   if (JSON.stringify(all[String(id)]) === JSON.stringify(m)) return false
   all[String(id)] = m
-  await writeFile(MEASURED, JSON.stringify(all))
+  await writeAtomic(MEASURED, all)
   return true
 }

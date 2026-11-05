@@ -6,9 +6,9 @@
 // TMDB details (IMDb id, original language, runtime, cast, recommendations) are fetched only when
 // TMDB_TOKEN is set, and kept in .cache/tmdb-titles.json for 30 days; without the token everything
 // still answers, with title ids from the provider's tmdb column and no TMDB facts.
-import { mkdir, readFile, rename } from 'node:fs/promises'
-import { dirname } from 'node:path'
+import { readFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
+import { writeAtomic } from './_fs.js'
 import { getJson, HttpError } from './_http.js'
 
 const tmdbId = (v: unknown) => {
@@ -20,6 +20,12 @@ export const showTitle = (tmdb: unknown, seriesId: number) => (tmdbId(tmdb) ? `t
 export const episodeTitle = (show: string, season: number, episode: number) => `${show}:s${season}e${episode}`
 
 export type Kind = 'movie' | 'tv'
+/** A TMDB title id's parts (an episode's season and episode too); null for a provider-only (`iptv:`) or malformed id. */
+export function parseTitleId(id: string): { kind: Kind; tmdb: string; season?: number; episode?: number } | null {
+  const m = id.match(/^(movie|tv):(\d+)(?::s(\d+)e(\d+))?$/)
+  if (!m || (m[1] === 'movie' && m[3])) return null
+  return { kind: m[1] as Kind, tmdb: m[2], ...(m[3] && { season: +m[3], episode: +m[4] }) }
+}
 /** A film or show as TMDB knows it, trimmed to what the box serves. */
 export interface TmdbTitle {
   /** "tt1375666"; "" when TMDB has none. */
@@ -100,17 +106,7 @@ let cache: Promise<Record<string, Entry>> | null = null
 const loaded = () => (cache ??= readFile(cacheFile(), 'utf8').then((s) => JSON.parse(s) as Record<string, Entry>).catch(() => ({} as Record<string, Entry>)))
 const pending = new Map<string, Promise<TmdbTitle | null>>()
 
-let writing = Promise.resolve()
-/** Writes the cache atomically (temp + rename), one write at a time. */
-function save(all: Record<string, Entry>): Promise<void> {
-  const file = cacheFile()
-  writing = writing.then(async () => {
-    await mkdir(dirname(file), { recursive: true })
-    await Bun.write(file + '.tmp', JSON.stringify(all))
-    await rename(file + '.tmp', file)
-  }).catch(() => {})
-  return writing
-}
+const save = (all: Record<string, Entry>) => writeAtomic(cacheFile(), all).catch(() => {})
 
 /** GET a TMDB v3 path ("discover/movie?with_genres=35"). A v3 API key (32 hex) goes in the query; a v4 read token as a Bearer header. */
 export function tmdbGet<T>(path: string, key = process.env.TMDB_TOKEN ?? ''): Promise<T> {
@@ -152,8 +148,8 @@ export async function tmdbTitle(kind: Kind, id: string | number): Promise<TmdbTi
 
 /** A title id's IMDb id and original language, to spread into a response; {} when TMDB has nothing. */
 export async function tmdbFacts(title: string): Promise<{ imdb?: string; originalLanguage?: string }> {
-  const m = title.match(/^(movie|tv):(\d+)/)
-  const t = m ? await tmdbTitle(m[1] as Kind, m[2]) : null
+  const p = parseTitleId(title)
+  const t = p ? await tmdbTitle(p.kind, p.tmdb) : null
   return t ? { ...(t.imdb && { imdb: t.imdb }), ...(t.originalLanguage && { originalLanguage: t.originalLanguage }) } : {}
 }
 

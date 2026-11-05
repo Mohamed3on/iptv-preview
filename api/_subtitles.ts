@@ -2,8 +2,9 @@
 // addon first (no key, no account, no quota), matched by the file's OpenSubtitles hash when the stick sends it; the
 // official OpenSubtitles API only as a second source when OPENSUBTITLES_KEY/USER/PASS are set. English first,
 // Arabic a distant second. A title's list is kept per IMDb id and hash, each subtitle file for good, both on disk.
-import { mkdir, readFile } from 'node:fs/promises'
+import { readFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
+import { writeAtomic } from './_fs.js'
 import { getJson, HttpError } from './_http.js'
 
 export interface Sub {
@@ -91,18 +92,19 @@ export async function subtitlesFor(title: string, hash: string, size: number, na
   } catch (e) {
     return { status: e instanceof HttpError && e.status === 429 ? 'quota' : 'none', subs: [] }
   }
-  await mkdir(dir(), { recursive: true })
-  await Bun.write(cached, JSON.stringify({ at: Date.now(), subs }))
+  await writeAtomic(cached, { at: Date.now(), subs })
   return { status: subs.length ? 'ok' : 'none', subs: pick(subs, name) }
 }
 
 /** A subtitle file's SRT text (UTF-8), kept on disk once fetched; "quota" when today's downloads are spent. */
 export async function subtitleFile(id: string): Promise<string | 'quota'> {
-  const cached = Bun.file(file(`${id}.srt`))
+  const path = file(`${id}.srt`)
+  const cached = Bun.file(path)
   if (await cached.exists()) return cached.text()
   let url = `${ADDON_FILE}${id}`
-  const o = id.startsWith('os') ? official() : null
-  if (o) {
+  if (id.startsWith('os')) {
+    const o = official()
+    if (!o) throw new Error('OpenSubtitles not set up')
     const post = async (path: string, body: object, token?: string) => {
       const r = await fetch(`${OS}/${path}`, { method: 'POST', body: JSON.stringify(body), headers: { ...osHeaders(o.key), ...(token && { Authorization: `Bearer ${token}` }) }, signal: AbortSignal.timeout(10_000) })
       if (!r.ok) throw new HttpError(r.status)
@@ -119,7 +121,6 @@ export async function subtitleFile(id: string): Promise<string | 'quota'> {
   const r = await fetch(url, { signal: AbortSignal.timeout(15_000) })
   if (!r.ok) throw new HttpError(r.status)
   const text = await r.text()
-  await mkdir(dir(), { recursive: true })
-  await Bun.write(cached, text)
+  await writeAtomic(path, text)
   return text
 }

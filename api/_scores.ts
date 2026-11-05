@@ -4,10 +4,11 @@
 // votes on Trakt's scale. Rows sort by score; a title with none sorts at its row's median. What the APIs said
 // is kept in .cache/scores.json (refreshed weekly, daily for new releases), so a night without keys, quota or
 // network only sorts by what is known. scripts/build-library.ts runs it all; without keys, rows keep their order.
-import { mkdir, readFile, rename } from 'node:fs/promises'
-import { dirname } from 'node:path'
+import { readFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
+import { writeAtomic } from './_fs.js'
 import type { LibTitle, Library } from './_library.js'
+import { parseTitleId } from './_tmdb.js'
 
 /** What the APIs said about one title; times in ms. */
 export interface ScoreEntry {
@@ -128,7 +129,10 @@ const IMDB = 'https://caching.graphql.imdb.com/'
  */
 export async function refreshScores(ids: string[], fresh: Set<string>, cache: ScoreCache, keys: Keys, opts: RefreshOpts = {}) {
   const { fetch: get = fetch, now = Date.now(), gap = 340, mdbMax = 1000, save } = opts
-  const tmdb = ids.map((id) => id.match(/^(movie|tv):(\d+)$/)).filter((m) => !!m).map(([id, kind, n]) => ({ id, kind, n }))
+  const tmdb = ids.flatMap((id) => {
+    const p = parseTitleId(id)
+    return p && p.season == null ? [{ id, kind: p.kind, n: p.tmdb }] : []
+  })
   const paced = () => {
     let next = 0
     return async () => {
@@ -229,8 +233,4 @@ export async function refreshScores(ids: string[], fresh: Set<string>, cache: Sc
 export const SCORES_FILE = fileURLToPath(new URL('../.cache/scores.json', import.meta.url))
 export const loadScores = (file = SCORES_FILE): Promise<ScoreCache> => readFile(file, 'utf8').then((s) => JSON.parse(s) as ScoreCache, () => ({}))
 /** Writes the cache atomically (temp + rename). */
-export async function saveScores(cache: ScoreCache, file = SCORES_FILE): Promise<void> {
-  await mkdir(dirname(file), { recursive: true })
-  await Bun.write(file + '.tmp', JSON.stringify(cache))
-  await rename(file + '.tmp', file)
-}
+export const saveScores = (cache: ScoreCache, file = SCORES_FILE) => writeAtomic(file, cache)

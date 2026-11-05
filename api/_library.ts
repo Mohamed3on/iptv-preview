@@ -4,9 +4,9 @@
 // Kept in .cache/library.json; /api/app/library serves it from memory, or the provider's own rows when it
 // is missing or older than 3 days (TMDB down or unset). Its shape is [Library]: titles once each, rows as
 // indexes into them, short keys, image paths without TMDB's host and size.
-import { mkdir, readFile, rename, stat } from 'node:fs/promises'
-import { dirname } from 'node:path'
+import { readFile, stat } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
+import { writeAtomic } from './_fs.js'
 import { savedVodChannels, MOVIE_4K, type XtreamConfig } from './_lib.js'
 import { measuredStream, pictureTier, probedPicture, type Tier } from './_quality-labels.js'
 import { measuredFilms, showList } from './_shows.js'
@@ -183,11 +183,7 @@ export const LIBRARY_FILE = fileURLToPath(new URL('../.cache/library.json', impo
 export const LIBRARY_FULL_FILE = fileURLToPath(new URL('../.cache/library-full.json', import.meta.url))
 
 /** Writes the library atomically (temp + rename). */
-export async function saveLibrary(lib: Library, file = LIBRARY_FILE): Promise<void> {
-  await mkdir(dirname(file), { recursive: true })
-  await Bun.write(file + '.tmp', JSON.stringify(lib))
-  await rename(file + '.tmp', file)
-}
+export const saveLibrary = (lib: Library, file = LIBRARY_FILE) => writeAtomic(file, lib)
 
 const STALE_MS = 3 * 864e5
 const PROVIDER_MS = 30 * 60e3

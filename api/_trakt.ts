@@ -3,9 +3,10 @@
 // quarter of the token's lifetime before it expires and saving the rotated refresh token. Films and episodes
 // the stick finished are written to Trakt history. New Trakt apps are public clients: TRAKT_CLIENT_SECRET is
 // sent only when set. A refresh Trakt refuses leaves "reconnect" until the owner signs in again.
-import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
-import { dirname } from 'node:path'
+import { readFile, rm } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
+import { writeAtomic } from './_fs.js'
+import { parseTitleId } from './_tmdb.js'
 
 const API = 'https://api.trakt.tv'
 const tokenFile = () => process.env.TRAKT_TOKEN_FILE ?? fileURLToPath(new URL('../.cache/trakt-token.json', import.meta.url))
@@ -51,10 +52,7 @@ async function save(t: Token | null) {
   const file = tokenFile()
   if (!t) return void (await rm(file, { force: true }))
   // Owner-only: the tokens sign in as the owner's Trakt account.
-  await mkdir(dirname(file), { recursive: true, mode: 0o700 })
-  await rm(file + '.tmp', { force: true })
-  await writeFile(file + '.tmp', JSON.stringify(t), { mode: 0o600 })
-  await rename(file + '.tmp', file)
+  await writeAtomic(file, t, 0o600)
   schedule(t)
 }
 
@@ -157,13 +155,12 @@ export async function disconnect() {
  * "ok" when Trakt has it, a duplicate or a title Trakt doesn't know included; "off" when not signed in; "error" to try later.
  */
 export async function logPlay(title: string, at: number): Promise<'ok' | 'off' | 'error'> {
-  const movie = title.match(/^movie:(\d+)$/)
-  const ep = title.match(/^tv:(\d+):s(\d+)e(\d+)$/)
-  if (!movie && !ep) return 'ok'
+  const p = parseTitleId(title)
+  if (!p || (p.kind === 'tv' && p.season == null)) return 'ok'
   const watched_at = new Date(at).toISOString()
-  const body = movie
-    ? { movies: [{ ids: { tmdb: +movie[1] }, watched_at }] }
-    : { shows: [{ ids: { tmdb: +ep![1] }, seasons: [{ number: +ep![2], episodes: [{ number: +ep![3], watched_at }] }] }] }
+  const body = p.kind === 'movie'
+    ? { movies: [{ ids: { tmdb: +p.tmdb }, watched_at }] }
+    : { shows: [{ ids: { tmdb: +p.tmdb }, seasons: [{ number: p.season, episodes: [{ number: p.episode, watched_at }] }] }] }
   const access = await accessToken()
   if (!access) return 'off'
   const r = await post('/sync/history', body, access).catch(() => null)

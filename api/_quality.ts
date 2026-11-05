@@ -1,7 +1,7 @@
 // Feed-quality readings: the rules for merging a new reading into api/quality-cache.ts,
 // shared by the ffprobe run (scripts/probe-quality.ts) and the Fire TV app, which reports
 // what it measures on the streams it plays (/api/app/quality).
-import { rename } from 'node:fs/promises'
+import { writeAtomic } from './_fs.js'
 import { QUALITY } from './quality-cache.js'
 
 export type Meta = { w: number; h: number; fps: number; codec: string; name: string; atmos?: true; surround?: true; at?: string; tried?: string; mbps?: number[]; low?: string }
@@ -64,12 +64,5 @@ export function medianMbps(m: Meta | null | undefined): number | undefined {
   return s.length % 2 ? s[mid] : Math.round((s[mid - 1] + s[mid]) * 5) / 10
 }
 
-let writing = Promise.resolve()
 /** Writes the in-memory cache to disk atomically (temp + rename), one write at a time. */
-export function saveQuality(file = process.env.QUALITY_CACHE_FILE ?? `${import.meta.dir}/quality-cache.ts`): Promise<void> {
-  writing = writing.then(async () => {
-    await Bun.write(file + '.tmp', QUALITY_HEAD + JSON.stringify(QUALITY) + '\n')
-    await rename(file + '.tmp', file)
-  })
-  return writing
-}
+export const saveQuality = (file = process.env.QUALITY_CACHE_FILE ?? `${import.meta.dir}/quality-cache.ts`) => writeAtomic(file, QUALITY_HEAD + JSON.stringify(QUALITY) + '\n')

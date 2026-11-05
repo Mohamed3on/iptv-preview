@@ -33,7 +33,7 @@ import { movieInfo, saveMeasuredFilm, showEpisodes, showList, titleIds as mapTit
 import { subtitleFile, subtitlesFor } from './_subtitles.js'
 import { knownTitles, personTitles, searchTitles, titleDetails } from './_browse.js'
 import { loadScores, ranked, scoreTitles } from './_scores.js'
-import { tmdbFacts, tmdbGet } from './_tmdb.js'
+import { parseTitleId, tmdbFacts, tmdbGet } from './_tmdb.js'
 import * as trakt from './_trakt.js'
 import { blurayMovies, filmTitleOf, searchVod } from './_vod.js'
 
@@ -336,8 +336,8 @@ export async function subtitles(req: Request): Promise<Response> {
   const size = Number(q.get('size') ?? 0)
   if (!COPY_TITLE.test(title) || !/^(?:[0-9a-f]{16})?$/.test(hash) || !Number.isSafeInteger(size) || size < 0) return new Response('Bad title', { status: 400 })
   const { imdb } = await tmdbFacts(title)
-  const ep = title.match(/:s(\d+)e(\d+)$/)
-  const answer = imdb ? await subtitlesFor(ep ? `${imdb}:${+ep[1]}:${+ep[2]}` : imdb, hash, size, (q.get('name') ?? '').slice(0, 300)) : { status: 'none', subs: [] }
+  const ep = parseTitleId(title)
+  const answer = imdb ? await subtitlesFor(ep?.season != null ? `${imdb}:${ep.season}:${ep.episode}` : imdb, hash, size, (q.get('name') ?? '').slice(0, 300)) : { status: 'none', subs: [] }
   return Response.json(answer, { headers: { 'Cache-Control': 'no-store' } })
 }
 

@@ -10,7 +10,7 @@ import { readFile } from 'node:fs/promises'
 import { configFromEnv } from '../api/_lib.js'
 import { assemble, fromTmdb, LIBRARY_FILE, LIBRARY_FULL_FILE, providerTitles, rowDefs, saveLibrary, type Library, type LibTitle, type TmdbItem } from '../api/_library.js'
 import { loadScores, onScreen, ranked, refreshScores, saveScores, scoreTitles } from '../api/_scores.js'
-import { tmdbGet, type Kind } from '../api/_tmdb.js'
+import { parseTitleId, tmdbGet, type Kind } from '../api/_tmdb.js'
 import { loadHistory, refreshHistory, saveHistory } from '../api/_history.js'
 import { readOnlyTokens } from '../api/_trakt.js'
 
@@ -58,9 +58,9 @@ const prev = await readFile(LIBRARY_FULL_FILE, 'utf8').catch(() => readFile(LIBR
 const known = new Map<string, LibTitle>()
 for (const { t: _t, e: _e, s: _s, sn: _n, se: _se, lb: _l, ir: _i, ...meta } of [...seeds.flat(), ...(prev?.titles ?? [])]) if (meta.l && !known.has(meta.id)) known.set(meta.id, meta)
 const provider = await providerTitles(configFromEnv())
-const missing = [...new Set(provider.map((p) => p.t.id))].filter((id) => /^(movie|tv):/.test(id) && !known.has(id))
+const missing = [...new Set(provider.map((p) => p.t.id))].filter((id) => parseTitleId(id) && !known.has(id))
 await pool(missing, 6, async (id) => {
-  const [kind, tmdb] = id.split(':') as [Kind, string]
+  const { kind, tmdb } = parseTitleId(id)!
   const r = await tmdbGet<TmdbItem>(`${kind}/${tmdb}`).catch(() => null)
   if (r) known.set(id, fromTmdb(kind, r))
 })

@@ -7,7 +7,7 @@ import type { XtreamConfig } from './_lib.js'
 import { fromTmdb, LIBRARY_FILE, LIBRARY_FULL_FILE, type LibTitle, type Library, type TmdbItem } from './_library.js'
 import { loadScores, scoreTitles, type Score } from './_scores.js'
 import { showList } from './_shows.js'
-import { episodeTitle, tmdbEpisodes, tmdbTitle, type Kind } from './_tmdb.js'
+import { episodeTitle, parseTitleId, tmdbEpisodes, tmdbTitle } from './_tmdb.js'
 import type { VodItem } from './_vod.js'
 
 /** The built library (null when missing), every title it has seen with its tier (the uncut build), and scores. */
@@ -47,13 +47,13 @@ const IMG = 'https://image.tmdb.org/t/p/'
  * null for an id TMDB doesn't know (or without TMDB_TOKEN).
  */
 export async function titleDetails(cfg: XtreamConfig, id: string) {
-  const m = id.match(/^(movie|tv):(\d+)$/)
-  if (!m) return null
-  const kind = m[1] as Kind
-  const [t, k] = await Promise.all([tmdbTitle(kind, m[2]), knownTitles()])
+  const p = parseTitleId(id)
+  if (!p || p.season != null) return null
+  const { kind, tmdb } = p
+  const [t, k] = await Promise.all([tmdbTitle(kind, tmdb), knownTitles()])
   if (!t) return null
   const series = kind === 'tv' ? (await showList(cfg).catch(() => null))?.movies.find((s) => s.titleId === id)?.id : undefined
-  const episodes = kind === 'tv' && !series ? await tmdbEpisodes(m[2], t.seasons) : []
+  const episodes = kind === 'tv' && !series ? await tmdbEpisodes(tmdb, t.seasons) : []
   const people = new Map<number, { id: number; name: string; role: string }>()
   for (const d of t.directors) people.set(d.id, { id: d.id, name: d.name, role: kind === 'tv' ? 'Creator' : 'Director' })
   for (const c of t.cast) if (!people.has(c.id)) people.set(c.id, { id: c.id, name: c.name, role: c.character })

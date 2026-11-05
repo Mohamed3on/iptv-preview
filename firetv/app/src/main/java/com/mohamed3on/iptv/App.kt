@@ -16,6 +16,7 @@ import com.mohamed3on.iptv.data.VpnMonitor
 import com.mohamed3on.iptv.data.WatchedStore
 import com.mohamed3on.iptv.data.WatchHistory
 import com.mohamed3on.iptv.player.Capacity
+import com.mohamed3on.iptv.player.CopyChoices
 import com.mohamed3on.iptv.player.Setup
 import com.mohamed3on.iptv.system.VoiceFix
 import com.mohamed3on.iptv.update.Updater
@@ -75,6 +76,8 @@ class AppGraph(context: Context) {
     val watchedEpisodes = WatchedStore(prefs, "shows.watched")
     /** Typical film bandwidth per source and hour band. */
     val capacity = Capacity(prefs)
+    /** Marks, corrections and pins the copy ranker reads. */
+    val copyChoices = CopyChoices(prefs)
     val sync = FeedSync(http, BuildConfig.SERVER_URL, BuildConfig.APP_TOKEN, context.filesDir, prefs)
     /** What the TV, stick and soundbar can show and play; built off the launch path. */
     val setup by lazy { Setup(context) }

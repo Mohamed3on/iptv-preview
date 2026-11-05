@@ -377,7 +377,9 @@ class FilmSession(
         }
     }
 
-    private fun open(copy: Copy, url: String, place: Place) {
+    private fun open(copy: Copy, url: String, at: Place) {
+        // No language chosen yet: the film's own (R2), not the dub a multi-language file flags as default.
+        val place = if (at.audio == null && originalLanguage != null) at.copy(audio = originalLanguage) else at
         current = copy
         openPlace = place
         attempt = true

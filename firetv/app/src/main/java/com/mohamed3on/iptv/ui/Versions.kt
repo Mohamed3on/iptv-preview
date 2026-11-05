@@ -85,6 +85,13 @@ internal fun Versions(title: String, data: VersionsData, first: FocusRequester, 
     val setup by graph.setup.profile.collectAsState()
     val debridStatus by graph.debrid.status.collectAsState()
     var all by remember { mutableStateOf(false) }
+    // "Show all" leaves the list as it's pressed: focus moves on to the first copy it brought in.
+    val more = remember { FocusRequester() }
+    LaunchedEffect(all) {
+        if (!all) return@LaunchedEffect
+        withFrameNanos {}
+        runCatching { more.requestFocus() }
+    }
     var corrections by remember(setup) { mutableStateOf(choices.corrections(setup)) }
     val ranking = data.ranking
     val rows = remember(ranking, data.rd) {
@@ -107,7 +114,7 @@ internal fun Versions(title: String, data: VersionsData, first: FocusRequester, 
         shown.forEachIndexed { i, (r, s) ->
             if (i == 0 || shown[i - 1].second != s) item(key = "h${s.name}") { Heading(s.heading) }
             item(key = r.copy.id) {
-                VersionRow(r, data, focus = if (i == 0) first else null, onClick = { onChoose(r.copy) }, onClear = if (r.pinned || r.mark != null) ({
+                VersionRow(r, data, focus = if (i == 0) first else if (i == FIRST_ROWS) more else null, onClick = { onChoose(r.copy) }, onClear = if (r.pinned || r.mark != null) ({
                     if (r.pinned) choices.pin(title, null) else choices.clearMark(setup, r.copy.id)
                     onChanged()
                 }) else null)

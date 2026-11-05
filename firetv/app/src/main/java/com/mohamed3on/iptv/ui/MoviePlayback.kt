@@ -257,6 +257,8 @@ internal fun MoviePlayback(
         onDispose {
             save()
             session.stop()
+            // Marks, pins and trials made while it played: the title page's Plays line follows them.
+            graph.films.rerank(title)
             frameRate?.detach()
             audio.release()
             subtitles.release()

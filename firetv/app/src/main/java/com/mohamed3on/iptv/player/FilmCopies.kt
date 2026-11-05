@@ -79,7 +79,14 @@ class FilmCopies(
     /** Ranks [title] again after a pin, mark or correction in Versions. */
     fun rerank(title: String) {
         val e = entries[title] ?: return
-        scope.launch { e.state.value.answer?.let { publish(title, e, it) } }
+        scope.launch {
+            e.state.value.answer?.let { publish(title, e, it) }
+            // A mark can lift an unchecked Real-Debrid copy to the top: ask about it, so Plays names what Play opens.
+            if (e.rd) {
+                e.checking?.join()
+                check(e)
+            }
+        }
     }
 
     private fun entry(title: String, rd: Boolean): Entry {

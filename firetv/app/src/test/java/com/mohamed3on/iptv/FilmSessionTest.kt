@@ -161,6 +161,14 @@ class FilmSessionTest {
         assertEquals(false, r.choices.marks(tv)[rd4k.id]?.works)
     }
 
+    // R2: a multi-language file's default track is often a dub; a first play asks for the film's own language.
+    @Test fun aFirstPlayAsksForTheOriginalLanguage() = runTest {
+        val r = rig()
+        r.session.play(Place(0), { titleCopies(rd4k) })
+        runCurrent()
+        assertEquals("en", r.player.opens.last().second.audio)
+    }
+
     @Test fun aBusyProviderMovesOnWithNoMark() = runTest {
         val r = rig()
         r.player.respond = { if ("iptv.test" in it) StreamFailure.Http(458) else null }

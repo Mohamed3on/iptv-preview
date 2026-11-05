@@ -71,6 +71,7 @@ export async function handle(req: Request): Promise<Response> {
     return res
   }
   if (pathname === '/api/app/events' && req.method === 'POST') return app.events(req)
+  if (pathname === '/api/app/title-ids' && req.method === 'POST') return app.titleIds(req)
   const handler = routes[pathname]
   if (handler) return cached(req, handler)
   const file = Bun.file(dist + (pathname === '/' ? '/index.html' : pathname))

@@ -1,0 +1,61 @@
+{
+  "id": 27205,
+  "title": "Inception",
+  "imdb_id": "tt1375666",
+  "original_language": "en",
+  "runtime": 148,
+  "release_date": "2010-07-15",
+  "poster_path": "/xlaY2zyzMfkhk0HSC5VUwzoZPU1.jpg",
+  "external_ids": {
+    "imdb_id": "tt1375666"
+  },
+  "credits": {
+    "cast": [
+      {
+        "id": 6193,
+        "name": "Leonardo DiCaprio",
+        "character": "Dom Cobb"
+      },
+      {
+        "id": 24045,
+        "name": "Joseph Gordon-Levitt",
+        "character": "Arthur"
+      },
+      {
+        "id": 3899,
+        "name": "Ken Watanabe",
+        "character": "Saito"
+      }
+    ],
+    "crew": [
+      {
+        "id": 525,
+        "name": "Christopher Nolan",
+        "job": "Director"
+      },
+      {
+        "id": 525,
+        "name": "Christopher Nolan",
+        "job": "Producer"
+      }
+    ]
+  },
+  "recommendations": {
+    "results": [
+      {
+        "id": 9620,
+        "title": "Paycheck",
+        "media_type": "movie",
+        "poster_path": "/h0BWaPnWYXwbCXF69DxS0YWcVy2.jpg",
+        "release_date": "2003-12-25"
+      },
+      {
+        "id": 353491,
+        "title": "The Dark Tower",
+        "media_type": "movie",
+        "poster_path": "/i9GUSgddIqrroubiLsvvMRYyRy0.jpg",
+        "release_date": "2017-08-03"
+      }
+    ]
+  }
+}

@@ -9,6 +9,7 @@
 // POST /api/app/quality?t=TOKEN — a quality reading the app measured while playing.
 // POST /api/app/bitrate?t=TOKEN — a feed's bitrate the app measured while playing.
 // POST /api/app/events?t=TOKEN — what happened while watching, for later analysis.
+// POST /api/app/title-ids?t=TOKEN — title ids for the provider ids the app saved marks under.
 import { appendFile, mkdir, rename, stat } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import { buildAppFeed, buildAppGuide } from './_app-feed.js'
@@ -16,8 +17,9 @@ import { appTokenOk, backupConfigFromEnv, configFromEnv, fetchCuratedChannels, s
 import { addBitrate, mergeAppReading, saveQuality, type Meta } from './_quality.js'
 import { QUALITY } from './quality-cache.js'
 import { curatedGuide } from './epg.js'
-import { movieInfo, saveMeasuredFilm, showEpisodes, showList } from './_shows.js'
-import { blurayMovies, searchVod } from './_vod.js'
+import { movieInfo, saveMeasuredFilm, showEpisodes, showList, titleIds as mapTitleIds } from './_shows.js'
+import { tmdbFacts } from './_tmdb.js'
+import { blurayMovies, filmTitleOf, searchVod } from './_vod.js'
 
 const forbidden = () => new Response('Forbidden', { status: 403 })
 
@@ -156,9 +158,9 @@ export async function movies(req: Request): Promise<Response> {
   if (!appTokenOk(req.url)) return forbidden()
   try {
     const cfg = configFromEnv()
-    const vod = await savedVodChannels(cfg)
+    const [vod, titleOf] = await Promise.all([savedVodChannels(cfg), filmTitleOf(cfg).catch(() => null)])
     // The 1080p Blu-ray row follows the 4K groups: films with no 4K copy.
-    const movies = [...vod.map((m) => ({ id: m.streamId, name: m.name, poster: m.logo, group: m.group, ext: m.vodExt ?? 'mp4' })), ...(await blurayMovies(cfg).catch(() => []))]
+    const movies = [...vod.map((m) => ({ id: m.streamId, titleId: titleOf?.(m.streamId) ?? `iptv:${m.streamId}`, name: m.name, poster: m.logo, group: m.group, ext: m.vodExt ?? 'mp4' })), ...(await blurayMovies(cfg).catch(() => []))]
     return Response.json(
       {
         groups: [...new Set(movies.map((m) => m.group))],
@@ -206,7 +208,8 @@ export async function movie(req: Request): Promise<Response> {
   const id = Number(new URL(req.url).searchParams.get('id'))
   if (!Number.isInteger(id) || id <= 0) return new Response('Bad id', { status: 400 })
   try {
-    return Response.json(await movieInfo(configFromEnv(), id), {
+    const info = await movieInfo(configFromEnv(), id)
+    return Response.json({ ...info, ...(await tmdbFacts(info.titleId)) }, {
       headers: { 'Cache-Control': 'private, s-maxage=604800, stale-while-revalidate=604800' },
     })
   } catch (e) {
@@ -220,8 +223,30 @@ export async function episodes(req: Request): Promise<Response> {
   const id = Number(new URL(req.url).searchParams.get('id'))
   if (!Number.isInteger(id) || id <= 0) return new Response('Bad id', { status: 400 })
   try {
-    return Response.json(await showEpisodes(configFromEnv(), id), {
+    const show = await showEpisodes(configFromEnv(), id)
+    return Response.json({ ...show, ...(await tmdbFacts(show.titleId)) }, {
       headers: { 'Cache-Control': 'private, s-maxage=21600, stale-while-revalidate=86400' },
+    })
+  } catch (e) {
+    return new Response(e instanceof Error ? e.message : 'upstream error', { status: 502 })
+  }
+}
+
+// POST /api/app/title-ids?t=TOKEN — { movies?: [vodId], shows?: [seriesId], episodes?: [{ series, id }] } to
+// { movies: { vodId: titleId }, shows: { seriesId: titleId }, episodes: { episodeId: titleId } }: the one-time
+// move of the app's resume and watched marks from provider ids to title ids (see _shows.ts titleIds).
+export async function titleIds(req: Request): Promise<Response> {
+  if (!appTokenOk(req.url)) return forbidden()
+  const r = (await req.json().catch(() => null)) as { movies?: unknown; shows?: unknown; episodes?: unknown } | null
+  const id = (v: unknown) => Number.isInteger(v) && (v as number) > 0 && (v as number) <= 2e9
+  const list = (v: unknown, ok: (x: any) => boolean) => v === undefined || (Array.isArray(v) && v.length <= 5000 && v.every(ok))
+  const eps = r?.episodes as { series: number; id: number }[] | undefined
+  if (!r || !list(r.movies, id) || !list(r.shows, id) || !list(eps, (e) => e && id(e.series) && id(e.id)) || new Set(eps?.map((e) => e.series)).size > 100) {
+    return new Response('Bad ids', { status: 400 })
+  }
+  try {
+    return Response.json(await mapTitleIds(configFromEnv(), { movies: r.movies as number[], shows: r.shows as number[], episodes: eps }), {
+      headers: { 'Cache-Control': 'no-store' },
     })
   } catch (e) {
     return new Response(e instanceof Error ? e.message : 'upstream error', { status: 502 })

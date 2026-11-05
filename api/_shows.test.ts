@@ -19,9 +19,9 @@ test('a show is kept once per language, the 4K copy first, English rows leading'
     { series_id: 5, name: 'EN - World Cup Diaries', category_id: '1' },
     { series_id: 6, name: 'EN - Some Podcast', category_id: '6' },
   ])
-  expect(list.movies.map((m) => [m.id, m.name, m.group])).toEqual([
-    [2, 'Severance (2022) (US)', 'APPLE+ SERIES'],
-    [5, 'World Cup Diaries', 'FIFA+ SERIES'],
-    [3, 'Severance (2022) (US)', 'GERMANY APPLE'],
+  expect(list.movies.map((m) => [m.id, m.titleId, m.name, m.group])).toEqual([
+    [2, 'tv:95396', 'Severance (2022) (US)', 'APPLE+ SERIES'],
+    [5, 'iptv:tv:5', 'World Cup Diaries', 'FIFA+ SERIES'],
+    [3, 'tv:95396', 'Severance (2022) (US)', 'GERMANY APPLE'],
   ])
 })

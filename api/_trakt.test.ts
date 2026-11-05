@@ -1,5 +1,5 @@
 import { afterEach, expect, spyOn, test } from 'bun:test'
-import { mkdtempSync, readFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { accessToken, connect, logPlay, refreshAt, resetTrakt, status, type Token } from './_trakt'
@@ -33,6 +33,7 @@ test('a token with expires_in 86400 is refreshed before it expires, and the rota
     expect(await connect()).toEqual({ state: 'waiting', code: 'ABCD1234', url: 'https://auth.trakt.tv/activate' })
     while ((await status()).state === 'waiting') await Bun.sleep(5)
     expect(await status()).toEqual({ state: 'on', user: 'mo' })
+    expect(statSync(file).mode & 0o777).toBe(0o600)
     const t = JSON.parse(readFileSync(file, 'utf8')) as Token
     expect(t.expires).toBe((now + 86400) * 1000)
     expect(refreshAt(t)).toBeLessThan(t.expires)

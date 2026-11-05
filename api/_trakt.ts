@@ -3,7 +3,7 @@
 // quarter of the token's lifetime before it expires and saving the rotated refresh token. Films and episodes
 // the stick finished are written to Trakt history. New Trakt apps are public clients: TRAKT_CLIENT_SECRET is
 // sent only when set. A refresh Trakt refuses leaves "reconnect" until the owner signs in again.
-import { mkdir, readFile, rename, rm } from 'node:fs/promises'
+import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -43,8 +43,10 @@ async function save(t: Token | null) {
   token = Promise.resolve(t)
   const file = tokenFile()
   if (!t) return void (await rm(file, { force: true }))
-  await mkdir(dirname(file), { recursive: true })
-  await Bun.write(file + '.tmp', JSON.stringify(t))
+  // Owner-only: the tokens sign in as the owner's Trakt account.
+  await mkdir(dirname(file), { recursive: true, mode: 0o700 })
+  await rm(file + '.tmp', { force: true })
+  await writeFile(file + '.tmp', JSON.stringify(t), { mode: 0o600 })
   await rename(file + '.tmp', file)
   schedule(t)
 }

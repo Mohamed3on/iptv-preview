@@ -168,6 +168,18 @@ export async function logPlay(title: string, at: number): Promise<'ok' | 'off' |
   return r?.ok || r?.status === 409 ? 'ok' : r?.status === 401 ? 'off' : 'error'
 }
 
+/** Adds a film or show (movie:N, tv:N) to the Trakt watchlist, or takes it off: "ok", "off" when not signed in, "error". */
+export async function setWatchlist(title: string, on: boolean): Promise<'ok' | 'off' | 'error'> {
+  const p = parseTitleId(title)
+  if (!p || p.season != null) return 'error'
+  const access = await accessToken()
+  if (!access) return 'off'
+  const body = p.kind === 'movie' ? { movies: [{ ids: { tmdb: +p.tmdb } }] } : { shows: [{ ids: { tmdb: +p.tmdb } }] }
+  const r = await post(on ? '/sync/watchlist' : '/sync/watchlist/remove', body, access).catch(() => null)
+  if (r?.status === 401) revoked()
+  return r?.ok ? 'ok' : r?.status === 401 ? 'off' : 'error'
+}
+
 /** For tests: forget what this process holds. */
 export function resetTrakt() {
   cancel()

@@ -24,7 +24,7 @@ import { dirname } from 'node:path'
 import { buildAppFeed, buildAppGuide } from './_app-feed.js'
 import { iptvCopies, markInfringing, titleCopies } from './_copies.js'
 import { appTokenOk, backupConfigFromEnv, configFromEnv, fetchCuratedChannels, saneFps, savedVodChannels, withBackupFeeds, withCompetitionGroups } from './_lib.js'
-import { currentHistory, historyAnswer } from './_history.js'
+import { currentHistory, historyAnswer, loadHistory, saveHistory } from './_history.js'
 import { providerLibrary, servedLibrary } from './_library.js'
 import { addBitrate, mergeAppReading, saveQuality, type Meta } from './_quality.js'
 import { QUALITY } from './quality-cache.js'
@@ -422,6 +422,20 @@ export async function traktSignIn(req: Request): Promise<Response> {
   } catch (e) {
     return new Response(e instanceof Error ? e.message : 'upstream error', { status: 502 })
   }
+}
+
+// POST /api/app/watchlist?t=TOKEN — { title: movie:N | tv:N, on: boolean } adds it to the Trakt watchlist or takes it
+// off, and to the kept history at once so the Watchlist row follows: 204, 503 while Trakt isn't signed in, 502 when it fails.
+export async function watchlist(req: Request): Promise<Response> {
+  if (!appTokenOk(req.url)) return forbidden()
+  const r = (await req.json().catch(() => null)) as { title?: unknown; on?: unknown } | null
+  if (!r || typeof r.title !== 'string' || !/^(?:movie|tv):\d+$/.test(r.title) || typeof r.on !== 'boolean') return new Response('Bad title', { status: 400 })
+  const title = r.title
+  const result = await trakt.setWatchlist(title, r.on)
+  if (result !== 'ok') return new Response(result === 'off' ? 'Trakt not connected' : 'Trakt failed', { status: result === 'off' ? 503 : 502 })
+  const h = await loadHistory()
+  if (h) await saveHistory({ ...h, watchlist: [...(r.on ? [title] : []), ...h.watchlist.filter((t) => t !== title)] })
+  return new Response(null, { status: 204 })
 }
 
 // POST /api/app/trakt-history?t=TOKEN — { title: movie:N | tv:N:sNeM, at: epoch ms } a play the stick finished: 204 once

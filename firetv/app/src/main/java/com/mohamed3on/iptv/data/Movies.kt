@@ -82,7 +82,7 @@ private const val TMDB_IMG = "https://image.tmdb.org/t/p/"
 /** A TMDB image path ("/x.jpg") at [size]; a full URL as given. */
 fun tmdbImage(p: String, size: String) = if (p.startsWith("/")) "$TMDB_IMG$size$p" else p
 
-/** How long the library on disk counts as current; after that, opening Movies & Shows revalidates it (a 304 when unchanged). */
+/** How long the library on disk counts as current at launch (opening Movies & Shows always revalidates it, a 304 when unchanged). */
 val LIBRARY_CHECK = 5.minutes
 
 /** A row of the library: its id ("trending", "ar"), name and titles, best score first. */

@@ -132,7 +132,6 @@ import com.mohamed3on.iptv.data.Catalog
 import com.mohamed3on.iptv.data.History
 import com.mohamed3on.iptv.data.NextEpisode
 import com.mohamed3on.iptv.data.resume
-import com.mohamed3on.iptv.data.LIBRARY_CHECK
 import com.mohamed3on.iptv.data.LibTitle
 import com.mohamed3on.iptv.data.Person
 import com.mohamed3on.iptv.data.Scored
@@ -185,6 +184,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlin.time.Duration
 import kotlin.time.Duration.Companion.hours
 import android.view.KeyEvent as AndroidKeyEvent
 
@@ -319,9 +319,9 @@ fun MoviesLayer(
             graph.sync.history.loadCached()
             graph.syncHistory()
         }
-        // The copy on disk shows at once; the box is asked whether it changed (a 304 when not).
+        // The copy on disk shows at once; the box is asked whether it changed (a 304 when not), on every open.
         sync.loadCached()
-        val error = sync.sync(LIBRARY_CHECK)
+        val error = sync.sync(Duration.ZERO)
         refreshed[0] = true
         Check.log("movies_refreshed", "ok" to (error == null))
         if (sync.items.value == null) failed = error ?: SyncError.Malformed
@@ -329,6 +329,9 @@ fun MoviesLayer(
         graph.sync.movies.loadCached()
         graph.sync.movies.sync(12.hours)
     }
+    // Back on the rows from a title page or a film, the box is asked again too, so scores TrueScore just learnt show.
+    val browsing = open && playing == null && pages.isEmpty()
+    LaunchedEffect(browsing) { if (browsing && refreshed[0]) sync.sync(Duration.ZERO) }
     fun push(page: LibraryPage) {
         if (pages.size >= MAX_PAGES) pages.removeAt(0)
         pages.add(page)
@@ -463,7 +466,7 @@ fun MoviesLayer(
                     // Its next episode stays out too, until a later one airs.
                     history?.next?.firstOrNull { n -> n.show.titleId == it.titleId }?.let { n -> graph.dismissed.mark(n.episode) }
                 },
-                active = open && playing == null && pages.isEmpty(),
+                active = browsing,
                 hidden = playing != null || pages.isNotEmpty(),
                 shown = shown,
                 // A person found by search opens their page; anything else its title page.
@@ -867,16 +870,17 @@ private fun rememberRested(focused: State<Movie?>): Movie? {
 /**
  * A title's plot, backdrop, runtime, genres and cast: TMDB's for a title it knows (/api/app/title, with its
  * people and More like this), else the provider's (a film's /api/app/movie, a show's episodes call). All are
- * kept for the app session, so a title seen before answers on its first frame. A TMDB title answered without
- * scores is asked once more 3 s later, by when the box has usually fetched them.
+ * kept for the app session, so a title seen before answers on its first frame; a title page ([fresh]) asks again
+ * when that copy is over 2 minutes old and updates in place. A TMDB title answered without scores is asked once
+ * more 3 s later, by when the box has usually fetched them.
  */
 @Composable
-private fun rememberInfo(movie: Movie?): MovieInfo? {
+private fun rememberInfo(movie: Movie?, fresh: Boolean = false): MovieInfo? {
     val sync = LocalContext.current.graph.sync
     val peek = movie?.let(sync::peekInfo)
     return produceState(peek, movie?.titleId, movie?.id) {
         val m = movie ?: return@produceState
-        value = sync.info(m).getOrNull() ?: value
+        value = sync.info(m, fresh).getOrNull() ?: value
         if (m.titleId.isTmdb && value?.known == false) {
             delay(3_000)
             value = sync.info(m).getOrNull() ?: value
@@ -1781,7 +1785,7 @@ private fun FilmPage(
     onPlay: (fromStart: Boolean) -> Unit, onOpen: (Movie) -> Unit, onPerson: (Person) -> Unit, onBack: () -> Unit,
 ) {
     val graph = LocalContext.current.graph
-    val info = rememberInfo(film)
+    val info = rememberInfo(film, fresh = true)
     val prepared by remember(film.titleId) { graph.films.state(film.titleId) }.collectAsState()
     val unavailable = prepared.unavailable
     val primary = remember { FocusRequester() }
@@ -2148,7 +2152,7 @@ private fun ShowPage(
     // The stick's marks with the box's (U16).
     val seen = watched
     val ratings by graph.marks.ratings.collectAsState()
-    val info = rememberInfo(show)
+    val info = rememberInfo(show, fresh = true)
     val extras = remember { ExtrasFocus() }
     var data by remember { mutableStateOf(sync.peekShowOf(show)) }
     var failed by remember { mutableStateOf(false) }

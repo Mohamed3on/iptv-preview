@@ -155,16 +155,19 @@ class FeedSync(
     private val searches = java.util.concurrent.ConcurrentHashMap<String, List<Movie>>()
 
     /**
-     * A library title's page: TMDB's plot, people, More like this and scores (/api/app/title); kept for the app session.
-     * One without scores is asked again (the box fills them on demand), and its scores, once they come, go to [scores].
+     * A library title's page: TMDB's plot, people, More like this and scores (/api/app/title); kept for the app session,
+     * and asked again when [fresh] (its page opening) once over 2 minutes old: TrueScore's extension adds scores any
+     * time. One without scores is asked again (the box fills them on demand), and its scores, once they come, go to [scores].
      */
-    suspend fun title(id: TitleId): Result<MovieInfo> = withContext(Dispatchers.IO) {
+    suspend fun title(id: TitleId, fresh: Boolean = false): Result<MovieInfo> = withContext(Dispatchers.IO) {
         val kept = titles[id]
-        if (kept != null && kept.known) return@withContext Result.success(kept)
-        runCatching { parseMovieInfo(get("title?id=${q(id)}")).also { titles[id] = it; if (it.known) scores[id] = it } }
+        if (kept != null && kept.known && (!fresh || now() - (titleAt[id] ?: 0) < TITLE_MS)) return@withContext Result.success(kept)
+        runCatching { parseMovieInfo(get("title?id=${q(id)}")).also { titles[id] = it; titleAt[id] = now(); if (it.known) scores[id] = it } }
             .let { if (it.isFailure && kept != null) Result.success(kept) else it }
     }
     private val titles = java.util.concurrent.ConcurrentHashMap<TitleId, MovieInfo>()
+    private val titleAt = java.util.concurrent.ConcurrentHashMap<TitleId, Long>()
+    private val TITLE_MS = 2 * 60_000L
     /** Scores title pages learnt for titles the library had none for, so their cards show them too (Compose state). */
     val scores = androidx.compose.runtime.mutableStateMapOf<TitleId, Scored>()
 
@@ -180,8 +183,8 @@ class FeedSync(
      * What a title page says about [m]: TMDB's for a title it knows (the provider's when that fails), else the
      * provider's own, a show's from its episodes call.
      */
-    suspend fun info(m: Movie): Result<MovieInfo> {
-        if (m.titleId.isTmdb) title(m.titleId).let { if (it.isSuccess || m.id <= 0) return it }
+    suspend fun info(m: Movie, fresh: Boolean = false): Result<MovieInfo> {
+        if (m.titleId.isTmdb) title(m.titleId, fresh).let { if (it.isSuccess || m.id <= 0) return it }
         if (m.id <= 0) return Result.failure(IOException("no provider id"))
         return if (m.titleId.isShow) episodes(m.id).map { it.info } else movieInfo(m.id)
     }

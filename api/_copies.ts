@@ -104,7 +104,8 @@ const UNIT: Record<string, number> = { KB: 2 ** 10, MB: 2 ** 20, GB: 2 ** 30, TB
 
 /**
  * Torrentio's streams as candidates, one per torrent file; CAM, telesync, screener and 3D releases left
- * out. A title reads "<release>[\n<file in a pack>]\n👤 seeds 💾 size ⚙️ tracker[\n<audio flags>]". The
+ * out. A title reads "<release>[\n<file in a pack>]\n👤 seeds 💾 size ⚙️ tracker[\n<audio flags>]"; the file name
+ * (behaviorHints) is read with it, as it often names the audio the release doesn't. The
  * debrid list carries hash and file index only in its resolve URL (`/resolve/realdebrid/<key>/<hash>/null/<fileIdx>/…`),
  * which is read for them and then dropped with the key it holds; "[RD+]" marks a copy Torrentio saw resolve lately.
  */
@@ -122,7 +123,7 @@ export function torrentioCandidates(streams: Stream[]): Candidate[] {
     seen.add(key)
     const size = lines[stats].match(/💾 ([\d.]+) ([KMGT]B)/)
     const flags = lines.slice(stats + 1).join(' ')
-    const a = parseRelease([...lines.slice(0, stats), quality].join('\n'))
+    const a = parseRelease([...lines.slice(0, stats), quality, s.behaviorHints?.filename ?? ''].join('\n'))
     const subs = [...(a.subs ?? []), ...(/multi subs/i.test(flags) ? ['multi'] : [])]
     return [{
       src: 'rd' as const,

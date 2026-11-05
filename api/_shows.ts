@@ -6,8 +6,8 @@
 import { readFile, stat, writeFile } from 'node:fs/promises'
 import { apiGet, plainCategory, type XtreamConfig } from './_lib.js'
 import { categoryLabels, claimedPicture, measuredStream, pictureTier, probedPicture, streamLabels, type Measured, type ProbedStream } from './_quality-labels.js'
-import { episodeTitle, filmTitle, showTitle } from './_tmdb.js'
-import { filmTitleOf, vodCategoryName } from './_vod.js'
+import { episodeTitle, filmTitle, showTitle, tmdbTitle } from './_tmdb.js'
+import { filmEntries, filmTitleOf, vodCategoryName } from './_vod.js'
 
 interface Category {
   category_id: string
@@ -224,20 +224,48 @@ export async function movieInfo(cfg: XtreamConfig, vodId: number) {
   const category = stream ? '' : await vodCategoryName(cfg, Number(res.movie_data?.category_id)).catch(() => '')
   const quality = stream ? streamLabels(stream) : categoryLabels(category, info.bitrate)
   const tier = pictureTier((stream ? probedPicture(stream) : claimedPicture(category, info.bitrate)) ?? { width: 0, height: 0 }) ?? ''
+  const titleId = (await filmTitleOf(cfg).catch(() => null))?.(vodId) ?? filmTitle('', vodId)
   return {
-    titleId: (await filmTitleOf(cfg).catch(() => null))?.(vodId) ?? filmTitle('', vodId),
+    titleId,
     quality,
     tier,
     /** The tier comes from the category's claim, not the stream: the app measures it on first play. */
     estimated: !stream && tier !== '',
-    plot: String(info.plot || info.description || '').trim(),
     secs: Number(info.duration_secs) || 0,
-    genre: String(info.genre ?? '').trim(),
     rating: ratingOf(info.rating),
     backdrop: firstBackdrop(info.backdrop_path),
-    cast: castOf(info.cast || info.actors),
-    director: String(info.director ?? '').trim(),
+    ...(await filmText(cfg, vodId, titleId, info)),
   }
+}
+
+const textOf = (info: NonNullable<VodInfo['info']>) => ({
+  plot: String(info.plot || info.description || '').trim(),
+  genre: String(info.genre ?? '').trim(),
+  cast: castOf(info.cast || info.actors),
+  director: String(info.director ?? '').trim(),
+})
+
+/**
+ * A film's plot, genres, cast and director in English: TMDB's when it knows the film (the provider's
+ * director is often a studio, its plot in the listing's language), else an English listing's, else this one's.
+ */
+async function filmText(cfg: XtreamConfig, vodId: number, titleId: string, info: NonNullable<VodInfo['info']>) {
+  const own = textOf(info)
+  const tmdb = titleId.match(/^movie:(\d+)$/)?.[1]
+  const t = tmdb ? await tmdbTitle('movie', tmdb).catch(() => null) : null
+  if (t) {
+    return {
+      plot: t.plot || own.plot,
+      genre: t.genres.slice(0, 2).join(', ') || own.genre,
+      cast: t.cast.slice(0, 4).map((c) => c.name).join(', ') || own.cast,
+      director: t.directors.map((d) => d.name).join(', ') || own.director,
+    }
+  }
+  const entries = await filmEntries(cfg, titleId).catch(() => [])
+  const english = (e: { category: string }) => /^EN\b/.test(e.category)
+  const en = !entries.some((e) => e.id === vodId && english(e)) && entries.find(english)
+  const other = en ? (await apiGet<VodInfo>(cfg, `get_vod_info&vod_id=${en.id}`).catch(() => null))?.info : null
+  return other ? textOf(other) : own
 }
 
 // Films the app measured while they played (resolution, codec, HDR, frame rate, audio), by VOD id:

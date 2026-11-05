@@ -33,6 +33,15 @@ test('Torrentio streams become candidates with audio languages from the flags, t
   expect(c[0]).toMatchObject({ hash: '2849211f150e966ef7924f43aec22727a644e10d', file: 0, res: 2160, hdr: ['hdr10'], codec: 'av1', size: Math.round(8.91 * 2 ** 30), seeds: 296 })
   expect(c[0].langs.sort()).toEqual(['de', 'en', 'es', 'fr', 'it'])
   expect(c[3]).toMatchObject({ file: 3, filename: 'Inception.2010.1080p.BrRip.x264.YIFY.mp4', res: 1080, langs: [] })
+  // The file name names the audio the release doesn't: here English only in DTS-HD.
+  const [remux] = torrentioCandidates([{
+    name: 'Torrentio\n4k DV | HDR',
+    title: 'Начало / Inception (2010) UHD BDRemux 2160p | 4K | HDR | Dolby Vision Profile 8 | D P2 A | Лицензия\n👤 29 💾 86.15 GB ⚙️ Rutor\n🇬🇧 / 🇷🇺 / 🇺🇦',
+    infoHash: '10c93a2ad69b9c576a5de6f9495b266fc992c889',
+    fileIdx: 0,
+    behaviorHints: { filename: 'Inception.2010.2160p.UHD.BDRemux.DTS-HD.MA.5.1.HYBRID.DoVi.P8.by.DVT.mkv' },
+  }])
+  expect(remux).toMatchObject({ res: 2160, hdr: ['dv', 'hdr10'], dvProfile: 8, audio: 'dts-hd', ch: 6, remux: true })
 })
 
 test('every catalogue copy of a film keeps its language: dubs name the audio, subtitled copies the original', () => {

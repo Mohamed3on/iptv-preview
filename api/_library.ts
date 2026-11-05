@@ -45,6 +45,8 @@ export interface LibTitle {
   /** A film the provider has: its best copy's VOD id and container, which Play starts when the box can't answer (KTD13). */
   v?: number
   x?: string
+  /** TMDB popularity: picks each row's candidates in the build (library-full.json); not served. */
+  pp?: number
 }
 export interface Row { id: string; n: string; /** Indexes into Library.titles. */ i: number[] }
 export interface Library { v: 1; src: 'tmdb' | 'provider'; at: string; img: string; gn: Record<string, string>; titles: LibTitle[]; rows: Row[] }
@@ -67,6 +69,7 @@ export interface TmdbItem {
   genres?: { id: number }[]
   media_type?: string
   adult?: boolean
+  popularity?: number
 }
 
 export function fromTmdb(kind: Kind, r: TmdbItem): LibTitle {
@@ -80,6 +83,7 @@ export function fromTmdb(kind: Kind, r: TmdbItem): LibTitle {
     b: r.backdrop_path || undefined,
     l: r.original_language || undefined,
     g: g.length ? g : undefined,
+    pp: r.popularity,
   }
 }
 
@@ -137,6 +141,9 @@ function toLibrary(src: Library['src'], titles: Map<string, LibTitle>, rows: { i
   }
 }
 
+/** Candidates a row keeps, the most popular on TMDB first, before scoring cuts it to ROW_CAP (api/_scores.ts). */
+export const ROW_CANDIDATES = 150
+
 /** One copy the provider has: a 4K or Blu-ray film, or a show, with the row it sits in today. */
 export interface ProviderTitle { t: LibTitle; group: string }
 
@@ -150,7 +157,9 @@ export function assemble(defs: RowDef[], seeds: LibTitle[][], provider: Provider
   for (const { t } of provider) titles.set(t.id, titles.has(t.id) ? withTier(titles.get(t.id)!, t) : t)
   for (const p of prev?.titles ?? []) if (titles.has(p.id)) titles.set(p.id, withTier(titles.get(p.id)!, p))
   const all = [...titles.values()]
-  return toLibrary('tmdb', titles, defs.map((d, i) => ({ id: d.id, n: d.n, ids: [...seeds[i].map((t) => t.id), ...(d.has ? all.filter(d.has).map((t) => t.id) : [])] })), gn)
+  const pop = (id: string) => titles.get(id)!.pp ?? -1
+  const candidates = (ids: string[]) => [...new Set(ids)].sort((a, b) => pop(b) - pop(a)).slice(0, ROW_CANDIDATES)
+  return toLibrary('tmdb', titles, defs.map((d, i) => ({ id: d.id, n: d.n, ids: candidates([...seeds[i].map((t) => t.id), ...(d.has ? all.filter(d.has).map((t) => t.id) : [])]) })), gn)
 }
 
 /** The provider's 4K and Blu-ray films (tier measured on play, else the category's claim) and its shows. */
@@ -188,7 +197,7 @@ export async function providerLibrary(cfg: XtreamConfig): Promise<Library> {
 }
 
 export const LIBRARY_FILE = fileURLToPath(new URL('../.cache/library.json', import.meta.url))
-/** The build's uncut library (every title, unscored): the next build's memory of TMDB details and tiers. */
+/** The build's unscored library (every title; rows hold their ROW_CANDIDATES, not yet cut to ROW_CAP): the next build's memory of TMDB details and tiers. */
 export const LIBRARY_FULL_FILE = fileURLToPath(new URL('../.cache/library-full.json', import.meta.url))
 
 /** Writes the library atomically (temp + rename). */

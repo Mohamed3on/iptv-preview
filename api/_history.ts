@@ -200,6 +200,8 @@ async function pool<T, R>(items: T[], n: number, fn: (x: T) => Promise<R>): Prom
 
 const ROW_CAP = 60
 const FOLLOW_CAP = 30
+/** Titles Watchlist and Recommended can show, which the nightly build scores whatever the library rows hold. */
+export const historyTitles = (h: Kept | null) => [...(h?.watchlist ?? []).slice(0, ROW_CAP * 2), ...(h?.recs ?? [])]
 
 /**
  * What /api/app/history answers: each source's state, every title Trakt and Letterboxd mark watched, the

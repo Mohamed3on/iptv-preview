@@ -11,6 +11,7 @@ import com.mohamed3on.iptv.data.FeedSync
 import com.mohamed3on.iptv.data.Lineup
 import com.mohamed3on.iptv.data.PrefsStore
 import com.mohamed3on.iptv.data.Route
+import com.mohamed3on.iptv.data.LIBRARY_CHECK
 import com.mohamed3on.iptv.data.ResumeStore
 import com.mohamed3on.iptv.data.TitleMigration
 import com.mohamed3on.iptv.data.VpnMonitor
@@ -46,6 +47,8 @@ class App : Application(), SingletonImageLoader.Factory {
             graph.sync.refresh(Duration.ZERO, Duration.ZERO) // launch refresh; playback never waits on it (R25)
             // The movie library is read once the first tune has had the stick to itself, so Movies opens at once.
             delay(5.seconds)
+            graph.sync.library.loadCached()
+            graph.sync.library.sync(LIBRARY_CHECK)
             graph.sync.movies.loadCached()
             withContext(Dispatchers.Main) { graph.setup } // its callbacks land on the main thread too
             graph.migration.run(graph.sync::titleIds)

@@ -3,17 +3,116 @@ package com.mohamed3on.iptv.data
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.Transient
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
 import java.text.Normalizer
 import java.util.Locale
+import kotlin.time.Duration.Companion.minutes
 
-/** One row of `/api/app/movies`: a 4K film or a UFC PPV replay (or of `/api/app/shows`: a show), with its [titleId]. */
+/**
+ * A film or show on screen: one row of `/api/app/movies` (a 4K film or a UFC PPV replay, by provider [id]) or a
+ * library title ([lib]; [id] is then the provider's for an `iptv:` title, else negative, see [titleKey]).
+ */
 @Serializable
-data class Movie(val id: Int, val name: String, val poster: String = "", val group: String, val ext: String = "mkv", val titleId: TitleId = "") {
+data class Movie(
+    val id: Int, val name: String, val poster: String = "", val group: String, val ext: String = "mkv", val titleId: TitleId = "",
+    @Transient val lib: LibTitle? = null,
+) {
     /** The name as shown, cleaned once: rows ask for it on every focus move. */
     val title by lazy { movieTitle(name) }
+    /** A list key unique across films and shows. */
+    val key: String get() = titleId.ifEmpty { id.toString() }
 }
+
+/** What scores a title (U12): conviction [s] with its net share [sn] (%), [se] 1 when estimated; Letterboxd [lb] (0–5) and IMDb [ir] (0–10) averages. */
+interface Scored {
+    val s: Int?
+    val sn: Int?
+    val se: Int
+    val lb: Double?
+    val ir: Double?
+}
+
+/** TrueScore's display, "490 (70%)", "~120" when estimated ([share] off on cards); null when unscored. */
+fun Scored.scoreLabel(share: Boolean = true): String? =
+    s?.let { (if (se == 1) "~" else "") + it + if (share && sn != null) " ($sn%)" else "" }
+
+/** "Letterboxd ★ 4.1 · IMDb 8.8"; null when neither is known. */
+fun Scored.averagesLabel(): String? =
+    listOfNotNull(lb?.let { "Letterboxd ★ %.1f".format(Locale.ROOT, it) }, ir?.let { "IMDb %.1f".format(Locale.ROOT, it) }).joinToString(" · ").ifEmpty { null }
+
+/**
+ * A library title (`/api/app/library`, `/api/app/search`, More like this): its id, 'm' film or 't' show, name, year,
+ * poster and backdrop (a TMDB path, or a full URL), genre ids, best known tier ([e] 1 when estimated) and scores.
+ */
+@Serializable
+data class LibTitle(
+    val id: TitleId, val k: String = "m", val n: String, val y: Int = 0, val p: String = "", val b: String = "", val g: List<Int> = emptyList(),
+    val t: String = "", val e: Int = 0,
+    override val s: Int? = null, override val sn: Int? = null, override val se: Int = 0, override val lb: Double? = null, override val ir: Double? = null,
+) : Scored {
+    /** On screen, [genres] its first two genres' names. */
+    fun toMovie(genres: String = ""): Movie {
+        val provider = if (id.startsWith("iptv:")) id.substringAfterLast(':').toIntOrNull() else null
+        return Movie(provider ?: titleKey(id), if (y > 0) "$n ($y)" else n, tmdbImage(p, "w342"), genres, titleId = id, lib = this)
+    }
+}
+
+/** A negative id for a title the provider has no id for, so it never reaches a provider call. */
+fun titleKey(title: TitleId) = -1 - (title.hashCode() and Int.MAX_VALUE)
+
+/** A film or show (not an episode) by its title id. */
+val TitleId.isShow get() = startsWith("tv:") || startsWith("iptv:tv:")
+/** A title TMDB knows, so `/api/app/title` describes it. */
+val TitleId.isTmdb get() = startsWith("movie:") || startsWith("tv:")
+
+private const val TMDB_IMG = "https://image.tmdb.org/t/p/"
+
+/** A TMDB image path ("/x.jpg") at [size]; a full URL as given. */
+fun tmdbImage(p: String, size: String) = if (p.startsWith("/")) "$TMDB_IMG$size$p" else p
+
+/** How long the library on disk counts as current; after that, opening Movies & Shows revalidates it (a 304 when unchanged). */
+val LIBRARY_CHECK = 5.minutes
+
+/** A row of the library: its id ("trending", "ar"), name and titles, best score first. */
+class CatalogRow(val id: String, val name: String, val movies: List<Movie>)
+
+/** Movies & Shows (`/api/app/library`): every title once, and the rows that hold them. */
+class Catalog(val rows: List<CatalogRow>, titles: List<Movie>) {
+    private val byTitle = titles.associateBy { it.titleId }
+    fun find(title: TitleId): Movie? = byTitle[title]
+
+    private val searchIndex by lazy { titles.map { searchNorm(it.title.title) to it } }
+
+    /** Titles containing every typed word, at most [SEARCH_CAP]: search with the box out of reach. */
+    fun search(query: String): List<Movie> = matching(searchIndex, query)
+}
+
+@Serializable
+private class LibraryJson(val gn: Map<String, String> = emptyMap(), val titles: List<LibTitle>, val rows: List<RowJson>)
+
+@Serializable
+private class RowJson(val id: String, val n: String, val i: List<Int>)
+
+/** Parses and validates the library; throws on anything with no row. */
+fun parseCatalog(text: String): Catalog {
+    val lib = json.decodeFromString(LibraryJson.serializer(), text)
+    val movies = lib.titles.map { t -> t.toMovie(t.g.mapNotNull { lib.gn[it.toString()] }.take(2).joinToString(", ")) }
+    val rows = lib.rows.mapNotNull { r -> r.i.mapNotNull(movies::getOrNull).takeIf { it.isNotEmpty() }?.let { CatalogRow(r.id, r.n, it) } }
+    require(rows.isNotEmpty()) { "no rows" }
+    return Catalog(rows, movies)
+}
+
+/** A cast member or director, for their page. */
+@Serializable
+data class Person(val id: Int, val name: String, val role: String = "")
+
+@Serializable
+private class TitlesAnswer(val name: String = "", val titles: List<LibTitle> = emptyList())
+
+/** `/api/app/search`'s or `/api/app/person`'s titles as cards. */
+fun parseTitles(text: String): List<Movie> = json.decodeFromString(TitlesAnswer.serializer(), text).titles.map { it.toMovie() }
 
 /** A movie's name as shown: [title] without the provider's [badge] prefix ("EN", "HDR") and the [year] pulled out. */
 data class MovieTitle(val title: String, val year: String?, val badge: String?)
@@ -41,11 +140,13 @@ data class Movies(val groups: List<String>, val movies: List<Movie>) {
     }
 
     /** Titles containing every typed word, in server order, at most [SEARCH_CAP]. */
-    fun search(query: String): List<Movie> {
-        val words = searchNorm(query).trim().split(' ').filter(String::isNotEmpty)
-        if (words.isEmpty()) return emptyList()
-        return searchIndex.asSequence().filter { (name, _) -> words.all(name::contains) }.map { it.second }.take(SEARCH_CAP).toList()
-    }
+    fun search(query: String): List<Movie> = matching(searchIndex, query)
+}
+
+private fun matching(index: List<Pair<String, Movie>>, query: String): List<Movie> {
+    val words = searchNorm(query).trim().split(' ').filter(String::isNotEmpty)
+    if (words.isEmpty()) return emptyList()
+    return index.asSequence().filter { (name, _) -> words.all(name::contains) }.map { it.second }.take(SEARCH_CAP).toList()
 }
 
 private const val SEARCH_CAP = 120
@@ -75,7 +176,11 @@ data class ShowEpisodes(
 
 fun parseEpisodes(text: String): ShowEpisodes = json.decodeFromString(ShowEpisodes.serializer(), text)
 
-/** A film's plot, running time ([secs], 0 when unknown), genres, rating, backdrop, cast and director ("" when unknown), from `/api/app/movie`. */
+/**
+ * A film's plot, running time ([secs], 0 when unknown), genres, rating, backdrop, cast and director ("" when unknown), from
+ * `/api/app/movie`; or a library title's from `/api/app/title`, with its [people], More like this ([more]), scores, and for a
+ * show the provider's [series] id (its episodes come from the provider), else its [episodes] from TMDB.
+ */
 @Serializable
 data class MovieInfo(
     val plot: String = "", val secs: Int = 0, val genre: String = "", val rating: String = "", val backdrop: String = "", val cast: String = "", val director: String = "",
@@ -85,15 +190,17 @@ data class MovieInfo(
     val tier: String = "",
     /** [tier] is the category's claim, not yet measured (the first play measures it). */
     val estimated: Boolean = false,
-)
+    val people: List<Person> = emptyList(),
+    val more: List<LibTitle> = emptyList(),
+    val series: Int = 0,
+    val episodes: List<Episode> = emptyList(),
+    override val s: Int? = null, override val sn: Int? = null, override val se: Int = 0, override val lb: Double? = null, override val ir: Double? = null,
+) : Scored {
+    /** [more] as cards, built once. */
+    @Transient val moreMovies: List<Movie> = more.map { it.toMovie() }
+}
 
 fun parseMovieInfo(text: String): MovieInfo = json.decodeFromString(MovieInfo.serializer(), text)
-
-@Serializable
-private class VodResults(val movies: List<Movie>)
-
-/** `/api/app/vod-search`'s films: across the whole catalogue, one per film on its best copy. */
-fun parseVodResults(text: String): List<Movie> = json.decodeFromString(VodResults.serializer(), text).movies
 
 /** Parses and validates the movie list; throws on anything that is not one with at least one movie. */
 fun parseMovies(text: String): Movies {

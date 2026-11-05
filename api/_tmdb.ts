@@ -31,6 +31,13 @@ export interface TmdbTitle {
   name: string
   year: string
   poster: string
+  /** The overview; "" when TMDB has none. */
+  plot: string
+  /** Backdrop path ("/x.jpg"); "" when none. */
+  backdrop: string
+  genres: string[]
+  /** A show's season numbers (specials left out); [] for a film. */
+  seasons: number[]
   cast: { id: number; name: string; character: string }[]
   /** A film's directors, a show's creators. */
   directors: { id: number; name: string }[]
@@ -48,6 +55,10 @@ interface Raw {
   release_date?: string
   first_air_date?: string
   poster_path?: string | null
+  overview?: string
+  backdrop_path?: string | null
+  genres?: { name: string }[]
+  seasons?: { season_number: number }[]
   created_by?: { id: number; name: string }[]
   external_ids?: { imdb_id?: string | null }
   credits?: { cast?: { id: number; name: string; character?: string }[]; crew?: { id: number; name: string; job?: string }[] }
@@ -65,6 +76,10 @@ function trim(kind: Kind, r: Raw): TmdbTitle {
     name: r.title ?? r.name ?? '',
     year: yearOf(r),
     poster: poster(r.poster_path),
+    plot: r.overview?.trim() ?? '',
+    backdrop: r.backdrop_path ?? '',
+    genres: (r.genres ?? []).map((g) => g.name),
+    seasons: (r.seasons ?? []).map((x) => x.season_number).filter((n) => n > 0),
     cast: (r.credits?.cast ?? []).slice(0, 10).map(({ id, name, character }) => ({ id, name, character: character ?? '' })),
     directors: kind === 'tv'
       ? (r.created_by ?? []).map(({ id, name }) => ({ id, name }))
@@ -80,7 +95,7 @@ function trim(kind: Kind, r: Raw): TmdbTitle {
 
 const MAX_AGE_MS = 30 * 864e5
 const cacheFile = () => process.env.TMDB_CACHE_FILE ?? fileURLToPath(new URL('../.cache/tmdb-titles.json', import.meta.url))
-type Entry = { at: number; t: TmdbTitle | null }
+type Entry = { at: number; t?: TmdbTitle | null; e?: TmdbEpisode[] }
 let cache: Promise<Record<string, Entry>> | null = null
 const loaded = () => (cache ??= readFile(cacheFile(), 'utf8').then((s) => JSON.parse(s) as Record<string, Entry>).catch(() => ({} as Record<string, Entry>)))
 const pending = new Map<string, Promise<TmdbTitle | null>>()
@@ -114,7 +129,8 @@ export async function tmdbTitle(kind: Kind, id: string | number): Promise<TmdbTi
   if (!key || !tmdb) return null
   const k = `${kind}:${tmdb}`
   const all = await loaded()
-  if (all[k] && Date.now() - all[k].at < MAX_AGE_MS) return all[k].t
+  // An entry kept before plots and backdrops were is fetched again.
+  if (all[k] && Date.now() - all[k].at < MAX_AGE_MS && (!all[k].t || all[k].t!.plot !== undefined)) return all[k].t ?? null
   let job = pending.get(k)
   if (!job) {
     job = tmdbGet<Raw>(`${kind}/${tmdb}?append_to_response=external_ids,credits,recommendations`, key)
@@ -139,4 +155,38 @@ export async function tmdbFacts(title: string): Promise<{ imdb?: string; origina
   const m = title.match(/^(movie|tv):(\d+)/)
   const t = m ? await tmdbTitle(m[1] as Kind, m[2]) : null
   return t ? { ...(t.imdb && { imdb: t.imdb }), ...(t.originalLanguage && { originalLanguage: t.originalLanguage }) } : {}
+}
+
+/** A show's episode as TMDB lists it. */
+export interface TmdbEpisode { season: number; episode: number; title: string; secs: number; image: string }
+interface RawEpisode { season_number: number; episode_number: number; name?: string; runtime?: number | null; still_path?: string | null; air_date?: string | null }
+
+const EPISODES_MAX_AGE_MS = 864e5
+
+/**
+ * A show's aired episodes in order ([seasons] asked 20 to a call), kept a day in the same cache, as new
+ * episodes air; [] without TMDB_TOKEN, the last list kept when TMDB fails.
+ */
+export async function tmdbEpisodes(id: string | number, seasons: number[]): Promise<TmdbEpisode[]> {
+  const key = process.env.TMDB_TOKEN
+  const tmdb = tmdbId(id)
+  if (!key || !tmdb || !seasons.length) return []
+  const k = `tv:${tmdb}:episodes`
+  const all = await loaded()
+  if (all[k] && Date.now() - all[k].at < EPISODES_MAX_AGE_MS) return all[k].e ?? []
+  const today = new Date().toISOString().slice(0, 10)
+  const chunks = Array.from({ length: Math.ceil(seasons.length / 20) }, (_, i) => seasons.slice(i * 20, i * 20 + 20))
+  try {
+    const parts = await Promise.all(chunks.map((c) => tmdbGet<Record<string, { episodes?: RawEpisode[] }>>(`tv/${tmdb}?append_to_response=${c.map((n) => `season/${n}`).join(',')}`, key)))
+    const e = parts
+      .flatMap((p) => Object.entries(p).filter(([n]) => n.startsWith('season/')).flatMap(([, s]) => s?.episodes ?? []))
+      .filter((x) => x.air_date && x.air_date <= today)
+      .map((x) => ({ season: x.season_number, episode: x.episode_number, title: x.name ?? '', secs: (x.runtime ?? 0) * 60, image: x.still_path ? `https://image.tmdb.org/t/p/w300${x.still_path}` : '' }))
+      .sort((a, b) => a.season - b.season || a.episode - b.episode)
+    all[k] = { at: Date.now(), e }
+    save(all)
+    return e
+  } catch {
+    return all[k]?.e ?? []
+  }
 }

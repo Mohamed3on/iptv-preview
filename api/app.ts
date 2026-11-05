@@ -13,6 +13,7 @@
 // GET /api/app/library?t=TOKEN — Movies & Shows: titles and rows (see _library.ts).
 // GET /api/app/copies?t=TOKEN&title=… — every copy of a film or episode, for the stick to rank.
 // POST /api/app/rd-infringing?t=TOKEN — torrents Real-Debrid refused, left out of copies from then on.
+// GET /api/app/title, /api/app/search, /api/app/person ?t=TOKEN — title pages, search and person pages (see _browse.ts).
 import { appendFile, mkdir, rename, stat } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import { buildAppFeed, buildAppGuide } from './_app-feed.js'
@@ -23,7 +24,9 @@ import { addBitrate, mergeAppReading, saveQuality, type Meta } from './_quality.
 import { QUALITY } from './quality-cache.js'
 import { curatedGuide } from './epg.js'
 import { movieInfo, saveMeasuredFilm, showEpisodes, showList, titleIds as mapTitleIds } from './_shows.js'
-import { tmdbFacts } from './_tmdb.js'
+import { knownTitles, personTitles, searchTitles, titleDetails } from './_browse.js'
+import { loadScores, ranked, scoreTitles } from './_scores.js'
+import { tmdbFacts, tmdbGet } from './_tmdb.js'
 import { blurayMovies, filmTitleOf, searchVod } from './_vod.js'
 
 const forbidden = () => new Response('Forbidden', { status: 403 })
@@ -242,7 +245,8 @@ export async function episodes(req: Request): Promise<Response> {
 export async function library(req: Request): Promise<Response> {
   if (!appTokenOk(req.url)) return forbidden()
   try {
-    const { body, etag } = await servedLibrary(() => providerLibrary(configFromEnv()))
+    // The provider's rows are cut and sorted like the built library's, so the fallback stays small.
+    const { body, etag } = await servedLibrary(async () => ranked(await providerLibrary(configFromEnv()), scoreTitles(await loadScores())))
     const headers = { ETag: etag, 'Cache-Control': 'private, no-cache' }
     // Cloudflare weakens the ETag (W/) when it compresses the response.
     if (req.headers.get('if-none-match')?.replace(/^W\//, '') === etag) return new Response(null, { status: 304, headers })
@@ -295,4 +299,50 @@ export async function rdInfringing(req: Request): Promise<Response> {
     return new Response('Bad hashes', { status: 400 })
   }
   return Response.json({ stored: await markInfringing(hashes) }, { headers: { 'Cache-Control': 'no-store' } })
+}
+
+// GET /api/app/title?t=TOKEN&id=movie:27205|tv:1396 — a title page's TMDB details: plot, backdrop, cast and
+// director, More like this, its score, and a show's episodes when the provider lacks it (see _browse.ts).
+export async function title(req: Request): Promise<Response> {
+  if (!appTokenOk(req.url)) return forbidden()
+  const id = new URL(req.url).searchParams.get('id') ?? ''
+  if (!/^(movie|tv):\d+$/.test(id)) return new Response('Bad id', { status: 400 })
+  try {
+    const t = await titleDetails(configFromEnv(), id)
+    if (!t) return new Response('Unknown title', { status: 404 })
+    return Response.json(t, { headers: { 'Cache-Control': 'private, s-maxage=21600, stale-while-revalidate=86400' } })
+  } catch (e) {
+    return new Response(e instanceof Error ? e.message : 'upstream error', { status: 502 })
+  }
+}
+
+// GET /api/app/search?t=TOKEN&q=… — films and shows for a search: a category word's row or TMDB discover,
+// else TMDB's title search plus the provider's catalogue (see _browse.ts searchTitles).
+export async function search(req: Request): Promise<Response> {
+  if (!appTokenOk(req.url)) return forbidden()
+  const q = (new URL(req.url).searchParams.get('q') ?? '').trim().slice(0, 100)
+  if (!q) return Response.json({ titles: [] })
+  const cfg = configFromEnv()
+  const titles = await searchTitles(q, {
+    known: await knownTitles(),
+    tmdb: process.env.TMDB_TOKEN ? (path) => tmdbGet(path) : undefined,
+    vod: (q) => searchVod(cfg, q, 20),
+  })
+  return Response.json({ titles }, { headers: { 'Cache-Control': 'private, s-maxage=1800, stale-while-revalidate=3600' } })
+}
+
+// GET /api/app/person?t=TOKEN&id=TMDB_PERSON_ID — a person's films and shows, best score first.
+export async function person(req: Request): Promise<Response> {
+  if (!appTokenOk(req.url)) return forbidden()
+  const id = new URL(req.url).searchParams.get('id') ?? ''
+  if (!/^[1-9]\d{0,9}$/.test(id)) return new Response('Bad id', { status: 400 })
+  if (!process.env.TMDB_TOKEN) return new Response('No TMDB', { status: 404 })
+  try {
+    const p = await tmdbGet<{ name?: string; combined_credits?: Parameters<typeof personTitles>[0] }>(`person/${id}?append_to_response=combined_credits`)
+    return Response.json({ name: p.name ?? '', titles: personTitles(p.combined_credits ?? {}, await knownTitles()) }, {
+      headers: { 'Cache-Control': 'private, s-maxage=86400, stale-while-revalidate=604800' },
+    })
+  } catch (e) {
+    return new Response(e instanceof Error ? e.message : 'upstream error', { status: 502 })
+  }
 }

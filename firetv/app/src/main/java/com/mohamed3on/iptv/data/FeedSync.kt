@@ -59,10 +59,10 @@ class FeedSync(
     val guide: StateFlow<GuideDb?> = _guide
     /** The Real-Debrid token from the feed, for [RealDebrid]; null until a feed is loaded or when the server has none. */
     val realDebridToken: String? get() = (_state.value as? FeedState.Ready)?.feed?.realDebrid
-    /** The 4K films and UFC replays (v2). */
-    val movies = Library("movies")
-    /** The shows (series), in the same shape; each show's episodes come from [episodes]. */
-    val shows = Library("shows")
+    /** The 4K films and UFC replays (v2): the IPTV copy Play falls back on when the box can't list copies. */
+    val movies = Library("movies") { text -> parseMovies(text).also { require(it.movies[0].titleId.isNotEmpty()) } }
+    /** Movies & Shows (U11): title-first rows of films and shows, revalidated by its ETag (a 304 when unchanged). */
+    val library = Library("library", ::parseCatalog)
 
     /** Loads whatever is cached, without touching the network. */
     suspend fun loadCached() = withContext(Dispatchers.IO) {
@@ -75,23 +75,23 @@ class FeedSync(
     }
 
     /**
-     * An on-demand library (/api/app/[kind]): read from disk only once it's wanted (megabytes), and
+     * An on-demand list (/api/app/[kind]) as [parse] reads it: read from disk only once it's wanted, and
      * synced at most every [sync]'s maxAge.
      */
-    inner class Library(private val kind: String) {
+    inner class Library<T : Any>(private val kind: String, private val parse: (String) -> T) {
         private val file = File(dir, "$kind.json")
         private val lock = Mutex()
-        private val _items = MutableStateFlow<Movies?>(null)
+        private val _items = MutableStateFlow<T?>(null)
         /** Null until the cached copy is read or the first download lands. */
-        val items: StateFlow<Movies?> = _items
+        val items: StateFlow<T?> = _items
 
         /** Reads the cached copy, without touching the network. */
         suspend fun loadCached() = lock.withLock {
             withContext(Dispatchers.IO) {
                 if (_items.value == null && file.exists()) {
                     // An unreadable copy goes, so the next sync downloads it whole instead of hearing "unchanged";
-                    // so does one saved before titles had ids (resume and watched marks are keyed by them).
-                    runCatching { parseMovies(file.readText()).also { require(it.movies[0].titleId.isNotEmpty()) } }
+                    // so does one [parse] rejects (saved before titles had ids, say: resume and watched marks are keyed by them).
+                    runCatching { parse(file.readText()) }
                         .onSuccess { _items.value = it }.onFailure { file.delete() }
                 }
             }
@@ -106,7 +106,7 @@ class FeedSync(
                     Download.Unchanged -> null.also { file.setLastModified(now()) }
                     is Download.Failed -> d.error
                     is Download.Done -> try {
-                        val items = parseMovies(tmp.readText())
+                        val items = parse(tmp.readText())
                         replace(tmp, file, kind, d.etag)
                         _items.value = items
                         null
@@ -133,16 +133,71 @@ class FeedSync(
     }
     private val movieInfos = java.util.concurrent.ConcurrentHashMap<Int, MovieInfo>()
 
-    /** Films matching [query] across the provider's whole catalogue (not only the library's rows), best copy first. */
-    suspend fun vodSearch(query: String): Result<List<Movie>> = withContext(Dispatchers.IO) {
-        runCatching {
-            val q = java.net.URLEncoder.encode(query.trim(), "UTF-8")
-            val request = Request.Builder().url("$baseUrl/api/app/vod-search?t=$token&q=$q").build()
-            client.newCall(request).execute().use { res ->
-                if (!res.isSuccessful) throw IOException("HTTP ${res.code}")
-                parseVodResults(res.body.string())
-            }
+    /** GET /api/app/[path] (query already in it) as text; throws on failure. */
+    private fun get(path: String): String =
+        client.newCall(Request.Builder().url("$baseUrl/api/app/$path&t=$token").build()).execute().use { res ->
+            if (!res.isSuccessful) throw IOException("HTTP ${res.code}")
+            res.body.string()
         }
+
+    private fun q(s: String) = java.net.URLEncoder.encode(s, "UTF-8")
+
+    /**
+     * Films and shows for a search (a title, or a genre or language word), from the box; each query's answer is
+     * kept for the app session, so typing back over it answers at once.
+     */
+    suspend fun search(query: String): Result<List<Movie>> = withContext(Dispatchers.IO) {
+        val key = query.trim().lowercase()
+        searches[key]?.let { return@withContext Result.success(it) }
+        runCatching { parseTitles(get("search?q=${q(query.trim())}")).also { searches[key] = it } }
+    }
+    private val searches = java.util.concurrent.ConcurrentHashMap<String, List<Movie>>()
+
+    /** A library title's page: TMDB's plot, people, More like this and scores (/api/app/title); kept for the app session. */
+    suspend fun title(id: TitleId): Result<MovieInfo> = withContext(Dispatchers.IO) {
+        titles[id]?.let { return@withContext Result.success(it) }
+        runCatching { parseMovieInfo(get("title?id=${q(id)}")).also { titles[id] = it } }
+    }
+    private val titles = java.util.concurrent.ConcurrentHashMap<TitleId, MovieInfo>()
+
+    /** A person's films and shows, best score first; kept for the app session. */
+    suspend fun person(id: Int): Result<List<Movie>> = withContext(Dispatchers.IO) {
+        people[id]?.let { return@withContext Result.success(it) }
+        runCatching { parseTitles(get("person?id=$id")).also { people[id] = it } }
+    }
+    fun peekPerson(id: Int): List<Movie>? = people[id]
+    private val people = java.util.concurrent.ConcurrentHashMap<Int, List<Movie>>()
+
+    /**
+     * What a title page says about [m]: TMDB's for a title it knows (the provider's when that fails), else the
+     * provider's own, a show's from its episodes call.
+     */
+    suspend fun info(m: Movie): Result<MovieInfo> {
+        if (m.titleId.isTmdb) title(m.titleId).let { if (it.isSuccess || m.id <= 0) return it }
+        if (m.id <= 0) return Result.failure(IOException("no provider id"))
+        return if (m.titleId.isShow) episodes(m.id).map { it.info } else movieInfo(m.id)
+    }
+
+    /** What [info] already holds for [m], without waiting: a screen's first frame. */
+    fun peekInfo(m: Movie): MovieInfo? =
+        (if (m.titleId.isTmdb) titles[m.titleId] else null) ?: if (m.titleId.isShow) showCache[m.id]?.second?.info else movieInfos[m.id]
+
+    /**
+     * A show's episodes: the provider's when it lists the show ([m]'s own id, or the series TMDB's answer names),
+     * else TMDB's, which only copies (Real-Debrid's, say) play.
+     */
+    suspend fun showOf(m: Movie, fresh: Boolean = false): Result<ShowEpisodes> {
+        if (m.id > 0) return episodes(m.id, fresh)
+        val info = title(m.titleId).getOrElse { return Result.failure(it) }
+        if (info.series > 0) return episodes(info.series, fresh)
+        return Result.success(ShowEpisodes(info.episodes, info.plot, info.backdrop, info.genre, info.cast, info.rating))
+    }
+
+    /** What [showOf] already holds for [m]. */
+    fun peekShowOf(m: Movie): ShowEpisodes? {
+        if (m.id > 0) return peekShow(m.id)
+        val info = titles[m.titleId] ?: return null
+        return if (info.series > 0) peekShow(info.series) else ShowEpisodes(info.episodes, info.plot, info.backdrop, info.genre, info.cast, info.rating)
     }
 
     /**
@@ -166,8 +221,7 @@ class FeedSync(
     }
     private val filmsReported = java.util.Collections.synchronizedSet(HashSet<Int>())
 
-    /** What [movieInfo] or [episodes] already holds for a title, without waiting: a screen's first frame. */
-    fun peekMovieInfo(id: Int): MovieInfo? = movieInfos[id]
+    /** What [episodes] already holds for a show, without waiting. */
     fun peekShow(id: Int): ShowEpisodes? = showCache[id]?.second
 
     /**

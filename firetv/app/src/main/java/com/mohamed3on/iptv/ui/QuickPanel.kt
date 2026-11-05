@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.Composable
@@ -136,6 +137,13 @@ fun QuickPanel(
                         // Multi-view (U11).
                         Column(verticalArrangement = Arrangement.spacedBy(Space.xs), content = views)
                         PanelRow("Refresh guide", refreshStatus, onClick = onRefresh)
+                        // TMDB's terms ask for this credit wherever its data shows.
+                        Spacer(Modifier.weight(1f))
+                        Text(
+                            "Movies & Shows uses the TMDB API but is not endorsed or certified by TMDB.",
+                            style = Type.caption,
+                            modifier = Modifier.padding(start = Space.l, end = Space.l),
+                        )
                     }
                     Page.Audio -> {
                         val selected = remember { FocusRequester() }

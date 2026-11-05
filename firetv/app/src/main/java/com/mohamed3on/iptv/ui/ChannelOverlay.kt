@@ -250,9 +250,6 @@ private data object LiveSource : Source {
 private data object MoviesSource : Source {
     override val key = "movies"
 }
-private data object ShowsSource : Source {
-    override val key = "shows"
-}
 private data class GroupSource(val name: String) : Source {
     override val key get() = "g|$name"
 }
@@ -349,8 +346,7 @@ private fun itemsOf(source: Source, feed: Feed, live: LiveNow?, typed: Boolean, 
         }
     }
     is GroupSource -> feed.channelsIn(source.name).map(::ChannelItem)
-    MoviesSource -> listOf(Note("4K films and UFC replays", "Press OK to browse"))
-    ShowsSource -> listOf(Note("Series in English, Arabic, German, Spanish and Italian", "Press OK to browse"))
+    MoviesSource -> listOf(Note("Films and shows, best rated first, from IPTV and Real-Debrid", "Press OK to browse"))
     LiveSource -> live?.let {
         buildList {
             for (match in it.matches) addMatch(match)
@@ -423,7 +419,7 @@ fun ChannelOverlay(
     modifier: Modifier = Modifier,
     updateRow: LazyListScope.() -> Unit = {},
     entrance: () -> Float = { 1f },
-    onLibrary: ((LibraryKind) -> Unit)? = null,
+    onLibrary: (() -> Unit)? = null,
     /** In pick mode (no [onPreview]), what OK does with the focused row's channel, said in its last line. */
     pickHint: ((Channel) -> String?)? = null,
 ) {
@@ -461,8 +457,7 @@ fun ChannelOverlay(
         val order = { s: Source ->
             when (s) {
                 is GroupSource -> feed.groups.indexOf(s.name)
-                ShowsSource -> -1
-                MoviesSource -> -2
+                MoviesSource -> -1
                 LiveSource -> -3
                 SearchSource -> -4
             }
@@ -666,10 +661,9 @@ fun ChannelOverlay(
         items?.indexOfFirst { it.focusable }?.takeIf { it >= 0 }?.let { focusChannels(it) }
     }
 
-    /** Right/OK from the groups column: a group still waiting to show is shown now, then entered; Movies and Shows open. */
+    /** Right/OK from the groups column: a group still waiting to show is shown now, then entered; Movies & Shows opens. */
     fun enterChannels() {
-        if (source == MoviesSource) return onLibrary?.invoke(LibraryKind.Movies) ?: Unit
-        if (source == ShowsSource) return onLibrary?.invoke(LibraryKind.Shows) ?: Unit
+        if (source == MoviesSource) return onLibrary?.invoke() ?: Unit
         val target = pending.target
         pending.job?.cancel()
         pending.target = null
@@ -693,14 +687,13 @@ fun ChannelOverlay(
                 val info = groupsState.layoutInfo
                 if (info.totalItemsCount == 0) return@repeat
                 if (info.visibleItemsInfo.none { it.key == source.key }) {
-                    // The update row (U12) and Search come first, then Live now, Movies, Shows, then the groups.
-                    val libraries = if (onLibrary != null) 2 else 0
+                    // The update row (U12) and Search come first, then Live now, Movies & Shows, then the groups.
+                    val libraries = if (onLibrary != null) 1 else 0
                     val first = info.totalItemsCount - feed.groups.size - 1 - libraries
                     val at = when (source) {
                         SearchSource -> first - 1
                         LiveSource -> first
                         MoviesSource -> first + 1
-                        ShowsSource -> first + 2
                         is GroupSource -> first + 1 + libraries + feed.groups.indexOf(source.name)
                     }
                     groupsState.scrollToItem((at - 2).coerceAtLeast(0))
@@ -896,21 +889,19 @@ fun ChannelOverlay(
                             modifier = groupMotion(),
                         )
                     }
-                    if (onLibrary != null) {
-                        for ((library, kind) in listOf(MoviesSource to LibraryKind.Movies, ShowsSource to LibraryKind.Shows)) item(key = library.key) {
-                            GroupRow(
-                                kind.title,
-                                marked = false,
-                                focus = if (source == library) groupFocus else null,
-                                onFocused = { show(library); groupKey = library.key; wantChannels = false },
-                                onClick = { onLibrary(kind) },
-                                modifier = groupMotion(),
-                            )
-                        }
+                    if (onLibrary != null) item(key = MoviesSource.key) {
+                        GroupRow(
+                            LibraryKind.Movies.title,
+                            marked = false,
+                            focus = if (source == MoviesSource) groupFocus else null,
+                            onFocused = { show(MoviesSource); groupKey = MoviesSource.key; wantChannels = false },
+                            onClick = { onLibrary() },
+                            modifier = groupMotion(),
+                        )
                     }
                     itemsIndexed(feed.groups, key = { _, it -> "g|$it" }) { i, group ->
                         val here = source is GroupSource && source.name == group
-                        // A gap where a section starts: after Search to Shows, then Favourites, competitions, the rest.
+                        // A gap where a section starts: after Search to Movies & Shows, then Favourites, competitions, the rest.
                         val starts = i == 0 || groupSection(feed.groups[i - 1]) != groupSection(group)
                         GroupRow(
                             group,

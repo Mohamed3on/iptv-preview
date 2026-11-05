@@ -80,7 +80,11 @@ import com.mohamed3on.iptv.player.filmReading
 import androidx.tv.material3.Text
 import com.mohamed3on.iptv.data.Movie
 import com.mohamed3on.iptv.graph
+import android.util.Log
 import com.mohamed3on.iptv.player.AudioState
+import com.mohamed3on.iptv.player.BandwidthMeter
+import com.mohamed3on.iptv.player.Capacity
+import com.mohamed3on.iptv.player.FilmLoad
 import com.mohamed3on.iptv.player.AudioTracks
 import com.mohamed3on.iptv.player.FrameRate
 import com.mohamed3on.iptv.player.Phase
@@ -154,7 +158,10 @@ internal fun MoviePlayback(movie: Movie, from: Long, url: String, onSave: (pos: 
     val keep by rememberUpdatedState(onSave)
     // The file's size, for its bitrate in the film's quality reading.
     val fileBytes = remember { java.util.concurrent.atomic.AtomicLong(0) }
-    val exo = remember { moviePlayer(context, graph.http) { fileBytes.compareAndSet(0, it) } }
+    // Its loading bursts teach the typical bandwidth (KTD8); every film is an IPTV copy until Real-Debrid plays.
+    val load = remember { FilmLoad() }
+    val meter = remember { BandwidthMeter(graph.capacity) }
+    val exo = remember { moviePlayer(context, graph.http, load) { fileBytes.compareAndSet(0, it) } }
     // A film's first play measures what it really is (an episode's is known already), for its quality and tier.
     val films = LocalLibrary.current == LibraryKind.Movies
     val ui = remember { MovieState() }
@@ -219,6 +226,13 @@ internal fun MoviePlayback(movie: Movie, from: Long, url: String, onSave: (pos: 
             subtitles.release()
             exo.removeListener(listener)
             exo.release()
+            meter.finish().forEach { (bucket, mbps) -> Log.i("IptvCapacity", "${bucket.first} ${bucket.second}: $mbps Mbps") }
+        }
+    }
+    LaunchedEffect(Unit) {
+        while (true) {
+            meter.next(System.currentTimeMillis(), load.bytes.get(), load.filling(exo), Capacity.Source.Iptv)
+            delay(1_000)
         }
     }
     // Home: keep the place and let go of the account's one connection; back in the app, it's the movies.

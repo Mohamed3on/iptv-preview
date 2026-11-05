@@ -50,22 +50,40 @@ private val json = Json { ignoreUnknownKeys = true }
 
 /** One episode of a show, from `/api/app/episodes`; [secs] is 0 when unknown. */
 @Serializable
-data class Episode(val id: Int, val season: Int, val episode: Int, val title: String = "", val ext: String = "mkv", val secs: Int = 0) {
+data class Episode(val id: Int, val season: Int, val episode: Int, val title: String = "", val ext: String = "mkv", val secs: Int = 0, val image: String = "",
+    /** The stream's quality as labels, best first ("4K", "HDR10", "HEVC", "18 Mbps", "E-AC3 5.1"); empty when unknown. */
+    val quality: List<String> = emptyList(),
+) {
     /** "S1 E3". */
     val code get() = "S$season E$episode"
 }
 
-/** A show's plot and episodes, from `/api/app/episodes`. */
+/** A show's plot, backdrop, genres, cast and rating, and its episodes, from `/api/app/episodes`. */
 @Serializable
-data class ShowEpisodes(val episodes: List<Episode>, val plot: String = "")
+data class ShowEpisodes(
+    val episodes: List<Episode>, val plot: String = "", val backdrop: String = "", val genre: String = "", val cast: String = "", val rating: String = "",
+) {
+    /** The show's facts in a film's shape, for the screens that show either. */
+    val info get() = MovieInfo(plot = plot, genre = genre, rating = rating, backdrop = backdrop, cast = cast)
+}
 
 fun parseEpisodes(text: String): ShowEpisodes = json.decodeFromString(ShowEpisodes.serializer(), text)
 
-/** A film's plot, running time ([secs], 0 when unknown), genres and rating ("" when unknown), from `/api/app/movie`. */
+/** A film's plot, running time ([secs], 0 when unknown), genres, rating, backdrop, cast and director ("" when unknown), from `/api/app/movie`. */
 @Serializable
-data class MovieInfo(val plot: String = "", val secs: Int = 0, val genre: String = "", val rating: String = "")
+data class MovieInfo(
+    val plot: String = "", val secs: Int = 0, val genre: String = "", val rating: String = "", val backdrop: String = "", val cast: String = "", val director: String = "",
+    /** The stream's quality as labels, best first ("4K", "Dolby Vision", "HEVC", "20 Mbps", "Atmos"); empty when unknown. */
+    val quality: List<String> = emptyList(),
+)
 
 fun parseMovieInfo(text: String): MovieInfo = json.decodeFromString(MovieInfo.serializer(), text)
+
+@Serializable
+private class VodResults(val movies: List<Movie>)
+
+/** `/api/app/vod-search`'s films: across the whole catalogue, one per film on its best copy. */
+fun parseVodResults(text: String): List<Movie> = json.decodeFromString(VodResults.serializer(), text).movies
 
 /** Parses and validates the movie list; throws on anything that is not one with at least one movie. */
 fun parseMovies(text: String): Movies {
@@ -115,6 +133,9 @@ private val TMDB_SIZE = Regex("""^https?://(?:image\.tmdb\.org|www\.themoviedb\.
 
 /** TMDB posters at the size a card needs (w342) rather than 600×900 or the original, a tenth of the bytes. */
 fun posterUrl(raw: String): String = raw.replace(TMDB_SIZE, "https://image.tmdb.org/t/p/w342/")
+
+/** A TMDB image at [width] ("w1280" for a full-screen backdrop, "w780" for a card, "w300" for an episode still); others as given. */
+fun tmdbAt(raw: String, width: String): String = raw.replace(TMDB_SIZE, "https://image.tmdb.org/t/p/$width/")
 
 /**
  * A movie's place: [pos] and [dur] in ms ([dur] 0 when unknown), saved [at] (epoch ms). Carries the movie, in case the list drops it.

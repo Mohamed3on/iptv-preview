@@ -1,5 +1,6 @@
 package com.mohamed3on.iptv.ui
 
+import android.os.SystemClock
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -155,6 +156,8 @@ private val CARET = DpSize(2.dp, 22.dp)
 /** ActivityLine's own height. */
 private val ACTIVITY_HEIGHT = 3.dp
 private const val SPACE = "Space"
+/** Focus away from the search box longer than this, then back, is arriving at Search. */
+private const val ARRIVAL_MS = 50L
 private const val DELETE = "Delete"
 private const val VOICE = "Voice search"
 /**
@@ -177,7 +180,16 @@ private val KEYS: List<List<String>> =
  * focus back to the keys.
  */
 @Composable
-internal fun SearchBox(query: String, busy: Boolean, onQuery: (String) -> Unit, entry: FocusRequester, onFocused: () -> Unit, onDown: () -> Unit, onSpoken: (String) -> Unit) {
+internal fun SearchBox(
+    query: String, busy: Boolean, onQuery: (String) -> Unit, entry: FocusRequester, onFocused: () -> Unit, onDown: () -> Unit, onSpoken: (String) -> Unit,
+    /**
+     * Whether focus is nowhere on the screen, so the keys may take it back when the Fire TV keyboard closes
+     * itself; the screen knows, the box doesn't. Null: the screen places focus itself (the channel list).
+     */
+    stray: (() -> Boolean)? = null,
+    /** Whether focus landing here now counts as arriving at Search (which opens the Fire TV keyboard). */
+    arrive: () -> Boolean = { true },
+) {
     var at by remember { mutableStateOf(0 to 0) }
     val focusManager = LocalFocusManager.current
     var listening by remember { mutableStateOf(false) }
@@ -186,28 +198,48 @@ internal fun SearchBox(query: String, busy: Boolean, onQuery: (String) -> Unit, 
     val voice = remember { FocusRequester() }
     val keyboard = LocalSoftwareKeyboardController.current
     // Back to the Voice search key before the field goes, so focus never drops out of the list.
+    // Set while the Fire TV keyboard is up; cleared when the app closes it itself (which places focus).
+    val wasListening = remember { booleanArrayOf(false) }
     fun stopListening() {
+        wasListening[0] = false
         runCatching { entry.requestFocus() }
         keyboard?.hide()
         listening = false
     }
+    // Arriving at Search from outside it opens the Fire TV keyboard, so the mic is ready at once; moving
+    // between the query and the keys, or coming back from that keyboard, doesn't.
+    var inside by remember { mutableStateOf(false) }
+    val leftAt = remember { longArrayOf(0) }
     LaunchedEffect(listening) {
-        if (!listening) return@LaunchedEffect
+        if (!listening) {
+            // The Fire TV keyboard can close taking focus with it (its own Back): the field goes, and focus
+            // would be nowhere. Back to the keys, once the field has gone.
+            if (!wasListening[0]) return@LaunchedEffect
+            wasListening[0] = false
+            withFrameNanos {}
+            if (!inside && stray?.invoke() == true) {
+                inside = true // a return, not an arrival: the keyboard stays closed
+                runCatching { entry.requestFocus() }
+            }
+            return@LaunchedEffect
+        }
+        wasListening[0] = true
         field = TextFieldValue(query, TextRange(query.length))
         settled = query
         withFrameNanos {}
         runCatching { voice.requestFocus() }
         keyboard?.show()
     }
-    // Arriving at Search from outside it opens the Fire TV keyboard, so the mic is ready at once; moving
-    // between the query and the keys, or coming back from that keyboard, doesn't.
-    var inside by remember { mutableStateOf(false) }
     Column(
         Modifier
             .fillMaxWidth()
             .padding(horizontal = Space.m)
             .onFocusChanged {
-                if (it.hasFocus && !inside) listening = true
+                val now = SystemClock.uptimeMillis()
+                // An arrival, not a blip: inside a grid (Movies' search), moving between key rows leaves the box and
+                // comes back in the same frame, which must not open the keyboard.
+                if (it.hasFocus && !inside && now - leftAt[0] > ARRIVAL_MS && arrive()) listening = true
+                if (!it.hasFocus && inside) leftAt[0] = now
                 inside = it.hasFocus
             },
         verticalArrangement = Arrangement.spacedBy(Space.l),
@@ -241,8 +273,15 @@ internal fun SearchBox(query: String, busy: Boolean, onQuery: (String) -> Unit, 
                             .focusRequester(voice)
                             .onFocusChanged { if (it.isFocused) held = true else if (held) listening = false }
                             .onKeyEvent {
-                                if (it.nativeKeyEvent.keyCode != AndroidKeyEvent.KEYCODE_BACK) return@onKeyEvent false
-                                if (it.type == KeyEventType.KeyUp) stopListening()
+                                when (it.nativeKeyEvent.keyCode) {
+                                    AndroidKeyEvent.KEYCODE_BACK -> if (it.type == KeyEventType.KeyUp) stopListening()
+                                    // The Fire TV keyboard eats the Back that hides it, leaving focus on this unseen
+                                    // field: the remote's next arrow or OK hands it back to the keys.
+                                    AndroidKeyEvent.KEYCODE_DPAD_UP, AndroidKeyEvent.KEYCODE_DPAD_DOWN, AndroidKeyEvent.KEYCODE_DPAD_LEFT,
+                                    AndroidKeyEvent.KEYCODE_DPAD_RIGHT, AndroidKeyEvent.KEYCODE_DPAD_CENTER ->
+                                        if (it.type == KeyEventType.KeyDown) stopListening()
+                                    else -> return@onKeyEvent false
+                                }
                                 true
                             },
                     )

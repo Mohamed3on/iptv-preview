@@ -1,6 +1,20 @@
 package com.mohamed3on.iptv.ui
 
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.interaction.collectIsFocusedAsState
+import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.foundation.layout.BoxScope
+import androidx.compose.ui.draw.drawWithCache
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.sp
+import coil3.SingletonImageLoader
+import coil3.request.SuccessResult
+import com.mohamed3on.iptv.data.tmdbAt
 import androidx.compose.animation.SizeTransform
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateFloatAsState
@@ -112,6 +126,7 @@ import com.mohamed3on.iptv.ui.theme.Radius
 import com.mohamed3on.iptv.ui.theme.Space
 import com.mohamed3on.iptv.ui.theme.Type
 import com.mohamed3on.iptv.ui.theme.edgeFade
+import com.mohamed3on.iptv.ui.theme.material
 import com.mohamed3on.iptv.ui.theme.slideFade
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -128,7 +143,7 @@ private const val POSTER_FADE_MS = 150
 private val CARD_SHAPE = RoundedCornerShape(Radius.row)
 private val RING = 3.dp
 private val EDGE = 48.dp
-private val HERO_HEIGHT = 156.dp
+private val HERO_HEIGHT = 128.dp
 /** A film's plot in the hero: two lines at a readable measure. */
 private val PLOT_WIDTH = 720.dp
 /** Type.headline's line: a row's title above its cards. */
@@ -138,12 +153,29 @@ private val CARD_TOP = ROW_TITLE + Space.s + Space.m
 private val KEYBOARD_WIDTH = 620.dp
 /** Rows slide under the hero through a short fade, never a hard edge; the focused row sits just below it. */
 private val FADE = Space.l
-/** The flat tint over the still-playing video: live shows through faintly, text reads as on ink. */
-private val MoviesScrim = Palette.ink.copy(alpha = 0.94f)
 /** Focus rests this long before the hero changes, so holding a key never churns it. */
 private const val HERO_REST_MS = 90L
 private const val FOCUS_FRAMES = 30
-private const val CONTINUE = "continue"
+/** Title pages and Up next set the name larger than anywhere else: the title is the screen's subject. */
+private val BIG_TITLE = Type.display.copy(fontSize = 36.sp, lineHeight = 42.sp)
+private val UPNEXT_WIDTH = 520.dp
+private val PAGE_WIDTH = 560.dp
+private val SHOW_INFO_WIDTH = 380.dp
+private val PROGRESS_WIDTH = 200.dp
+/** Up next's cards: 16:9, so a backdrop fits whole. */
+private val WIDE = DpSize(184.dp, 104.dp)
+private val STILL = DpSize(128.dp, 72.dp)
+/** Room kept at the hero's right for the Search button. */
+private val SEARCH_ROOM = 120.dp
+/** Backdrops decode at 720p: darkened behind text, more pixels show nothing and cost the stick's memory. */
+private val BACKDROP_PX = 1280 to 720
+private const val BACKDROP_FADE_MS = 400
+/** How tall the backdrop's fade into the ground is, above where the rows start. */
+private val SOLID_BAND = 72.dp
+/** A dark band along the top, so Search reads over a white sky. */
+private val TOP_SCRIM = 120.dp
+/** How far the backdrop sits back behind the rows page's hero. */
+private const val HERO_DIM = 0.35f
 
 /** Which library a screen browses; both share it, a show opening its episodes where a movie plays. */
 enum class LibraryKind(val title: String, val noun: String) {
@@ -163,11 +195,12 @@ private data class ShowPlay(val show: Movie, val episodes: List<Episode>, val in
 private data class Playing(val movie: Movie, val from: Long, val url: String, val show: ShowPlay? = null)
 
 /**
- * Movies and Shows (v2): a library over the still-playing live channel, which stops only once
- * something plays (the account allows one stream), and resumes when the screen is left with Back.
- * A show opens its episodes first; the next episode plays when one ends. [shown] is its entrance
- * (0 → 1); [open] is false while it leaves. [onPlaying] says whether a film or episode is on
- * screen, so the live picture steps aside for it.
+ * Movies and Shows: a library over the still-playing live channel, which stops only once something
+ * plays (the account allows one stream) and resumes when the screen is left with Back. It opens on
+ * Up next (what you were watching, Resume focused) when there is any, else on the library's rows.
+ * Any title opens its title page (a film's, or a show's with its episodes); the next episode plays
+ * when one ends. [shown] is its entrance (0 → 1); [open] is false while it leaves. [onPlaying] says
+ * whether a film or episode is on screen, so the live picture steps aside for it.
  */
 @Composable
 fun MoviesLayer(
@@ -188,7 +221,9 @@ fun MoviesLayer(
     val library by sync.items.collectAsState()
     val resume by store.entries.collectAsState()
     val live by rememberUpdatedState(session)
+    val scope = rememberCoroutineScope()
     var playing by remember { mutableStateOf<Playing?>(null) }
+    // The title page on screen (a film's or a show's), over the browsing screen.
     var detail by remember { mutableStateOf<Movie?>(null) }
     var stoppedLive by remember { mutableStateOf(false) }
     var failed by remember { mutableStateOf<SyncError?>(null) }
@@ -224,6 +259,23 @@ fun MoviesLayer(
         return Playing(movie, from, feed.route.episodeUrl(graph.route.effective.value, e.id, e.ext), ShowPlay(show, episodes, index))
     }
 
+    /** A film from its saved place, or from the start. */
+    fun playFilm(movie: Movie, fromStart: Boolean) =
+        play(Playing(movie, if (fromStart) 0 else store.startAt(movie), feed.route.movieUrl(graph.route.effective.value, movie.id, movie.ext)))
+
+    /** A show's episode [index], from its saved place or the start. */
+    fun playEpisode(show: Movie, episodes: List<Episode>, index: Int, fromStart: Boolean) =
+        play(episode(show, episodes, index, if (fromStart) 0 else store.startAt(show, episodes[index].id)))
+
+    /** Up next's buttons: a film at its place; a show's episode up next (its episodes are kept a while, so this is quick). */
+    fun resumeTitle(movie: Movie, fromStart: Boolean) {
+        if (kind == LibraryKind.Movies) return playFilm(movie, fromStart)
+        scope.launch {
+            val eps = graph.sync.episodes(movie.id).getOrNull()?.episodes?.takeIf { it.isNotEmpty() }
+            if (eps == null) detail = movie else playEpisode(movie, eps, upNextIndex(eps, store.find(movie), watched), fromStart)
+        }
+    }
+
     /** The episode after [s] plays, if there is one. */
     fun nextEpisode(s: ShowPlay?): Boolean {
         val next = s?.takeIf { it.index < it.episodes.lastIndex } ?: return false
@@ -250,21 +302,28 @@ fun MoviesLayer(
                 active = open && playing == null && detail == null,
                 hidden = playing != null || detail != null,
                 shown = shown,
-                onPlay = { movie ->
-                    if (kind == LibraryKind.Shows) detail = movie
-                    else play(Playing(movie, store.startAt(movie), feed.route.movieUrl(graph.route.effective.value, movie.id, movie.ext)))
-                },
+                onOpen = { detail = it },
+                onResume = { resumeTitle(it, fromStart = false) },
+                onStartOver = { resumeTitle(it, fromStart = true) },
                 onBack = ::leave,
             )
-            detail?.let { show ->
-                key(show) {
-                    ShowDetail(
-                        show = show,
-                        resume = resume.firstOrNull { it.movie.id == show.id },
+            detail?.let { title ->
+                key(title) {
+                    val saved = resume.firstOrNull { it.movie.id == title.id }
+                    if (kind == LibraryKind.Movies) FilmPage(
+                        film = title,
+                        resume = saved,
+                        active = open && playing == null,
+                        hidden = playing != null,
+                        onPlay = { fromStart -> playFilm(title, fromStart) },
+                        onBack = { detail = null },
+                    ) else ShowPage(
+                        show = title,
+                        resume = saved,
                         watched = watched,
                         active = open && playing == null,
                         hidden = playing != null,
-                        onPlay = { episodes, i -> play(episode(show, episodes, i, store.startAt(show, episodes[i].id))) },
+                        onPlay = { episodes, i, fromStart -> playEpisode(title, episodes, i, fromStart) },
                         onBack = { detail = null },
                     )
                 }
@@ -290,25 +349,35 @@ fun MoviesLayer(
     }
 }
 
-/** A row of the screen: Continue watching, then each group. [progress] is every saved place, by movie id. */
+/** A show's episode up next: the one in progress, else the first not yet watched, else the first. */
+private fun upNextIndex(episodes: List<Episode>, resume: Resume?, watched: Set<Int>): Int =
+    episodes.indexOfFirst { it.id == resume?.episode }.takeIf { it >= 0 }
+        ?: episodes.indexOfFirst { it.id !in watched }.takeIf { it >= 0 }
+        ?: 0
+
+/** A row of the library: one group's titles. [progress] is every saved place, by movie id. */
 private class MovieRow(val key: String, val title: String, val badge: String?, val movies: List<Movie>, val progress: Map<Int, Float>)
 
+/** The library's groups as rows; what is part-way through lives in Up next, not here. */
 private fun rowsOf(library: Movies?, resume: List<Resume>): List<MovieRow> {
     library ?: return emptyList()
     val progress = resume.filter { it.dur > 0 }.associate { it.movie.id to it.pos.toFloat() / it.dur }
-    return buildList {
-        if (resume.isNotEmpty()) add(MovieRow(CONTINUE, "Continue watching", null, resume.map { library.find(it.movie.id) ?: it.movie }, progress))
-        for ((group, movies) in library.rows) {
-            val label = groupLabel(group)
-            add(MovieRow("g|$group", label.name, label.badge, movies, progress))
-        }
+    return library.rows.map { (group, movies) ->
+        val label = groupLabel(group)
+        MovieRow("g|$group", label.name, label.badge, movies, progress)
     }
 }
 
+/** Which part of the browsing screen is up. */
+private enum class BrowsePage { UpNext, Rows, Search }
+
+/** Where focus sits on the browsing screen, so a page change knows when its own target has it. */
+private enum class FocusAt { UpNext, Rows, Search, SearchButton, Other }
+
 /**
- * The browsing screen: a hero for the focused title over rows of posters, or search. While a movie
- * plays it stays composed but undrawn ([hidden]), so Back lands on the same card. [active] is when it
- * should hold focus.
+ * The browsing screen over the focused title's backdrop: Up next (what you were watching, Resume
+ * focused), the library's rows (Down from Up next), or search. While a title page or a film is up it
+ * stays composed but undrawn ([hidden]), so Back lands where you were. [active] is when it should hold focus.
  */
 @Composable
 private fun MoviesBrowse(
@@ -321,133 +390,457 @@ private fun MoviesBrowse(
     active: Boolean,
     hidden: Boolean,
     shown: () -> Float,
-    onPlay: (Movie) -> Unit,
+    onOpen: (Movie) -> Unit,
+    onResume: (Movie) -> Unit,
+    onStartOver: (Movie) -> Unit,
     onBack: () -> Unit,
 ) {
     val reduced = LocalReducedMotion.current
     val rows = remember(library, resume) { rowsOf(library, resume) }
+    // Each saved place with its title as the library has it now, newest first.
+    val upNext = remember(library, resume) { if (library == null) emptyList() else resume.map { (library.find(it.movie.id) ?: it.movie) to it } }
+    var page by remember { mutableStateOf(BrowsePage.UpNext) }
+    var beforeSearch by remember { mutableStateOf(BrowsePage.UpNext) }
+    // Up next only while there is something to resume.
+    val shownPage = if (page == BrowsePage.UpNext && upNext.isEmpty()) BrowsePage.Rows else page
+    // The title the hero and the backdrop describe.
     val focused = remember { mutableStateOf<Movie?>(null) }
-    var searching by remember { mutableStateOf(false) }
     var query by remember { mutableStateOf("") }
     var hasFocus by remember { mutableStateOf(false) }
+    var at by remember { mutableStateOf(FocusAt.Other) }
     val content = remember { FocusRequester() }
+    val resumeButton = remember { FocusRequester() }
     val results = remember { FocusRequester() }
     val keys = remember { FocusRequester() }
     val searchButton = remember { FocusRequester() }
-    // The rows are built a frame after the rest, so neither frame of the opening is long enough to drop.
+    // The page is built a frame after the rest, so neither frame of the opening is long enough to drop.
     var built by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) {
         withFrameNanos {}
         built = true
     }
     val kind = when {
-        searching && library != null -> 3
-        rows.isNotEmpty() -> if (built) 2 else -1
+        library != null -> if (built) 2 else -1
         failed != null -> 1
         else -> 0
     }
 
-    // Leaving search goes back to its button; otherwise focus goes in once there is something to
-    // hold it, and back to the same card after a movie.
+    // Focus goes to the page's own target whenever the page changes or the screen comes back (after a
+    // film or a title page); leaving search goes back to its button.
     val leftSearch = remember { booleanArrayOf(false) }
-    LaunchedEffect(active, kind) {
+    // The search result a title page was opened from: back from it, focus returns to that card, not the keyboard.
+    var openedResult by remember { mutableStateOf<Int?>(null) }
+    val resultBack = remember { FocusRequester() }
+    LaunchedEffect(active, kind, shownPage) {
         if (!active) return@LaunchedEffect
-        val target = when {
-            kind == 3 -> results
-            leftSearch[0] -> searchButton
-            else -> content
+        val (target, part) = when {
+            kind != 2 -> content to FocusAt.Other
+            leftSearch[0] -> searchButton to FocusAt.SearchButton
+            shownPage == BrowsePage.Search -> results to FocusAt.Search
+            shownPage == BrowsePage.UpNext -> resumeButton to FocusAt.UpNext
+            else -> content to FocusAt.Rows
         }
         leftSearch[0] = false
-        repeat(FOCUS_FRAMES) {
-            withFrameNanos {}
-            if (hasFocus) return@LaunchedEffect
-            runCatching { target.requestFocus() }
+        val card = openedResult?.takeIf { shownPage == BrowsePage.Search }
+        try {
+            repeat(FOCUS_FRAMES) { i ->
+                withFrameNanos {}
+                val landed = if (card != null && i < FOCUS_FRAMES / 2) focused.value?.id == card else at == part || part == FocusAt.Other
+                if (hasFocus && landed) return@LaunchedEffect
+                // The opened card first; gone (a new search), the page's own target.
+                runCatching { (if (card != null && i < FOCUS_FRAMES / 2) resultBack else target).requestFocus() }
+            }
+        } finally {
+            if (card != null) openedResult = null
         }
+    }
+    fun openSearch() {
+        beforeSearch = shownPage
+        focused.value = null
+        page = BrowsePage.Search
     }
     fun closeSearch() {
         leftSearch[0] = true
-        searching = false
         focused.value = null
+        page = beforeSearch
     }
 
+    val rested = rememberRested(focused)
+    val heroInfo = rememberInfo(rested)
     Box(
         Modifier
             .fillMaxSize()
-            // Undrawn under a playing movie: an alpha-0 layer costs the GPU nothing.
+            // Undrawn under a title page or a film: an alpha-0 layer costs the GPU nothing.
             .graphicsLayer { alpha = if (hidden) 0f else 1f }
             .onFocusChanged { hasFocus = it.hasFocus }
             .onKeyEvent {
                 if (remoteKey(it.nativeKeyEvent.keyCode) != RemoteKey.Back) return@onKeyEvent false
-                if (it.type == KeyEventType.KeyDown) if (searching) closeSearch() else onBack()
+                if (it.type == KeyEventType.KeyDown) when {
+                    shownPage == BrowsePage.Search -> closeSearch()
+                    shownPage == BrowsePage.Rows && upNext.isNotEmpty() -> page = BrowsePage.UpNext
+                    else -> onBack()
+                }
                 true // the key-up too, so Back never reaches the player or leaves the app
             }
             .focusGroup(),
     ) {
-        // The tint fades in place while the content rises into it.
-        Box(Modifier.fillMaxSize().drawBehind { drawRect(MoviesScrim, alpha = shown().coerceIn(0f, 1f)) })
-        Column(Modifier.fillMaxSize().slideFade(shown, Edge.Bottom, reduced).padding(top = 27.dp)) {
-            Row(Modifier.fillMaxWidth().height(HERO_HEIGHT).padding(horizontal = EDGE), verticalAlignment = Alignment.Top) {
-                Hero(focused, resume, placeholder = if (searching) "Search ${LocalLibrary.current.noun}" else LocalLibrary.current.title, modifier = Modifier.weight(1f))
-                if (!searching && library != null) ActionButton("Search", onClick = {
-                    focused.value = null
-                    searching = true
-                }, Modifier.focusRequester(searchButton))
+        Backdrop(heroInfo?.backdrop, solidFrom = if (shownPage == BrowsePage.UpNext) null else Space.safeY + HERO_HEIGHT, modifier = Modifier.graphicsLayer { alpha = shown().coerceIn(0f, 1f) })
+        Box(Modifier.fillMaxSize().slideFade(shown, Edge.Bottom, reduced)) {
+            when {
+                kind == 1 -> Box(Modifier.padding(top = Space.xxxl)) { Unavailable(content, onRetry) }
+                kind == 0 -> Box(Modifier.padding(top = Space.xxxl)) { LoadingMovies(content) }
+                kind != 2 -> {}
+                shownPage == BrowsePage.UpNext -> UpNextPage(
+                    entries = upNext,
+                    resumeButton = resumeButton,
+                    onFocused = { focused.value = it },
+                    onResume = onResume,
+                    onStartOver = onStartOver,
+                    onOpen = onOpen,
+                    onRemove = onRemove,
+                    onDown = { page = BrowsePage.Rows },
+                    modifier = Modifier.onFocusChanged { if (it.hasFocus) at = FocusAt.UpNext },
+                )
+                else -> Column(Modifier.fillMaxSize().padding(top = Space.safeY)) {
+                    val search = shownPage == BrowsePage.Search
+                    Hero(
+                        if (search && focused.value == null) null else rested, heroInfo, resume,
+                        placeholder = if (search) "Search ${LocalLibrary.current.noun}" else LocalLibrary.current.title,
+                        modifier = Modifier.fillMaxWidth().height(HERO_HEIGHT).padding(start = EDGE, end = EDGE + SEARCH_ROOM),
+                    )
+                    if (search) Box(Modifier.onFocusChanged { if (it.hasFocus) at = FocusAt.Search }) {
+                        SearchGrid(
+                            library!!, query, { query = it }, results, keys, onFocused = { focused.value = it },
+                            back = openedResult?.let { it to resultBack },
+                            stray = { !hasFocus },
+                            // Coming back to a result is no arrival at Search: the Fire TV keyboard stays shut.
+                            arrive = { openedResult == null },
+                            onPlay = {
+                                openedResult = it.id
+                                focused.value = null // so "back on the card" is only true once it is
+                                onOpen(it)
+                            },
+                        )
+                    } else Box(Modifier.onFocusChanged { if (it.hasFocus) at = FocusAt.Rows }) {
+                        Rows(
+                            rows, watched, content, active,
+                            onFocused = { focused.value = it },
+                            onOpen = onOpen,
+                            // Up from the first row: back to Up next, else to Search.
+                            onTop = { if (upNext.isNotEmpty()) page = BrowsePage.UpNext else runCatching { searchButton.requestFocus() } },
+                        )
+                    }
+                }
             }
-            when (kind) {
-                3 -> SearchGrid(library!!, query, { query = it }, results, keys, onFocused = { focused.value = it }, onPlay = onPlay)
-                2 -> Rows(rows, watched, content, active, onFocused = { focused.value = it }, onPlay = onPlay, onRemove = onRemove)
-                1 -> Unavailable(content, onRetry)
-                0 -> LoadingMovies(content)
-                else -> {}
+            if (kind == 2 && shownPage != BrowsePage.Search) PageButton(
+                "Search", ::openSearch,
+                Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(top = Space.safeY, end = EDGE)
+                    .focusRequester(searchButton)
+                    .onFocusChanged { if (it.isFocused) at = FocusAt.SearchButton },
+            )
+        }
+    }
+}
+
+/** [focused] once it has rested for [HERO_REST_MS], so holding a key never churns what depends on it. */
+@Composable
+private fun rememberRested(focused: State<Movie?>): Movie? {
+    var rested by remember { mutableStateOf(focused.value) }
+    LaunchedEffect(Unit) {
+        snapshotFlow { focused.value }.collectLatest {
+            delay(HERO_REST_MS)
+            rested = it
+        }
+    }
+    return rested
+}
+
+/**
+ * A title's plot, backdrop, runtime, genres and cast: a film's from /api/app/movie, a show's from its
+ * episodes call. Both are kept for the app session, so a title seen before answers on its first frame.
+ */
+@Composable
+private fun rememberInfo(movie: Movie?): MovieInfo? {
+    val sync = LocalContext.current.graph.sync
+    val films = LocalLibrary.current == LibraryKind.Movies
+    val peek = movie?.let { if (films) sync.peekMovieInfo(it.id) else sync.peekShow(it.id)?.info }
+    return produceState(peek, movie?.id, films) {
+        val m = movie ?: return@produceState
+        value = (if (films) sync.movieInfo(m.id).getOrNull() else sync.episodes(m.id).getOrNull()?.info) ?: value
+    }.value
+}
+
+/**
+ * The focused title's backdrop over the whole screen, darkened from the left and the bottom where text
+ * sits; with [solidFrom], it fades to the plain ground there, so rows below sit on ink (and their edge
+ * fades, drawn in ink, match it). A new backdrop is loaded before it cross-fades in,
+ * so the screen never flashes to ink between titles; a title with none fades to the plain ground.
+ * Drawn in its own layer: rows moving over it never repaint the picture.
+ */
+@Composable
+private fun Backdrop(url: String?, solidFrom: Dp?, modifier: Modifier = Modifier) {
+    val context = LocalPlatformContext.current
+    var shownUrl by remember { mutableStateOf<String?>(null) }
+    val lastSolid = remember { arrayOf(0.dp) }
+    fun request(u: String) = ImageRequest.Builder(context).data(tmdbAt(u, "w1280")).size(BACKDROP_PX.first, BACKDROP_PX.second).build()
+    LaunchedEffect(url) {
+        if (url.isNullOrEmpty()) {
+            shownUrl = null
+            return@LaunchedEffect
+        }
+        if (SingletonImageLoader.get(context).execute(request(url)) is SuccessResult) shownUrl = url
+    }
+    // Up next to the rows: the ground rises from the bottom to [solidFrom].
+    val cover = animateFloatAsState(if (solidFrom != null) 1f else 0f, Motion.panel(), label = "cover")
+    val solid = solidFrom ?: lastSolid[0]
+    if (solidFrom != null) lastSolid[0] = solidFrom
+    Box(modifier.fillMaxSize().graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }.drawBehind { drawRect(Palette.ink) }) {
+        Crossfade(shownUrl, animationSpec = tween(BACKDROP_FADE_MS), label = "backdrop") { u ->
+            if (u != null) AsyncImage(model = request(u), contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+        }
+        Box(
+            Modifier.fillMaxSize().drawWithCache {
+                val ink = Palette.ink
+                val left = Brush.horizontalGradient(0f to ink.copy(alpha = 0.94f), 0.42f to ink.copy(alpha = 0.62f), 0.78f to ink.copy(alpha = 0f))
+                val bottom = Brush.verticalGradient(0.4f to ink.copy(alpha = 0f), 1f to ink.copy(alpha = 0.96f))
+                val band = SOLID_BAND.toPx()
+                val topBand = TOP_SCRIM.toPx()
+                val top = Brush.verticalGradient(0f to ink.copy(alpha = 0.7f), 1f to ink.copy(alpha = 0f), startY = 0f, endY = topBand)
+                onDrawBehind {
+                    drawRect(left)
+                    drawRect(bottom)
+                    drawRect(top, size = Size(size.width, topBand))
+                    val c = cover.value.coerceIn(0f, 1f)
+                    // The rows page sets a wider hero over the picture: it sits back further.
+                    if (c > 0f) drawRect(ink, alpha = HERO_DIM * c)
+                    if (c > 0f) {
+                        val y = size.height - (size.height - solid.toPx()) * c
+                        drawRect(Brush.verticalGradient(listOf(ink.copy(alpha = 0f), ink), startY = y - band, endY = y), topLeft = Offset(0f, y - band), size = Size(size.width, band))
+                        drawRect(ink, topLeft = Offset(0f, y), size = Size(size.width, size.height - y))
+                    }
+                }
+            },
+        )
+    }
+}
+
+/**
+ * Up next: the title you were watching (or the card focused in the strip) told large over its
+ * backdrop, Resume focused, then the rest of what is part-way through as wide cards. OK on a card
+ * opens its title page; Menu takes it out; Down goes on to the library's rows.
+ */
+@Composable
+private fun UpNextPage(
+    entries: List<Pair<Movie, Resume>>,
+    resumeButton: FocusRequester,
+    onFocused: (Movie) -> Unit,
+    onResume: (Movie) -> Unit,
+    onStartOver: (Movie) -> Unit,
+    onOpen: (Movie) -> Unit,
+    onRemove: (Movie) -> Unit,
+    onDown: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val shows = LocalLibrary.current == LibraryKind.Shows
+    // The hero's title: the card focused last in the strip, else the newest.
+    var currentId by remember { mutableStateOf<Int?>(null) }
+    val (movie, saved) = entries.firstOrNull { it.first.id == currentId } ?: entries.first()
+    LaunchedEffect(movie.id) { onFocused(movie) }
+    val info = rememberInfo(movie)
+    val focusManager = LocalFocusManager.current
+    Column(modifier.fillMaxSize().padding(bottom = Space.safeY), verticalArrangement = Arrangement.Bottom) {
+        // A fixed set of lines, so the buttons never move as the hero changes title.
+        AnimatedContent(
+            targetState = Triple(movie, saved, info),
+            contentKey = { it.first.id to (it.third != null) },
+            transitionSpec = { fadeIn(Motion.spring(0.3f)) togetherWith fadeOut(Motion.spring(0.2f)) },
+            label = "upnext",
+        ) { (m, r, i) ->
+            Column(Modifier.padding(start = EDGE).widthIn(max = UPNEXT_WIDTH), verticalArrangement = Arrangement.spacedBy(Space.xs)) {
+                Text(m.title.title, style = BIG_TITLE, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                MetaLine(m, i)
+                Row(Modifier.padding(top = Space.xs), horizontalArrangement = Arrangement.spacedBy(Space.m), verticalAlignment = Alignment.CenterVertically) {
+                    Text(listOfNotNull(r.label, r.takeIf { it.dur > 0 && it.pos > 0 }?.let { leftLabel(it.dur - it.pos) }).joinToString(" · "), style = Type.headline, maxLines = 1)
+                    if (r.dur > 0) ProgressLine({ r.pos.toFloat() / r.dur }, Modifier.width(PROGRESS_WIDTH))
+                }
+                Text(i?.plot.orEmpty(), style = Type.body, minLines = 3, maxLines = 3, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = Space.xs))
+            }
+        }
+        Row(Modifier.padding(start = EDGE, top = Space.l), horizontalArrangement = Arrangement.spacedBy(Space.m)) {
+            PageButton(if (shows) "Resume ${saved.label.orEmpty()}".trim() else "Resume", { onResume(movie) }, Modifier.focusRequester(resumeButton))
+            if (shows) PageButton("Episodes", { onOpen(movie) }) else {
+                PageButton("Start over", { onStartOver(movie) })
+                PageButton("Details", { onOpen(movie) })
+            }
+        }
+        Row(Modifier.padding(start = EDGE, top = Space.xl), horizontalArrangement = Arrangement.spacedBy(Space.m), verticalAlignment = Alignment.CenterVertically) {
+            Text("Continue watching", style = Type.headline, maxLines = 1)
+            Text("Menu removes a title · Down for all ${LocalLibrary.current.noun}", style = Type.caption, maxLines = 1)
+        }
+        LazyRow(
+            modifier = Modifier
+                .fillMaxWidth()
+                .onKeyEvent {
+                    val code = it.nativeKeyEvent.keyCode
+                    val down = it.type == KeyEventType.KeyDown
+                    when (code) {
+                        AndroidKeyEvent.KEYCODE_DPAD_DOWN -> {
+                            if (down) onDown()
+                            true
+                        }
+                        // The focused title leaves Up next; focus steps to a neighbour first (or up to Resume).
+                        AndroidKeyEvent.KEYCODE_MENU -> {
+                            if (down && it.nativeKeyEvent.repeatCount == 0) {
+                                val i = entries.indexOfFirst { e -> e.first.id == movie.id }
+                                val side = if (i < entries.lastIndex) FocusDirection.Right else FocusDirection.Left
+                                if (entries.size == 1 || !focusManager.moveFocus(side)) runCatching { resumeButton.requestFocus() }
+                                onRemove(movie)
+                            }
+                            true
+                        }
+                        else -> false
+                    }
+                }
+                .focusGroup(),
+            contentPadding = PaddingValues(start = EDGE, top = Space.m, bottom = Space.s, end = EDGE),
+            horizontalArrangement = Arrangement.spacedBy(Space.l),
+        ) {
+            items(entries, key = { it.first.id }) { (m, r) ->
+                WideCard(m, r, onFocused = { currentId = m.id }, onClick = { onOpen(m) })
             }
         }
     }
 }
 
+/** Year, running time, genres and rating; the group when the provider gives no genres. */
+@Composable
+private fun MetaLine(movie: Movie, info: MovieInfo?, extra: String? = null) {
+    val genre = info?.genre?.split(',', '/')?.map(String::trim)?.filter(String::isNotEmpty)?.take(2)?.joinToString(", ")?.ifEmpty { null }
+    val runtime = info?.secs?.takeIf { it > 0 }?.let { runtimeLabel(it * 1000L) }
+    val rating = info?.rating?.ifEmpty { null }?.let { "$it/10" }
+    Row(horizontalArrangement = Arrangement.spacedBy(Space.m), verticalAlignment = Alignment.CenterVertically) {
+        movie.title.badge?.let { Badges(remember(it) { listOf(it) }) }
+        Text(listOfNotNull(movie.title.year, extra, runtime, genre ?: groupLabel(movie.group).name, rating).joinToString(" · "), style = Type.body, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    }
+}
+
 /**
- * The focused title, its badge, year and group, and how much is left of a started one. It cross-fades
- * once focus rests, in a fixed box, so the rows below never move.
+ * A title page's or Up next's button: a quiet translucent pill that turns solid light when focused, so
+ * the one OK will press reads from across the room.
  */
 @Composable
-private fun Hero(focused: State<Movie?>, resume: List<Resume>, placeholder: String, modifier: Modifier) {
-    var movie by remember { mutableStateOf(focused.value) }
-    LaunchedEffect(Unit) {
-        snapshotFlow { focused.value }.collectLatest {
-            delay(HERO_REST_MS)
-            movie = it
+private fun PageButton(label: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    val reduced = LocalReducedMotion.current
+    val interaction = remember { MutableInteractionSource() }
+    val focused by interaction.collectIsFocusedAsState()
+    val pressed by interaction.collectIsPressedAsState()
+    val lift = animateFloatAsState(if (focused) 1f else 0f, Motion.focus(), label = "lift")
+    val press by animateFloatAsState(if (pressed) 0.96f else 1f, Motion.focus(), label = "press")
+    Text(
+        label,
+        style = Type.headline.copy(color = if (focused) Palette.ink else Palette.textPrimary),
+        maxLines = 1,
+        modifier = modifier
+            .graphicsLayer {
+                val s = (if (reduced) 1f else 1f + 0.06f * lift.value) * press
+                scaleX = s
+                scaleY = s
+            }
+            .drawBehind {
+                val p = lift.value.coerceIn(0f, 1f)
+                val r = CornerRadius(Radius.row.toPx())
+                drawRoundRect(lerp(Palette.material, Palette.textPrimary, p), cornerRadius = r)
+                if (p < 1f) drawRoundRect(Palette.edge, cornerRadius = r, style = Stroke(1.dp.toPx()), alpha = 1f - p)
+            }
+            .clickable(interaction, indication = null, onClick = onClick)
+            .padding(horizontal = Space.xl, vertical = Space.m),
+    )
+}
+
+/**
+ * A title part-way through as a 16:9 card: its backdrop (else its poster), name and where it is
+ * ("S1 E3"), how far along. Focus lifts it with the accent ring, like a poster.
+ */
+@Composable
+private fun WideCard(movie: Movie, saved: Resume, onFocused: () -> Unit, onClick: () -> Unit) {
+    val reduced = LocalReducedMotion.current
+    val context = LocalPlatformContext.current
+    val density = LocalDensity.current
+    val info = rememberInfo(movie)
+    val interaction = remember { MutableInteractionSource() }
+    var focused by remember { mutableStateOf(false) }
+    val lift = animateFloatAsState(if (focused) 1f else 0f, Motion.focus(), label = "lift")
+    val image = info?.backdrop?.ifEmpty { null }?.let { tmdbAt(it, "w780") } ?: movie.poster.ifEmpty { null }?.let(::posterUrl)
+    val request = remember(image) {
+        image?.let { with(density) { ImageRequest.Builder(context).data(it).size(WIDE.width.roundToPx(), WIDE.height.roundToPx()).crossfade(POSTER_FADE_MS).build() } }
+    }
+    Box(
+        Modifier
+            .size(WIDE)
+            .onFocusChanged {
+                focused = it.isFocused
+                if (it.isFocused) onFocused()
+            }
+            .clickable(interaction, indication = null, onClick = onClick)
+            .graphicsLayer {
+                val s = if (reduced) 1f else 1f + (CARD_SCALE - 1f) * lift.value
+                scaleX = s
+                scaleY = s
+                shape = CARD_SHAPE
+                clip = true
+            }
+            .drawWithContent {
+                drawRect(Palette.raised)
+                drawContent()
+                val p = lift.value.coerceIn(0f, 1f)
+                if (p > 0f) {
+                    val ring = RING.toPx()
+                    drawRoundRect(
+                        Palette.accent, topLeft = Offset(ring / 2, ring / 2), size = Size(size.width - ring, size.height - ring),
+                        cornerRadius = CornerRadius(Radius.row.toPx() - ring / 2), style = Stroke(ring), alpha = p,
+                    )
+                }
+            },
+    ) {
+        if (request != null) AsyncImage(model = request, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+        // The name and progress read over any picture.
+        Box(Modifier.fillMaxSize().drawBehind { drawRect(Brush.verticalGradient(0.4f to Color.Transparent, 1f to Color(0xE6000000))) })
+        Column(Modifier.align(Alignment.BottomStart).padding(horizontal = Space.s, vertical = Space.s), verticalArrangement = Arrangement.spacedBy(Space.xs)) {
+            Text(listOfNotNull(movie.title.title, saved.label).joinToString(" · "), style = Type.caption.copy(color = Palette.textPrimary), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (saved.dur > 0) ProgressLine({ saved.pos.toFloat() / saved.dur })
         }
     }
+}
+
+/**
+ * The focused title on the rows and search pages: name, meta, how much is left of a started one,
+ * and two lines of plot. It cross-fades once focus rests, in a fixed box, so the rows below never move.
+ */
+@Composable
+private fun Hero(movie: Movie?, info: MovieInfo?, resume: List<Resume>, placeholder: String, modifier: Modifier) {
     AnimatedContent(
-        targetState = movie,
-        contentKey = { it?.id },
+        targetState = movie to info,
+        contentKey = { it.first?.id to (it.second != null) },
         transitionSpec = { fadeIn(Motion.spring(0.3f)) togetherWith fadeOut(Motion.spring(0.2f)) using SizeTransform(clip = false) },
         modifier = modifier,
         label = "hero",
-    ) { m ->
+    ) { (m, i) ->
         Column(verticalArrangement = Arrangement.spacedBy(Space.xs)) {
             if (m == null) {
                 Text(placeholder, style = Type.display, maxLines = 1)
                 return@Column
             }
-            val title = m.title
-            Text(title.title, style = Type.display, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(m.title.title, style = Type.display, maxLines = 1, overflow = TextOverflow.Ellipsis)
             // A show also says which episode it is on: "S1 E3 · 40 min left".
             val left = remember(m, resume) {
                 resume.firstOrNull { it.movie.id == m.id }?.let { r ->
                     listOfNotNull(r.label, r.takeIf { it.dur > 0 && it.pos > 0 }?.let { leftLabel(it.dur - it.pos) }).joinToString(" · ").ifEmpty { null }
                 }
             }
-            // A film's plot, running time and genres, fetched once focus rests on it (shows have theirs on their page).
-            val graph = LocalContext.current.graph
-            val films = LocalLibrary.current == LibraryKind.Movies
-            val info by produceState<MovieInfo?>(null, m.id) { if (films) value = graph.sync.movieInfo(m.id).getOrNull() }
-            val genre = info?.genre?.split(',', '/')?.map(String::trim)?.filter(String::isNotEmpty)?.take(2)?.joinToString(", ")?.ifEmpty { null }
-            val runtime = info?.secs?.takeIf { it > 0 }?.let { runtimeLabel(it * 1000L) }
-            Row(horizontalArrangement = Arrangement.spacedBy(Space.m), verticalAlignment = Alignment.CenterVertically) {
-                title.badge?.let { Badges(remember(it) { listOf(it) }) }
-                Text(listOfNotNull(title.year, runtime, genre ?: groupLabel(m.group).name, left).joinToString(" · "), style = Type.body, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            }
-            info?.plot?.ifBlank { null }?.let { Text(it, style = Type.body, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = PLOT_WIDTH)) }
+            MetaLine(m, i, extra = left)
+            i?.plot?.ifBlank { null }?.let { Text(it, style = Type.body, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = PLOT_WIDTH)) }
         }
     }
 }
@@ -464,15 +857,19 @@ private fun runtimeLabel(ms: Long): String {
 /**
  * Rows of posters. The focused row rises to the top of the list; within a row the focused card keeps a
  * card's width from either edge. Each row comes back to the card last focused in it, and the screen to
- * the card focused last ([focus] restores it).
+ * the card focused last ([focus] restores it). Up and Down move a row at a time on purpose, scrolling the
+ * next row in first, so a row above the screen is never skipped for a button; Up from the first row is [onTop].
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun Rows(rows: List<MovieRow>, watched: Set<Int>, focus: FocusRequester, active: Boolean, onFocused: (Movie) -> Unit, onPlay: (Movie) -> Unit, onRemove: (Movie) -> Unit) {
+private fun Rows(rows: List<MovieRow>, watched: Set<Int>, focus: FocusRequester, active: Boolean, onFocused: (Movie) -> Unit, onOpen: (Movie) -> Unit, onTop: () -> Unit) {
     val density = LocalDensity.current
+    val scope = rememberCoroutineScope()
     val first = remember { FocusRequester() }
     // The card each row was left on, for a row built again after scrolling far away.
     val columns = remember { HashMap<String, Int>() }
+    val rowFocus = remember { HashMap<String, FocusRequester>() }
+    var focusedRow by remember { mutableStateOf(-1) }
     val pivot = remember(density) {
         val top = with(density) { (CARD_TOP + FADE).toPx() }
         object : BringIntoViewSpec {
@@ -493,28 +890,38 @@ private fun Rows(rows: List<MovieRow>, watched: Set<Int>, focus: FocusRequester,
             }
         }
     }
-    // The card a movie was played from (row key, movie id). Back from the movie lands on it explicitly:
-    // Continue watching is added above meanwhile, which throws the focus restorers off.
+    // The card a title page was opened from (row key, movie id). Back lands on it explicitly.
     val list = rememberLazyListState()
     val back = remember { FocusRequester() }
-    var played by remember { mutableStateOf<Pair<String, Int>?>(null) }
+    var opened by remember { mutableStateOf<Pair<String, Int>?>(null) }
     val lastFocused = remember { arrayOfNulls<Pair<String, Int>>(1) }
     LaunchedEffect(active) {
-        val target = played?.takeIf { active } ?: return@LaunchedEffect
+        val target = opened?.takeIf { active } ?: return@LaunchedEffect
         val index = rows.indexOfFirst { it.key == target.first }
         if (index >= 0) {
-            list.scrollToItem(index)
+            if (list.layoutInfo.visibleItemsInfo.none { it.index == index }) list.scrollToItem(index)
             repeat(FOCUS_FRAMES) {
                 withFrameNanos {}
                 if (lastFocused[0] == target) return@repeat
                 runCatching { back.requestFocus() }
             }
         }
-        played = null
+        opened = null
+    }
+    fun goRow(i: Int) {
+        scope.launch {
+            val requester = rowFocus[rows[i].key] ?: return@launch
+            repeat(FOCUS_FRAMES) {
+                if (list.layoutInfo.visibleItemsInfo.none { it.index == i }) list.scrollToItem(i)
+                withFrameNanos {}
+                if (focusedRow == i) return@launch
+                runCatching { requester.requestFocus() }
+            }
+        }
     }
     CompositionLocalProvider(LocalBringIntoViewSpec provides pivot) {
         LazyColumn(
-            Modifier.fillMaxSize().edgeFade(MoviesScrim, top = FADE).focusRequester(focus).focusRestorer(first).focusGroup(),
+            Modifier.fillMaxSize().edgeFade(Palette.ink, top = FADE).focusRequester(focus).focusRestorer(first).focusGroup(),
             state = list,
             contentPadding = PaddingValues(top = FADE, bottom = Space.xxxl),
             verticalArrangement = Arrangement.spacedBy(Space.m),
@@ -524,19 +931,27 @@ private fun Rows(rows: List<MovieRow>, watched: Set<Int>, focus: FocusRequester,
                     PosterRow(
                         row,
                         watched = watched,
+                        rowFocus = rowFocus.getOrPut(row.key) { FocusRequester() },
                         entry = if (i == 0) first else null,
                         startAt = columns[row.key] ?: 0,
-                        back = played?.takeIf { it.first == row.key }?.let { it.second to back },
+                        back = opened?.takeIf { it.first == row.key }?.let { it.second to back },
                         onFocused = { col, movie ->
                             columns[row.key] = col
+                            focusedRow = i
                             lastFocused[0] = row.key to movie.id
                             onFocused(movie)
                         },
-                        onPlay = { movie ->
-                            played = row.key to movie.id
-                            onPlay(movie)
+                        onOpen = { movie ->
+                            opened = row.key to movie.id
+                            onOpen(movie)
                         },
-                        onRemove = if (row.key == CONTINUE) onRemove else null,
+                        onVertical = { down ->
+                            when {
+                                !down && i == 0 -> onTop()
+                                down && i == rows.lastIndex -> {}
+                                else -> goRow(if (down) i + 1 else i - 1)
+                            }
+                        },
                     )
                 }
             }
@@ -545,8 +960,10 @@ private fun Rows(rows: List<MovieRow>, watched: Set<Int>, focus: FocusRequester,
 }
 
 @Composable
-private fun PosterRow(row: MovieRow, watched: Set<Int>, entry: FocusRequester?, startAt: Int, back: Pair<Int, FocusRequester>?, onFocused: (Int, Movie) -> Unit, onPlay: (Movie) -> Unit, onRemove: ((Movie) -> Unit)? = null) {
-    val focusManager = LocalFocusManager.current
+private fun PosterRow(
+    row: MovieRow, watched: Set<Int>, rowFocus: FocusRequester, entry: FocusRequester?, startAt: Int, back: Pair<Int, FocusRequester>?,
+    onFocused: (Int, Movie) -> Unit, onOpen: (Movie) -> Unit, onVertical: (down: Boolean) -> Unit,
+) {
     val own = remember { FocusRequester() }
     val restore = entry ?: own
     val at = startAt.coerceIn(0, (row.movies.size - 1).coerceAtLeast(0))
@@ -561,7 +978,6 @@ private fun PosterRow(row: MovieRow, watched: Set<Int>, entry: FocusRequester?, 
         Row(Modifier.padding(start = EDGE), horizontalArrangement = Arrangement.spacedBy(Space.m), verticalAlignment = Alignment.CenterVertically) {
             Text(row.title, style = Type.headline, maxLines = 1)
             row.badge?.let { Badges(remember(it) { listOf(it) }) }
-            if (onRemove != null) Text("Menu removes a title", style = Type.caption, maxLines = 1)
         }
         LazyRow(
             state = state,
@@ -570,14 +986,9 @@ private fun PosterRow(row: MovieRow, watched: Set<Int>, entry: FocusRequester?, 
                 .graphicsLayer { translationX = nudge.value * Space.s.toPx() }
                 .onKeyEvent {
                     val code = it.nativeKeyEvent.keyCode
-                    // Menu in Continue watching: the focused title leaves it, focus first stepping to a neighbour (or the row below).
-                    if (code == AndroidKeyEvent.KEYCODE_MENU && onRemove != null) {
-                        if (it.type == KeyEventType.KeyDown && it.nativeKeyEvent.repeatCount == 0) {
-                            val movie = row.movies.getOrNull(focusedCol[0]) ?: return@onKeyEvent true
-                            val side = if (focusedCol[0] < row.movies.lastIndex) FocusDirection.Right else FocusDirection.Left
-                            if (row.movies.size == 1 || !focusManager.moveFocus(side)) focusManager.moveFocus(FocusDirection.Down)
-                            onRemove(movie)
-                        }
+                    // Up and Down belong to the rows (one row a step), never to focus search.
+                    if (code == AndroidKeyEvent.KEYCODE_DPAD_UP || code == AndroidKeyEvent.KEYCODE_DPAD_DOWN) {
+                        if (it.type == KeyEventType.KeyDown) onVertical(code == AndroidKeyEvent.KEYCODE_DPAD_DOWN)
                         return@onKeyEvent true
                     }
                     val left = code == AndroidKeyEvent.KEYCODE_DPAD_LEFT
@@ -588,6 +999,7 @@ private fun PosterRow(row: MovieRow, watched: Set<Int>, entry: FocusRequester?, 
                     }
                     edge
                 }
+                .focusRequester(rowFocus)
                 .focusRestorer(restore)
                 .focusGroup(),
             contentPadding = PaddingValues(horizontal = EDGE, vertical = Space.m),
@@ -602,7 +1014,7 @@ private fun PosterRow(row: MovieRow, watched: Set<Int>, entry: FocusRequester?, 
                         focusedCol[0] = col
                         onFocused(col, movie)
                     },
-                    onClick = { onPlay(movie) },
+                    onClick = { onOpen(movie) },
                 )
             }
         }
@@ -686,17 +1098,23 @@ private fun SearchGrid(
     focus: FocusRequester,
     keys: FocusRequester,
     onFocused: (Movie?) -> Unit,
+    back: Pair<Int, FocusRequester>?,
+    stray: () -> Boolean,
+    arrive: () -> Boolean,
     onPlay: (Movie) -> Unit,
 ) {
     var found by remember { mutableStateOf<List<Movie>?>(null) }
-    // Runs once typing pauses; the last results stay meanwhile.
+    val sync = LocalContext.current.graph.sync
+    val films = LocalLibrary.current == LibraryKind.Movies
+    // Runs once typing pauses; the last results stay meanwhile. Films search the provider's whole
+    // catalogue (a film with no 4K copy is still found, on its best copy); offline, the library.
     LaunchedEffect(query, library) {
         if (query.isBlank()) {
             found = null
             return@LaunchedEffect
         }
-        delay(150)
-        found = withContext(Dispatchers.Default) { library.search(query) }
+        delay(if (films) 300 else 150)
+        found = (if (films) sync.vodSearch(query).getOrNull() else null) ?: withContext(Dispatchers.Default) { library.search(query) }
     }
     val first = remember { FocusRequester() }
     // A spoken query: once its results are in, the first card takes focus. None leaves focus on the keys.
@@ -724,6 +1142,8 @@ private fun SearchGrid(
                     onFocused = { onFocused(null) },
                     onDown = { runCatching { first.requestFocus() } },
                     onSpoken = { spoken = true },
+                    stray = stray,
+                    arrive = arrive,
                 )
             }
         }
@@ -733,7 +1153,7 @@ private fun SearchGrid(
             list == null -> {}
             list.isEmpty() -> item(key = "none", span = { GridItemSpan(maxLineSpan) }) { HintLine("No ${LocalLibrary.current.noun} match “${query.trim()}”") }
             else -> itemsIndexed(list, key = { _, m -> m.id }) { i, movie ->
-                PosterCard(movie, null, focus = if (i == 0) first else null, onFocused = { onFocused(movie) }, onClick = { onPlay(movie) })
+                PosterCard(movie, null, focus = if (i == 0) first else null, back = back?.takeIf { it.first == movie.id }?.second, onFocused = { onFocused(movie) }, onClick = { onPlay(movie) })
             }
         }
     }
@@ -772,8 +1192,65 @@ private fun Unavailable(focus: FocusRequester, onRetry: () -> Unit) {
     }
 }
 
-private val SHOW_POSTER = DpSize(198.dp, 297.dp)
-private val EPISODE_NUMBER = 44.dp
+/**
+ * A film's title page: its backdrop over the whole screen and, low-left, everything about it (meta,
+ * how much is left, plot, cast, director), then Resume or Play, and Start over once it is started.
+ * Back returns to the card it was opened from. [hidden] while the film plays over it.
+ */
+@Composable
+private fun FilmPage(film: Movie, resume: Resume?, active: Boolean, hidden: Boolean, onPlay: (fromStart: Boolean) -> Unit, onBack: () -> Unit) {
+    val info = rememberInfo(film)
+    val primary = remember { FocusRequester() }
+    var hasFocus by remember { mutableStateOf(false) }
+    LaunchedEffect(active) {
+        if (!active) return@LaunchedEffect
+        repeat(FOCUS_FRAMES) {
+            withFrameNanos {}
+            if (hasFocus) return@LaunchedEffect
+            runCatching { primary.requestFocus() }
+        }
+    }
+    val started = resume != null && resume.pos > 0
+    TitleFrame(info?.backdrop, hidden, onBack, onFocus = { hasFocus = it }) {
+        Column(Modifier.align(Alignment.BottomStart).padding(start = EDGE, bottom = Space.xxxl).widthIn(max = PAGE_WIDTH), verticalArrangement = Arrangement.spacedBy(Space.s)) {
+            Text(film.title.title, style = BIG_TITLE, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            MetaLine(film, info)
+            // What the stream is, before it plays.
+            info?.quality?.takeIf { it.isNotEmpty() }?.let { Badges(it) }
+            if (started && resume!!.dur > 0) Row(horizontalArrangement = Arrangement.spacedBy(Space.m), verticalAlignment = Alignment.CenterVertically) {
+                Text(leftLabel(resume.dur - resume.pos), style = Type.headline, maxLines = 1)
+                ProgressLine({ resume.pos.toFloat() / resume.dur }, Modifier.width(PROGRESS_WIDTH))
+            }
+            info?.plot?.ifBlank { null }?.let { Text(it, style = Type.body, maxLines = 6, overflow = TextOverflow.Ellipsis) }
+            info?.cast?.ifBlank { null }?.let { Text("Starring $it", style = Type.caption, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+            info?.director?.substringBefore(",")?.trim()?.ifBlank { null }?.let { Text("Directed by $it", style = Type.caption, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+            Row(Modifier.padding(top = Space.m), horizontalArrangement = Arrangement.spacedBy(Space.m)) {
+                PageButton(if (started) "Resume" else "Play", { onPlay(false) }, Modifier.focusRequester(primary))
+                if (started) PageButton("Start over", { onPlay(true) })
+            }
+        }
+    }
+}
+
+/** A title page's ground: the backdrop, Back to leave, focus kept inside; undrawn while [hidden]. */
+@Composable
+private fun TitleFrame(backdrop: String?, hidden: Boolean, onBack: () -> Unit, onFocus: (Boolean) -> Unit, content: @Composable BoxScope.() -> Unit) {
+    Box(
+        Modifier
+            .fillMaxSize()
+            .graphicsLayer { alpha = if (hidden) 0f else 1f }
+            .onFocusChanged { onFocus(it.hasFocus) }
+            .onKeyEvent {
+                if (remoteKey(it.nativeKeyEvent.keyCode) != RemoteKey.Back) return@onKeyEvent false
+                if (it.type == KeyEventType.KeyDown) onBack()
+                true // the key-up too, so Back never reaches the screen behind
+            }
+            .focusGroup(),
+    ) {
+        Backdrop(backdrop, solidFrom = null)
+        content()
+    }
+}
 
 /** A row of a show's episode list: a season's heading, or an episode (its index in the show's list). */
 private sealed interface EpisodeLine {
@@ -782,146 +1259,133 @@ private sealed interface EpisodeLine {
 }
 
 /**
- * A show's episodes: its poster and name, then each season's episodes in order. Focus starts on the
- * episode Continue watching points at (else the one last played, else the first); OK plays it from
- * its place. Back returns to the rows. [hidden] while an episode plays over it.
+ * A show's title page: its backdrop, then on the left everything about it and Resume (or Play) on the
+ * episode up next; on the right its episodes by season, each with its still, length and progress.
+ * Right enters the list on the episode up next; OK on any plays it from its place. Back returns to
+ * where it was opened. [hidden] while an episode plays over it.
  */
 @Composable
-private fun ShowDetail(show: Movie, resume: Resume?, watched: Set<Int>, active: Boolean, hidden: Boolean, onPlay: (List<Episode>, Int) -> Unit, onBack: () -> Unit) {
-    val graph = LocalContext.current.graph
-    var episodes by remember { mutableStateOf<List<Episode>?>(null) }
-    var plot by remember { mutableStateOf("") }
+private fun ShowPage(show: Movie, resume: Resume?, watched: Set<Int>, active: Boolean, hidden: Boolean, onPlay: (List<Episode>, Int, fromStart: Boolean) -> Unit, onBack: () -> Unit) {
+    val sync = LocalContext.current.graph.sync
+    var data by remember { mutableStateOf(sync.peekShow(show.id)) }
     var failed by remember { mutableStateOf(false) }
     var attempt by remember { mutableStateOf(0) }
     LaunchedEffect(attempt) {
         failed = false
-        graph.sync.episodes(show.id).onSuccess { episodes = it.episodes; plot = it.plot }.onFailure { failed = true }
+        // Fresh on opening, so a new episode shows; the kept copy (if any) is on screen meanwhile.
+        sync.episodes(show.id, fresh = true).onSuccess { data = it }.onFailure { if (data == null) failed = true }
     }
+    val episodes = data?.episodes
     val lines = remember(episodes) {
         buildList {
             episodes?.forEachIndexed { i, e ->
-                if (i == 0 || episodes!![i - 1].season != e.season) add(EpisodeLine.Season(e.season))
+                if (i == 0 || episodes[i - 1].season != e.season) add(EpisodeLine.Season(e.season))
                 add(EpisodeLine.Item(i, e))
             }
         }
     }
     var lastPlayed by remember { mutableStateOf<Int?>(null) }
-    // Up next: the episode in progress, else the one last played here, else the first not yet watched.
-    val target = episodes?.let { eps ->
-        eps.indexOfFirst { it.id == resume?.episode }.takeIf { it >= 0 } ?: lastPlayed ?: eps.indexOfFirst { it.id !in watched }.takeIf { it >= 0 } ?: 0
-    }
-    val focus = remember { FocusRequester() }
+    val target = episodes?.takeIf { it.isNotEmpty() }?.let { lastPlayed ?: upNextIndex(it, resume, watched) }
+    val primary = remember { FocusRequester() }
+    val targetRow = remember { FocusRequester() }
     val list = rememberLazyListState()
     var hasFocus by remember { mutableStateOf(false) }
-    LaunchedEffect(active, target, failed) {
+    LaunchedEffect(active, target != null, failed) {
         if (!active) return@LaunchedEffect
         if (target != null) list.scrollToItem((lines.indexOfFirst { it is EpisodeLine.Item && it.index == target } - 1).coerceAtLeast(0))
         repeat(FOCUS_FRAMES) {
             withFrameNanos {}
             if (hasFocus) return@LaunchedEffect
-            runCatching { focus.requestFocus() }
+            runCatching { primary.requestFocus() }
         }
     }
-
-    Box(
-        Modifier
-            .fillMaxSize()
-            .graphicsLayer { alpha = if (hidden) 0f else 1f }
-            .drawBehind { drawRect(MoviesScrim) }
-            .onFocusChanged { hasFocus = it.hasFocus }
-            .onKeyEvent {
-                if (remoteKey(it.nativeKeyEvent.keyCode) != RemoteKey.Back) return@onKeyEvent false
-                if (it.type == KeyEventType.KeyDown) onBack()
-                true // the key-up too, so Back never reaches the rows behind
-            }
-            .focusGroup(),
-    ) {
-        Row(Modifier.fillMaxSize().padding(start = EDGE, end = EDGE, top = 27.dp), horizontalArrangement = Arrangement.spacedBy(Space.xxl)) {
-            Column(Modifier.width(SHOW_POSTER.width), verticalArrangement = Arrangement.spacedBy(Space.s)) {
-                val context = LocalPlatformContext.current
-                val density = LocalDensity.current
-                val request = remember(show.poster) {
-                    with(density) { ImageRequest.Builder(context).data(posterUrl(show.poster)).size(SHOW_POSTER.width.roundToPx(), SHOW_POSTER.height.roundToPx()).crossfade(POSTER_FADE_MS).build() }
-                }
-                Box(Modifier.size(SHOW_POSTER).graphicsLayer { shape = CARD_SHAPE; clip = true }.drawBehind { drawRect(Palette.raised) }) {
-                    if (show.poster.isNotEmpty()) AsyncImage(model = request, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
-                }
-                Text(show.title.title, style = Type.title, maxLines = 3, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = Space.s))
+    TitleFrame(data?.backdrop, hidden, onBack, onFocus = { hasFocus = it }) {
+        Row(Modifier.fillMaxSize().padding(start = EDGE, end = EDGE), horizontalArrangement = Arrangement.spacedBy(Space.xxl)) {
+            Column(Modifier.width(SHOW_INFO_WIDTH).fillMaxHeight().padding(bottom = Space.xxxl), verticalArrangement = Arrangement.spacedBy(Space.s, Alignment.Bottom)) {
+                Text(show.title.title, style = BIG_TITLE, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 val seasons = episodes?.map { it.season }?.distinct()?.size
-                val meta = listOfNotNull(
-                    show.title.year,
-                    seasons?.let { if (it == 1) "1 season" else "$it seasons" },
-                    episodes?.size?.let { if (it == 1) "1 episode" else "$it episodes" },
-                    episodes?.count { it.id in watched }?.takeIf { it > 0 }?.let { "$it watched" },
-                )
-                Text(meta.joinToString(" · "), style = Type.body, maxLines = 3)
-                Text(groupLabel(show.group).name, style = Type.body, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            }
-            val eps = episodes
-            when {
-                eps != null && eps.isNotEmpty() -> LazyColumn(
-                    Modifier.weight(1f).fillMaxHeight().edgeFade(MoviesScrim, top = Space.l).focusGroup(),
-                    state = list,
-                    contentPadding = PaddingValues(top = Space.l, bottom = Space.xxxl),
-                ) {
-                    // The show's plot heads the list (so focus on an early episode keeps it in view, and it scrolls away under the fade).
-                    // Scrolling to a line uses its index in [lines] less one, which with this item first is the line before it.
-                    if (plot.isNotEmpty()) item(key = "plot") {
-                        Text(plot, style = Type.body, maxLines = 4, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(horizontal = Space.l).widthIn(max = PLOT_WIDTH))
-                    }
-                    items(lines, key = { if (it is EpisodeLine.Item) it.episode.id else "s${(it as EpisodeLine.Season).season}" }) { line ->
-                        when (line) {
-                            is EpisodeLine.Season -> Text("Season ${line.season}", style = Type.headline, modifier = Modifier.padding(start = Space.l, top = Space.l, bottom = Space.s))
-                            is EpisodeLine.Item -> EpisodeRow(
-                                line.episode,
-                                watched = line.episode.id in watched,
-                                progress = resume?.takeIf { it.episode == line.episode.id && it.dur > 0 && it.pos > 0 }?.let { it.pos.toFloat() / it.dur },
-                                focus = if (line.index == target) focus else null,
-                                onClick = {
-                                    lastPlayed = line.index
-                                    onPlay(eps, line.index)
-                                },
-                            )
+                MetaLine(show, data?.info, extra = seasons?.let { if (it == 1) "1 season" else "$it seasons" })
+                data?.plot?.ifBlank { null }?.let { Text(it, style = Type.body, maxLines = 6, overflow = TextOverflow.Ellipsis) }
+                // The episode up next's stream, before it plays.
+                target?.let { episodes[it].quality }?.takeIf { it.isNotEmpty() }?.let { Badges(it) }
+                data?.cast?.ifBlank { null }?.let { Text("Starring $it", style = Type.caption, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                val next = target?.let { episodes[it] }
+                val started = next != null && resume?.episode == next.id && resume.pos > 0
+                Row(Modifier.padding(top = Space.m), horizontalArrangement = Arrangement.spacedBy(Space.m)) {
+                    when {
+                        next != null -> {
+                            PageButton("${if (started) "Resume" else "Play"} ${next.code}", { onPlay(episodes, target, false) }, Modifier.focusRequester(primary))
+                            if (started) PageButton("Start over", { onPlay(episodes, target, true) })
                         }
+                        failed -> PageButton("Try again", { attempt++ }, Modifier.focusRequester(primary))
+                        // Something holds focus meanwhile, so Back still answers.
+                        else -> Text(if (episodes == null) "Loading episodes…" else "No episodes yet", style = Type.body, modifier = Modifier.focusRequester(primary).focusable())
                     }
                 }
-                // Something holds focus meanwhile, so Back still answers.
-                failed -> Column(Modifier.padding(top = Space.xl), verticalArrangement = Arrangement.spacedBy(Space.s)) {
-                    Text("Episodes didn’t load", style = Type.title)
-                    Text("Check that the Fire TV is online, then try again.", style = Type.body)
-                    ActionButton("Try again", { attempt++ }, Modifier.padding(top = Space.m).focusRequester(focus))
+                if (failed) Text("Episodes didn’t load. Check that the Fire TV is online.", style = Type.caption)
+            }
+            if (!episodes.isNullOrEmpty()) LazyColumn(
+                // On the app's floating material, so the list reads over any backdrop.
+                Modifier.weight(1f).fillMaxHeight().padding(vertical = Space.safeY).material().edgeFade(Palette.material, top = Space.m, bottom = Space.xl).focusRestorer(targetRow).focusGroup(),
+                state = list,
+                contentPadding = PaddingValues(horizontal = Space.s, vertical = Space.m),
+                verticalArrangement = Arrangement.spacedBy(Space.xs),
+            ) {
+                items(lines, key = { if (it is EpisodeLine.Item) it.episode.id else "s${(it as EpisodeLine.Season).season}" }) { line ->
+                    when (line) {
+                        is EpisodeLine.Season -> Text("Season ${line.season}", style = Type.headline, modifier = Modifier.padding(start = Space.m, top = Space.l, bottom = Space.xs))
+                        is EpisodeLine.Item -> EpisodeRow(
+                            line.episode,
+                            watched = line.episode.id in watched,
+                            progress = resume?.takeIf { it.episode == line.episode.id && it.dur > 0 && it.pos > 0 }?.let { it.pos.toFloat() / it.dur },
+                            focus = if (line.index == target) targetRow else null,
+                            onClick = {
+                                lastPlayed = line.index
+                                onPlay(episodes, line.index, false)
+                            },
+                        )
+                    }
                 }
-                else -> Text(
-                    if (eps == null) "Loading episodes…" else "No episodes yet",
-                    style = Type.body,
-                    modifier = Modifier.padding(top = Space.xl).focusRequester(focus).focusable(),
-                )
             }
         }
     }
 }
 
-/** "3   Good News About Hell   57 min", with how far it was watched. */
+/** An episode: its still (else its number), title, length, how far it was watched, a check once seen. */
 @Composable
 private fun EpisodeRow(episode: Episode, watched: Boolean, progress: Float?, focus: FocusRequester?, onClick: () -> Unit) {
+    val context = LocalPlatformContext.current
+    val density = LocalDensity.current
+    val request = remember(episode.image) {
+        episode.image.ifEmpty { null }?.let { with(density) { ImageRequest.Builder(context).data(tmdbAt(it, "w300")).size(STILL.width.roundToPx(), STILL.height.roundToPx()).crossfade(POSTER_FADE_MS).build() } }
+    }
+    // "Episode 4" says nothing a number doesn't.
+    val title = episode.title.takeUnless { it.isEmpty() || GENERIC_EPISODE.matches(it) }
     Row(
         Modifier
             .fillMaxWidth()
             .then(if (focus != null) Modifier.focusRequester(focus) else Modifier)
             .pressable(onClick)
-            .padding(horizontal = Space.l, vertical = Space.m),
+            .padding(Space.s),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(Space.m),
+        horizontalArrangement = Arrangement.spacedBy(Space.l),
     ) {
-        Text("${episode.episode}", style = Type.body, modifier = Modifier.width(EPISODE_NUMBER))
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(Space.xs)) {
-            Text(episode.title.ifEmpty { "Episode ${episode.episode}" }, style = Type.headline, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            if (progress != null) ProgressLine({ progress }, Modifier.fillMaxWidth())
+        Box(Modifier.size(STILL).graphicsLayer { shape = CARD_SHAPE; clip = true }.drawBehind { drawRect(Palette.raised) }, contentAlignment = Alignment.Center) {
+            if (request != null) AsyncImage(model = request, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+            else Text("${episode.episode}", style = Type.title.copy(color = Palette.textSecondary))
+            if (progress != null) ProgressLine({ progress }, Modifier.align(Alignment.BottomCenter).padding(horizontal = Space.xs, vertical = Space.xs))
         }
-        if (episode.secs > 0) Text("${(episode.secs + 30) / 60} min", style = Type.body, maxLines = 1)
-        if (watched) Text("✓", style = Type.headline.copy(color = Palette.accent))
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(Space.xs)) {
+            Text(listOfNotNull("${episode.episode}", title).joinToString(". "), style = Type.headline, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Row(horizontalArrangement = Arrangement.spacedBy(Space.s), verticalAlignment = Alignment.CenterVertically) {
+                if (episode.secs > 0) Text("${(episode.secs + 30) / 60} min", style = Type.caption, maxLines = 1)
+                if (watched) Text("Watched", style = Type.caption.copy(color = Palette.accent), maxLines = 1)
+            }
+        }
     }
 }
+
+private val GENERIC_EPISODE = Regex("""(?i)episode\s*\d+""")
 
 /** A watched film's corner mark: a check on an accent disc. */
 @Composable

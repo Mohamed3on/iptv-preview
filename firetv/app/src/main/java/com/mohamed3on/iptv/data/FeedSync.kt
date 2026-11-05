@@ -124,16 +124,38 @@ class FeedSync(
     }
     private val movieInfos = java.util.concurrent.ConcurrentHashMap<Int, MovieInfo>()
 
-    /** A show's plot and episodes, in order; fetched each time a show is opened (the server caches them). */
-    suspend fun episodes(seriesId: Int): Result<ShowEpisodes> = withContext(Dispatchers.IO) {
+    /** Films matching [query] across the provider's whole catalogue (not only the library's rows), best copy first. */
+    suspend fun vodSearch(query: String): Result<List<Movie>> = withContext(Dispatchers.IO) {
+        runCatching {
+            val q = java.net.URLEncoder.encode(query.trim(), "UTF-8")
+            val request = Request.Builder().url("$baseUrl/api/app/vod-search?t=$token&q=$q").build()
+            client.newCall(request).execute().use { res ->
+                if (!res.isSuccessful) throw IOException("HTTP ${res.code}")
+                parseVodResults(res.body.string())
+            }
+        }
+    }
+
+    /** What [movieInfo] or [episodes] already holds for a title, without waiting: a screen's first frame. */
+    fun peekMovieInfo(id: Int): MovieInfo? = movieInfos[id]
+    fun peekShow(id: Int): ShowEpisodes? = showCache[id]?.second
+
+    /**
+     * A show's facts and episodes, in order; kept for [SHOW_KEEP_MS] (focus moving over shows asks for them
+     * often), then fetched again so new episodes appear. [fresh] skips the kept copy (opening a show).
+     */
+    suspend fun episodes(seriesId: Int, fresh: Boolean = false): Result<ShowEpisodes> = withContext(Dispatchers.IO) {
+        showCache[seriesId]?.takeIf { !fresh && System.currentTimeMillis() - it.first < SHOW_KEEP_MS }?.let { return@withContext Result.success(it.second) }
         runCatching {
             val request = Request.Builder().url("$baseUrl/api/app/episodes?t=$token&id=$seriesId").build()
             client.newCall(request).execute().use { res ->
                 if (!res.isSuccessful) throw IOException("HTTP ${res.code}")
-                parseEpisodes(res.body.string())
+                parseEpisodes(res.body.string()).also { showCache[seriesId] = System.currentTimeMillis() to it }
             }
         }
     }
+    private val showCache = java.util.concurrent.ConcurrentHashMap<Int, Pair<Long, ShowEpisodes>>()
+    private val SHOW_KEEP_MS = 30 * 60_000L
 
     /** Syncs each file older than its max age; ZERO forces a fetch. */
     suspend fun refresh(channelsMaxAge: Duration, guideMaxAge: Duration) {

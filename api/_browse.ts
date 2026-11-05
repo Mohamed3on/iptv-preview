@@ -145,7 +145,8 @@ export async function searchTitles(query: string, d: SearchDeps): Promise<LibTit
   ])
   const out = new Map<string, LibTitle>()
   const words = q.split(' ')
-  const named = (n: string) => words.every((w) => norm(n).includes(w))
+  // Each word starts a word of the name ("pitt" finds The Pitt, not "Pittsburgh Panthers" by its inner "the").
+  const named = (n: string) => { const ws = norm(n).split(' '); return words.every((w) => ws.some((x) => x.startsWith(w))) }
   // People whose name matches ("nolan", "zendaya"), as cards that open their page: after any title named like the
   // search (searches are mostly for a film or show), first when none is.
   const people = found
@@ -159,15 +160,17 @@ export async function searchTitles(query: string, d: SearchDeps): Promise<LibTit
     if (!out.has(v.titleId)) out.set(v.titleId, { id: v.titleId, k: 'm', n: v.name, ...(v.poster && { p: v.poster }) })
   }
   for (const t of d.known.titles.values()) if (out.size < 60 && !out.has(t.id) && named(t.n)) out.set(t.id, t)
-  // Titles: the name matching best, then on the Watchlist, then playable for sure (a copy known here), then TMDB's
-  // own order (relevance and popularity); a title already watched drops below its equals.
-  const match = (n: string) => (norm(n) === q ? 0 : norm(n).startsWith(q) ? 1 : named(n) ? 2 : 3)
+  // Titles: named like the search (whole name or its start), then by its words, then the rest; within each, the
+  // Watchlist first, then TMDB popularity (in doublings, so Dune: Part Two beats an obscure "Dune"), then a copy
+  // known here, then TMDB's order; a title already watched drops below its equals.
+  const match = (n: string) => (norm(n).startsWith(q) ? 0 : named(n) ? 1 : 2)
   const ranked = [...out.values()].slice(0, 60).map((t) => decorate(d.known, t)).map((t, i) => ({ t, i, key: [
-    match(t.n), d.history?.watchlist.has(t.id) ? 0 : 1, t.t || provider.has(t.id) ? 0 : 1, d.history?.watched.has(t.id) ? 1 : 0,
+    match(t.n), d.history?.watchlist.has(t.id) ? 0 : 1, -Math.floor(Math.log2((t.pp ?? 0) + 1)),
+    t.t || provider.has(t.id) ? 0 : 1, d.history?.watched.has(t.id) ? 1 : 0,
   ] }))
   const first = (a: number[], b: number[]) => a.map((v, j) => v - b[j]).find((d) => d !== 0) ?? 0
   ranked.sort((a, b) => first(a.key, b.key) || a.i - b.i)
-  const strong = ranked.filter((r) => r.key[0] <= 1).length
+  const strong = ranked.filter((r) => r.key[0] === 0).length
   const titles = ranked.map((r) => r.t)
   return [...titles.slice(0, strong), ...people, ...titles.slice(strong)]
 }

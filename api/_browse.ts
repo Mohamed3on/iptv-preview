@@ -5,13 +5,13 @@
 import { readFile } from 'node:fs/promises'
 import type { XtreamConfig } from './_lib.js'
 import { fromTmdb, LIBRARY_FILE, LIBRARY_FULL_FILE, type LibTitle, type Library, type TmdbItem } from './_library.js'
-import { loadScores, scoreTitles, type Score } from './_scores.js'
+import { loadScores, scoreNow, scoreTitles, type Score, type ScoreCache } from './_scores.js'
 import { showList } from './_shows.js'
 import { episodeTitle, parseTitleId, tmdbEpisodes, tmdbTitle } from './_tmdb.js'
 import type { VodItem } from './_vod.js'
 
-/** The built library (null when missing), every title it has seen with its tier (the uncut build), and scores. */
-export interface Known { lib: Library | null; titles: Map<string, LibTitle>; scores: Map<string, Score> }
+/** The built library (null when missing), every title it has seen with its tier (the uncut build), and scores (with what the APIs said). */
+export interface Known { lib: Library | null; titles: Map<string, LibTitle>; scores: Map<string, Score>; cache?: ScoreCache }
 
 const KNOWN_MS = 10 * 60e3
 let known: { at: number; job: Promise<Known> } | null = null
@@ -23,7 +23,7 @@ export function knownTitles(): Promise<Known> {
   const job = Promise.all([read(LIBRARY_FILE), read(LIBRARY_FULL_FILE), loadScores()]).then(([lib, full, cache]) => {
     const titles = new Map<string, LibTitle>()
     for (const t of [...(full?.titles ?? []), ...(lib?.titles ?? [])]) titles.set(t.id, { ...titles.get(t.id), ...t })
-    return { lib, titles, scores: scoreTitles(cache) }
+    return { lib, titles, scores: scoreTitles(cache), cache }
   })
   known = { at: Date.now(), job }
   return job
@@ -44,6 +44,8 @@ const IMG = 'https://image.tmdb.org/t/p/'
  * A film's or show's page beyond its card, in the app's MovieInfo shape: plot, runtime, genres, backdrop,
  * cast and director (and as people, for their pages), More like this, its score; a show the provider lists
  * gives its series id (episodes come from the provider), one it lacks its aired episodes from TMDB.
+ * A title the APIs were never asked about is asked now ([scoreNow]): its scores join this answer if they come
+ * back before the rest of it, else the next one (the page never waits for them).
  * null for an id TMDB doesn't know (or without TMDB_TOKEN).
  */
 export async function titleDetails(cfg: XtreamConfig, id: string) {
@@ -52,6 +54,15 @@ export async function titleDetails(cfg: XtreamConfig, id: string) {
   const { kind, tmdb } = p
   const [t, k] = await Promise.all([tmdbTitle(kind, tmdb), knownTitles()])
   if (!t) return null
+  const cache = k.cache
+  if (cache && !k.scores.has(id) && !cache[id]?.ta && !cache[id]?.ma) {
+    void scoreNow(id, t.imdb || undefined, { trakt: process.env.TRAKT_CLIENT_ID, mdblist: process.env.MDBLIST_KEY }).then((e) => {
+      if (!e) return
+      cache[id] = { ...cache[id], ...e }
+      const s = scoreTitles(cache).get(id)
+      if (s) k.scores.set(id, s)
+    })
+  }
   const series = kind === 'tv' ? (await showList(cfg).catch(() => null))?.movies.find((s) => s.titleId === id)?.id : undefined
   const episodes = kind === 'tv' && !series ? await tmdbEpisodes(tmdb, t.seasons) : []
   const people = new Map<number, { id: number; name: string; role: string }>()

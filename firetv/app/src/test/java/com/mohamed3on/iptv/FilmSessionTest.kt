@@ -167,6 +167,22 @@ class FilmSessionTest {
         assertEquals(false, r.choices.marks(tv)[rd4k.id]?.works)
     }
 
+    // Unreported audio is tried; a file none of whose tracks plays teaches the setup, whose copies of that kind are skipped after.
+    @Test fun audioThatDidntPlayIsLearntForTheSetupAndItsCopiesSkipped() = runTest {
+        val r = rig()
+        val dts = rd4k.copy(id = "rd:dts", audio = "dts")
+        r.player.respond = { if ("rd:dts" in it) StreamFailure.NoAudio(setOf("dts")) else null }
+        play(r, dts, iptv1080)
+        assertEquals(listOf("rd:dts", "iptv:1"), r.player.opens.map { it.first.substringAfter("test/").substringBefore('/') })
+        assertEquals(iptv1080, r.state.copy)
+
+        val dtsHd = rd4k.copy(id = "rd:dtshd", audio = "dtshd")
+        val ranked = r.choices.rank("movie:2", listOf(dtsHd, iptv1080), "en", tv) { null }
+        assertEquals(iptv1080, ranked.pick?.copy)
+        assertTrue(ranked.copies[1].reason, ranked.copies[1].reason.startsWith("DTS didn’t play here on"))
+        assertEquals(dtsHd, r.choices.rank("movie:2", listOf(dtsHd, iptv1080), "en", dvTv) { null }.pick?.copy) // a new setup tries again
+    }
+
     // R2: a multi-language file's default track is often a dub; a first play asks for the film's own language.
     @Test fun aFirstPlayAsksForTheOriginalLanguage() = runTest {
         val r = rig()

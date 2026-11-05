@@ -158,11 +158,11 @@ class FilmCopies(
         }
     }
 
-    /** What Play would open: the best copy not ruled out that IPTV serves or Real-Debrid has ready. Kept as it was while a check runs. */
+    /** What Play would open: the best copy not ruled out that can play ([playable]). Kept as it was while a check runs. */
     private fun Prepared.settled(): Prepared {
         val r = ranking ?: return this
         if (!rdChecked) return this
-        return copy(plays = r.copies.firstOrNull { (it.support != Support.Wont || it.pinned) && (it.copy.source == Source.Iptv || rd[it.copy.id] is RdCheck.Ready) }?.copy)
+        return copy(plays = r.copies.firstOrNull { (it.support != Support.Wont || it.pinned) && answer?.copies.playable(it.copy, rd) }?.copy)
     }
 
     private companion object {
@@ -172,6 +172,13 @@ class FilmCopies(
         const val ASKS = 3
     }
 }
+
+/**
+ * [c] can play as far as is known: IPTV's, a Real-Debrid copy that is ready, or one Torrentio flags cached ([RD+])
+ * and not checked yet, likely ready (Play checks it when it comes to it; a failed check rules it out).
+ */
+fun TitleCopies?.playable(c: Copy, rd: Map<String, RdCheck>): Boolean =
+    c.source == Source.Iptv || rd[c.id].let { it is RdCheck.Ready || it == null && this?.rd?.get(c.id)?.cached == true }
 
 /** The box's answer as copies: ids stable across plays ("iptv:<stream>", "rd:<hash>:<file>"), names the ranker's. */
 fun answerOf(a: CopiesAnswer): TitleAnswer {

@@ -16,6 +16,8 @@ sealed interface StreamFailure {
     data object Unplayable : StreamFailure
     /** This file can't play here at all: an unsupported container or format, no playable audio, Dolby Vision profile 7. Permanent (KTD7). */
     data object Unsupported : StreamFailure
+    /** No audio track of this file can play here; [audio] names the tracks' formats as the ranker does ("dts", "truehd"). Permanent too. */
+    data class NoAudio(val audio: Set<String>) : StreamFailure
 }
 
 /** What a session does about a failure (KTD8). */
@@ -29,14 +31,14 @@ object StreamErrors {
             in 500..599 -> Recovery.Backoff
             else -> Recovery.NextFeed
         }
-        StreamFailure.Timeout, StreamFailure.Unplayable, StreamFailure.Unsupported -> Recovery.NextFeed
+        StreamFailure.Timeout, StreamFailure.Unplayable, StreamFailure.Unsupported, is StreamFailure.NoAudio -> Recovery.NextFeed
         // The network, not the channel: another feed would fail the same way. Retrying lets
         // playback come back by itself when the network does.
         StreamFailure.Unreachable -> Recovery.Backoff
     }
 
     /** Only these faults mark a film copy as failing on this setup; the rest may pass (KTD7). */
-    fun permanent(failure: StreamFailure) = failure == StreamFailure.Unsupported
+    fun permanent(failure: StreamFailure) = failure == StreamFailure.Unsupported || failure is StreamFailure.NoAudio
 
     /** Delay before 5xx retry number [attempt] (0-based): 1s, 2s, 4s, then 8s. */
     fun backoff(attempt: Int): Duration = (1 shl attempt.coerceAtMost(3)).seconds

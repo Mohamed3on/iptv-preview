@@ -245,5 +245,69 @@ export async function refreshScores(ids: string[], fresh: Set<string>, cache: Sc
 
 export const SCORES_FILE = fileURLToPath(new URL('../.cache/scores.json', import.meta.url))
 export const loadScores = (file = SCORES_FILE): Promise<ScoreCache> => readFile(file, 'utf8').then((s) => JSON.parse(s) as ScoreCache, () => ({}))
-/** Writes the cache atomically (temp + rename). */
-export const saveScores = (cache: ScoreCache, file = SCORES_FILE) => writeAtomic(file, cache)
+/**
+ * Writes [cache] atomically (temp + rename), merged over the file's entries field by field, so the nightly job
+ * keeps what title pages asked meanwhile ([scoreNow]) and a title page's ask keeps the night's work.
+ */
+export const saveScores = async (cache: ScoreCache, file = SCORES_FILE) => {
+  const disk = await loadScores(file)
+  for (const id in cache) disk[id] = { ...disk[id], ...cache[id] }
+  return writeAtomic(file, disk)
+}
+
+/** Title pages' own asks (server): Trakt paced and backed off like the nightly job, MDBList within a daily share of its quota. */
+const ASK_MS = 3000
+let traktNext = 0, traktLimited = 0, mdbDay = '', mdbLeft = 0, saving = Promise.resolve()
+const asking = new Map<string, Promise<ScoreEntry | null>>()
+
+/**
+ * What Trakt and MDBList say about [id] (movie:N or tv:N) now, for a title page scores.json lacks: one Trakt
+ * /ratings by its IMDb id (the nightly job looks up its Trakt id) and one MDBList call, in parallel, each cut at 3 s.
+ * Trakt keeps a second between asks and after a 429 waits as [refreshScores] does (skipped while it would wait
+ * over 3 s); MDBList asks at most MDBLIST_ONDEMAND (100) a day, none after a refusal. Saved into scores.json;
+ * null when neither answered.
+ */
+export function scoreNow(id: string, imdb: string | undefined, keys: Keys, get: typeof fetch = fetch): Promise<ScoreEntry | null> {
+  const p = parseTitleId(id)
+  if (!p || p.season != null) return Promise.resolve(null)
+  if (asking.has(id)) return asking.get(id)!
+  const type = p.kind === 'tv' ? 'show' : 'movie'
+  const now = Date.now()
+  const trakt = async (): Promise<ScoreEntry> => {
+    const wait = traktNext - now
+    if (!keys.trakt || !imdb || wait > ASK_MS) return {}
+    traktNext = Math.max(traktNext, now) + 1000
+    if (wait > 0) await Bun.sleep(wait)
+    const r = await get(`${TRAKT}/${type}s/${imdb}/ratings`, {
+      headers: { 'content-type': 'application/json', 'trakt-api-version': '2', 'trakt-api-key': keys.trakt }, signal: AbortSignal.timeout(ASK_MS),
+    })
+    if (r.status === 429) {
+      traktNext = Date.now() + Math.max(Number(r.headers.get('retry-after')) || 0, 30 * 2 ** traktLimited++) * 1000
+      return {}
+    }
+    traktLimited = 0
+    if (!r.ok && r.status !== 404) return {}
+    const dist = r.ok ? ((await r.json()) as { distribution?: Record<string, number> }).distribution : undefined
+    return { im: imdb, ta: now, ...(dist && { d: Array.from({ length: 10 }, (_, i) => dist[i + 1] ?? 0) }) }
+  }
+  const mdb = async (): Promise<ScoreEntry> => {
+    const day = new Date(now).toISOString().slice(0, 10)
+    if (mdbDay !== day) [mdbDay, mdbLeft] = [day, Number(process.env.MDBLIST_ONDEMAND) || 100]
+    if (!keys.mdblist || mdbLeft <= 0) return {}
+    mdbLeft--
+    const r = await get(`${MDB}/tmdb/${type}/${p.tmdb}?apikey=${keys.mdblist}`, { signal: AbortSignal.timeout(ASK_MS) })
+    if (r.status === 429 || r.status === 401 || r.status === 403 || r.headers.get('x-ratelimit-remaining') === '0') mdbLeft = 0
+    if (!r.ok && r.status !== 404) return {}
+    const ratings = r.ok ? ((await r.json()) as { ratings?: { source: string; value?: number | null; votes?: number | null }[] }).ratings ?? [] : []
+    const of = (source: string) => ratings.find((x) => x.source === source)
+    return { ma: now, ...(of('letterboxd')?.value && { lb: of('letterboxd')!.value! }), ...(of('imdb')?.value && { ir: of('imdb')!.value! }), ...(of('imdb')?.votes && { iv: of('imdb')!.votes! }) }
+  }
+  const job = Promise.all([trakt().catch(() => ({})), mdb().catch(() => ({}))]).then(([a, b]) => {
+    const e: ScoreEntry = { ...a, ...b }
+    if (!e.ta && !e.ma) return null
+    saving = saving.then(() => saveScores({ [id]: e })).catch((err) => console.warn(`scores: ${err}`))
+    return e
+  }).finally(() => asking.delete(id))
+  asking.set(id, job)
+  return job
+}

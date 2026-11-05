@@ -132,6 +132,8 @@ import com.mohamed3on.iptv.data.Person
 import com.mohamed3on.iptv.data.Scored
 import com.mohamed3on.iptv.data.averagesLabel
 import com.mohamed3on.iptv.data.isShow
+import com.mohamed3on.iptv.data.isTmdb
+import com.mohamed3on.iptv.data.known
 import com.mohamed3on.iptv.data.scoreLabel
 import com.mohamed3on.iptv.data.tmdbImage
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -302,7 +304,6 @@ fun MoviesLayer(
     var playing by remember { mutableStateOf<Playing?>(null) }
     // The pages on screen over the browsing screen, the top one last.
     val pages = remember { mutableStateListOf<LibraryPage>() }
-    var stoppedLive by remember { mutableStateOf(false) }
     var failed by remember { mutableStateOf<SyncError?>(null) }
     var attempt by remember { mutableStateOf(0) }
     val refreshed = remember { booleanArrayOf(false) }
@@ -341,16 +342,25 @@ fun MoviesLayer(
     // However the layer goes, the live picture comes back.
     DisposableEffect(Unit) { onDispose { onPlaying(false) } }
 
-    fun leave() {
-        // The live channel comes back where it was, unless the app restarted it meanwhile (Home and back).
-        if (stoppedLive && live.state.value.phase == Phase.Stopped) live.retry()
-        onClose()
+    // Live TV stays stopped while Movies & Shows is open, even when the app starts it again (Home and back): the
+    // provider's one connection and the bandwidth are the films' (KTD20). Leaving re-tunes the same channel.
+    LaunchedEffect(session, open) {
+        if (!open) {
+            if (session.state.value.phase == Phase.Stopped) session.retry()
+            return@LaunchedEffect
+        }
+        session.state.collect {
+            if (it.phase == Phase.Stopped) return@collect
+            tiles.close()
+            session.stop()
+        }
     }
+
+    fun leave() = onClose()
 
     fun play(next: Playing) {
         tiles.close()
         live.stop()
-        stoppedLive = true
         playing = next
         onPlaying(true)
     }
@@ -770,7 +780,8 @@ private fun rememberRested(focused: State<Movie?>): Movie? {
 /**
  * A title's plot, backdrop, runtime, genres and cast: TMDB's for a title it knows (/api/app/title, with its
  * people and More like this), else the provider's (a film's /api/app/movie, a show's episodes call). All are
- * kept for the app session, so a title seen before answers on its first frame.
+ * kept for the app session, so a title seen before answers on its first frame. A TMDB title answered without
+ * scores is asked once more 3 s later, by when the box has usually fetched them.
  */
 @Composable
 private fun rememberInfo(movie: Movie?): MovieInfo? {
@@ -779,6 +790,10 @@ private fun rememberInfo(movie: Movie?): MovieInfo? {
     return produceState(peek, movie?.titleId, movie?.id) {
         val m = movie ?: return@produceState
         value = sync.info(m).getOrNull() ?: value
+        if (m.titleId.isTmdb && value?.known == false) {
+            delay(3_000)
+            value = sync.info(m).getOrNull() ?: value
+        }
     }.value
 }
 
@@ -1040,7 +1055,7 @@ private val NEW_STYLE = Type.caption.copy(color = Palette.accent, fontWeight = F
 private fun MetaLine(movie: Movie, info: MovieInfo?, extra: String? = null, tier: Boolean = true) {
     val genre = info?.genre?.split(',', '/')?.map(String::trim)?.filter(String::isNotEmpty)?.take(2)?.joinToString(", ")?.ifEmpty { null }
     val runtime = info?.secs?.takeIf { it > 0 }?.let { runtimeLabel(it * 1000L) }
-    val scored: Scored? = movie.lib?.takeIf { it.sn != null || it.lb != null || it.ir != null } ?: info
+    val scored: Scored? = movie.lib?.takeIf { it.known } ?: info
     val averages = scored?.averagesLabel()
     val rating = info?.rating?.ifEmpty { null }?.takeIf { averages == null }?.let { "$it/10" }
     Row(horizontalArrangement = Arrangement.spacedBy(Space.m), verticalAlignment = Alignment.CenterVertically) {
@@ -1052,9 +1067,9 @@ private fun MetaLine(movie: Movie, info: MovieInfo?, extra: String? = null, tier
     }
 }
 
-/** A card's corner: tier in its colour, then the net share ("60%", R19, R24); null when neither is known. */
-private fun cardChip(t: LibTitle): AnnotatedString? {
-    val score = t.scoreLabel()
+/** A card's corner: tier in its colour, then the net share ("60%", R19, R24; [scored]'s when a title page learnt it); null when neither is known. */
+private fun cardChip(t: LibTitle, scored: Scored): AnnotatedString? {
+    val score = scored.scoreLabel()
     if (t.t.isEmpty() && score == null) return null
     return buildAnnotatedString {
         if (t.t.isNotEmpty()) withStyle(SpanStyle(color = tierColor(t.t), fontWeight = FontWeight.SemiBold)) { append(t.t) }
@@ -1432,7 +1447,8 @@ private fun PosterCard(movie: Movie, progress: Float?, watched: Boolean = false,
             ProgressLine({ progress }, Modifier.align(Alignment.BottomCenter).padding(horizontal = Space.s, vertical = Space.s))
         }
         if (watched) WatchedMark(Modifier.align(Alignment.TopEnd).padding(Space.s))
-        val chip = remember(movie.lib) { movie.lib?.let(::cardChip) }
+        val learnt = movie.lib?.takeIf { !it.known }?.let { LocalContext.current.graph.sync.scores[movie.titleId] }
+        val chip = remember(movie.lib, learnt) { movie.lib?.let { cardChip(it, learnt ?: it) } }
         if (chip != null) Text(
             chip, style = CHIP_TEXT, maxLines = 1,
             modifier = Modifier.align(Alignment.TopStart).padding(Space.xs).background(CHIP_GROUND, CHIP_SHAPE).padding(horizontal = Space.xs + 2.dp, vertical = 1.dp),

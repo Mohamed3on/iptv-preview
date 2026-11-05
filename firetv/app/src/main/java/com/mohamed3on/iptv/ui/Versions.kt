@@ -51,14 +51,14 @@ import com.mohamed3on.iptv.player.Ranked
 import com.mohamed3on.iptv.player.Ranking
 import com.mohamed3on.iptv.player.Support
 import com.mohamed3on.iptv.player.TitleAnswer
+import com.mohamed3on.iptv.player.DAY
+import com.mohamed3on.iptv.player.playable
+import java.time.Instant
 import com.mohamed3on.iptv.ui.theme.ActivityLine
 import com.mohamed3on.iptv.ui.theme.Palette
 import com.mohamed3on.iptv.ui.theme.Space
 import com.mohamed3on.iptv.ui.theme.Type
 import kotlin.math.roundToInt
-
-/** Versions shows this many copies before "Show all". */
-private const val FIRST_ROWS = 8
 
 /** What Versions lists: a title's ranking, Real-Debrid's answers, the box's answer (sizes, names) and the copy playing, if any. */
 class VersionsData(val ranking: Ranking?, val rd: Map<String, RdCheck>, val answer: TitleAnswer?, val playing: String? = null, val failed: Boolean = false)
@@ -66,12 +66,16 @@ class VersionsData(val ranking: Ranking?, val rd: Map<String, RdCheck>, val answ
 /** How a copy stands here, in the order Versions groups them (R11). */
 private enum class Standing(val heading: String) { Plays("Plays here"), Untested("Untested here"), NotReady("Not ready on Real-Debrid"), Wont("Won’t play here") }
 
-private fun standing(r: Ranked, rd: Map<String, RdCheck>) = when {
+/** A cached Real-Debrid copy not checked yet stands with the copies that play: it likely does. */
+private fun standing(r: Ranked, data: VersionsData) = when {
     r.support == Support.Wont -> Standing.Wont
-    r.copy.source == Source.RealDebrid && rd[r.copy.id] !is RdCheck.Ready -> Standing.NotReady
+    !data.answer?.copies.playable(r.copy, data.rd) -> Standing.NotReady
     r.support == Support.Unsure -> Standing.Untested
     else -> Standing.Plays
 }
+
+/** What tells copies apart at a glance: resolution, HDR kind, sound (Atmos, surround, stereo) and languages. */
+private fun kind(c: Copy) = listOf(c.resolution, c.hdr.firstOrNull(), if (c.atmos) 2 else if (c.channels >= 6) 1 else 0, c.languages)
 
 /**
  * Every copy of [title], grouped by how it stands on this setup, each with its labels, picture tier,
@@ -94,16 +98,18 @@ internal fun Versions(title: String, data: VersionsData, first: FocusRequester, 
         runCatching { more.requestFocus() }
     }
     var corrections by remember(setup) { mutableStateOf(choices.corrections(setup)) }
+    var learnt by remember(setup, data.ranking) { mutableStateOf(choices.learnt(setup)) }
     val ranking = data.ranking
     val rows = remember(ranking, data.rd) {
-        ranking?.copies.orEmpty().map { it to standing(it, data.rd) }.sortedBy { it.second.ordinal }
+        ranking?.copies.orEmpty().map { it to standing(it, data) }.sortedBy { it.second.ordinal }
     }
-    // Reasons are worded against the copy Play opens, as the Plays line names it: the best one ready.
-    val plays = ranking?.copies?.firstOrNull {
-        (it.support != Support.Wont || it.pinned) && (it.copy.source == Source.Iptv || data.rd[it.copy.id] is RdCheck.Ready)
-    }?.copy?.id
+    // A spread first: each group's best copy of each kind (so 1080p and SDR show beside the 4K remuxes); "Show all" has the rest.
+    val spread = remember(rows) { rows.distinctBy { (r, s) -> s to kind(r.copy) }.mapTo(HashSet()) { it.first.copy.id } }
+    // Reasons are worded against the copy Play opens, as the Plays line names it: the best one that can play.
+    val plays = ranking?.copies?.firstOrNull { (it.support != Support.Wont || it.pinned) && data.answer?.copies.playable(it.copy, data.rd) }?.copy?.id
     val state = rememberLazyListState()
-    val shown = if (all) rows else rows.take(FIRST_ROWS)
+    val shown = if (all) rows else rows.filter { it.first.copy.id in spread }
+    val firstMore = if (all) shown.firstOrNull { it.first.copy.id !in spread }?.first?.copy?.id else null
     // Menu clears a pin or mark and the row moves as the list re-ranks: focus follows it.
     var cleared by remember { mutableStateOf<String?>(null) }
     val clearedFocus = remember { FocusRequester() }
@@ -133,7 +139,7 @@ internal fun Versions(title: String, data: VersionsData, first: FocusRequester, 
         shown.forEachIndexed { i, (r, s) ->
             if (i == 0 || shown[i - 1].second != s) item(key = "h${s.name}") { Heading(s.heading) }
             item(key = r.copy.id) {
-                VersionRow(r, ranking!!.reasonFor(r, plays), data, focus = if (i == 0) first else if (i == FIRST_ROWS) more else null, onClick = { onChoose(r.copy) }, onClear = if (r.pinned || r.mark != null) ({
+                VersionRow(r, ranking!!.reasonFor(r, plays), data, focus = if (i == 0) first else if (r.copy.id == firstMore) more else null, onClick = { onChoose(r.copy) }, onClear = if (r.pinned || r.mark != null) ({
                     cleared = r.copy.id
                     if (r.pinned) choices.pin(title, null) else choices.clearMark(setup, r.copy.id)
                     onChanged()
@@ -150,14 +156,36 @@ internal fun Versions(title: String, data: VersionsData, first: FocusRequester, 
         }
         item(key = "corrections") { Heading("Corrections") }
         items(Correction.entries, key = { it.name }) { c ->
-            // What the TV and soundbar already report needs no correction: the row says so instead of "Off".
+            // What the TV and soundbar already report needs no correction: the row says so instead of "Off". Audio
+            // they don't report is tried; a failure is learnt ("No, learnt 5 Nov"), and OK or Menu forgets it.
             val reported = when (c) {
                 Correction.PassesTrueHd -> Passthrough.TrueHd in setup.passthrough
                 Correction.PassesDts -> Passthrough.Dts in setup.passthrough
                 Correction.IgnoreBandwidth -> false
             }
-            PanelRow(CORRECTIONS.getValue(c), when { reported -> "Yes, reported"; c in corrections -> "Yes, set by you"; else -> "No" }) {
+            val failed = learnt[c]?.takeIf { !reported && c !in corrections }
+            val forget = {
+                choices.learn(setup, c, failed = false)
+                learnt = choices.learnt(setup)
+                onChanged()
+            }
+            PanelRow(
+                CORRECTIONS.getValue(c),
+                when {
+                    reported -> "Yes, reported"
+                    c in corrections -> "Yes, set by you"
+                    failed != null -> "No, learnt ${DAY.format(Instant.ofEpochMilli(failed))} · Menu clears"
+                    c == Correction.IgnoreBandwidth -> "No"
+                    else -> "Not reported, tried"
+                },
+                modifier = if (failed == null) Modifier else Modifier.onKeyEvent {
+                    if (remoteKey(it.nativeKeyEvent.keyCode) != RemoteKey.Menu) return@onKeyEvent false
+                    if (it.type == KeyEventType.KeyDown) forget()
+                    true
+                },
+            ) {
                 if (reported) return@PanelRow
+                if (failed != null) return@PanelRow forget()
                 choices.correct(setup, c, c !in corrections)
                 corrections = choices.corrections(setup)
                 onChanged()
@@ -224,7 +252,7 @@ private fun VersionRow(r: Ranked, reason: String, data: VersionsData, focus: Foc
     val c = r.copy
     val status = listOfNotNull(
         reason.ifEmpty { null },
-        rdState(c, data.rd),
+        rdState(c, data.rd, data.answer?.copies?.rd?.get(c.id)?.cached == true),
         onClear?.let { "Menu clears" },
     ).joinToString(" · ")
     Column(
@@ -322,13 +350,13 @@ internal fun sizeLabel(bytes: Long): String? = when {
 internal fun copyLine(c: Copy, answer: TitleAnswer?): String =
     (listOf(sourceName(c.source)) + (copyLabels(c) - setOfNotNull(VIDEO[c.codec])) + listOfNotNull(sizeLabel(answer?.size(c.id) ?: 0))).joinToString(" · ")
 
-private fun rdState(c: Copy, rd: Map<String, RdCheck>): String? {
+private fun rdState(c: Copy, rd: Map<String, RdCheck>, cached: Boolean): String? {
     if (c.source != Source.RealDebrid) return null
     return when (val r = rd[c.id]) {
         is RdCheck.Ready -> "ready"
         RdCheck.NotCached -> "not cached"
         is RdCheck.Failed -> if (r.error.permanent) "refused by Real-Debrid" else "check failed"
-        null -> "not checked"
+        null -> if (cached) "likely ready, not checked yet" else "not checked"
     }
 }
 

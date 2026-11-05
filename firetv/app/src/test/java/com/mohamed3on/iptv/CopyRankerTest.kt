@@ -58,18 +58,17 @@ class CopyRankerTest {
         assertEquals("dub", r.copies.first { it.copy == french }.reason)
     }
 
-    @Test fun ae7ATrueHdCorrectionHoldsOnlyOnTheSetupItWasMadeOn() {
+    @Test fun ae7ATrueHdCorrectionOverridesWhatThatSetupLearnt() {
         val trueHd = hdr10Web.copy(id = "rd:truehd", audio = "truehd", channels = 8, mbps = 60f)
         val copies = listOf(trueHd, hdr10Web)
         val choices = CopyChoices(MapStore())
-        assertEquals(Support.Unsure, choices.rank("movie:1", copies, "en", hdr10Tv) { null }.copies.first { it.copy == trueHd }.support)
+        choices.learn(hdr10Tv, Correction.PassesTrueHd, failed = true)
+        assertEquals(Support.Wont, choices.rank("movie:1", copies, "en", hdr10Tv) { null }.copies.first { it.copy == trueHd }.support)
 
         choices.correct(hdr10Tv, Correction.PassesTrueHd, true)
         val corrected = choices.rank("movie:1", copies, "en", hdr10Tv) { null }
         assertEquals(trueHd, corrected.pick?.copy)
         assertEquals(Support.Works, corrected.pick?.support)
-
-        assertEquals(Support.Unsure, choices.rank("movie:1", copies, "en", oled) { null }.copies.first { it.copy == trueHd }.support)
     }
 
     @Test fun ae9AnUnknownDolbyVisionProfileIsOfferedNotPlayed() {

@@ -205,10 +205,11 @@ fun PanelRow(
     value: String? = null,
     checked: Boolean = false,
     focus: FocusRequester? = null,
+    modifier: Modifier = Modifier,
     onClick: () -> Unit,
 ) {
     Row(
-        Modifier
+        modifier
             .fillMaxWidth()
             .then(if (focus != null) Modifier.focusRequester(focus) else Modifier)
             .pressable(onClick)

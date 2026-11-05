@@ -106,7 +106,8 @@ class Ranking internal constructor(
 /**
  * Ranks a title's [copies] for [setup] (U6): language, then support, then bandwidth, picture, sound,
  * English subtitles for a foreign film, and Real-Debrid on a tie (KTD15); a [pin] beats all of it.
- * [marks] are this setup's, by copy id; [typicalMbps] is per source, null when unknown (optimistic).
+ * [marks] are this setup's, by copy id; [typicalMbps] is per source, null when unknown (optimistic). Audio the
+ * setup doesn't report passing is taken to play until it [learnt] otherwise (the audio's correction, when).
  */
 fun rankCopies(
     copies: List<Copy>,
@@ -116,12 +117,13 @@ fun rankCopies(
     marks: Map<String, Mark> = emptyMap(),
     corrections: Set<Correction> = emptySet(),
     pin: String? = null,
+    learnt: Map<Correction, Long> = emptyMap(),
 ): Ranking {
     val p = setup.corrected(corrections)
     val ignore = Correction.IgnoreBandwidth in corrections
     val iptv = if (ignore) null else typicalMbps(Source.Iptv)
     val rd = if (ignore) null else typicalMbps(Source.RealDebrid)
-    val ranked = copies.map { judge(it, p, marks[it.id], originalLanguage, if (it.source == Source.Iptv) iptv else rd, it.id == pin) }.sortedWith(ORDER)
+    val ranked = copies.map { judge(it, p, marks[it.id], originalLanguage, if (it.source == Source.Iptv) iptv else rd, it.id == pin, learnt) }.sortedWith(ORDER)
     val pick = ranked.firstOrNull()?.takeIf { it.pinned || it.support != Support.Wont }
     for (r in ranked) r.reason = reason(r, pick)
     val working = pick?.takeIf { it.support == Support.Works && !it.pinned }
@@ -143,7 +145,14 @@ fun SetupProfile.corrected(corrections: Set<Correction>): SetupProfile {
     return if (extra.isEmpty()) this else copy(passthrough = passthrough + extra)
 }
 
-private fun judge(c: Copy, p: SetupProfile, mark: Mark?, language: String?, typical: Float?, pinned: Boolean): Ranked {
+/** The correction that lets [audio] pass, the key a failure to play it is learnt under: TrueHD's, or DTS's for every DTS kind. */
+fun audioFamily(audio: String): Correction? = when (audio) {
+    "truehd" -> Correction.PassesTrueHd
+    "dts", "dtshd", "dtsx" -> Correction.PassesDts
+    else -> null
+}
+
+private fun judge(c: Copy, p: SetupProfile, mark: Mark?, language: String?, typical: Float?, pinned: Boolean, learnt: Map<Correction, Long>): Ranked {
     val dv = "DV" in c.hdr
     val hdr10 = "HDR10" in c.hdr || "HDR10+" in c.hdr
     val shown = when {
@@ -156,6 +165,7 @@ private fun judge(c: Copy, p: SetupProfile, mark: Mark?, language: String?, typi
     }
     val mime = MIMES[c.codec]
     val needs = PASSTHROUGH[c.audio]
+    val failed = audioFamily(c.audio)?.let { learnt[it] }?.takeIf { needs != null && needs !in p.passthrough }
     var support = Support.Works
     val why = when {
         mark != null -> if (mark.works) "works here" else "failed here on ${DAY.format(Instant.ofEpochMilli(mark.at))}".also { support = Support.Wont }
@@ -163,7 +173,7 @@ private fun judge(c: Copy, p: SetupProfile, mark: Mark?, language: String?, typi
         dv && c.dvProfile != null && c.dvProfile !in p.dolbyVisionProfiles -> "Dolby Vision profile ${c.dvProfile} not supported".also { support = Support.Wont }
         dv && c.dvProfile == null -> "Dolby Vision profile unknown".also { support = Support.Unsure }
         !dv && hdr10 && shown == 0 -> "TV shows no HDR10".also { support = Support.Unsure }
-        needs != null && needs !in p.passthrough -> "${AUDIO_NAMES[c.audio]} may not pass through".also { support = Support.Unsure }
+        failed != null -> "${AUDIO_FAMILIES[audioFamily(c.audio)]} didn’t play here on ${DAY.format(Instant.ofEpochMilli(failed))}".also { support = Support.Wont }
         else -> ""
     }
     val channels = if (p.maxChannels > 0) min(c.channels, p.maxChannels) else c.channels
@@ -229,8 +239,9 @@ private val MIMES = mapOf(
 private val GAIN = mapOf("h264" to 1f, "hevc" to 2f, "vp9" to 1.8f, "av1" to 2.4f, "mpeg2video" to 0.6f)
 /** Audio the stick can't decode: it plays only if passed through. */
 private val PASSTHROUGH = mapOf("truehd" to Passthrough.TrueHd, "dts" to Passthrough.Dts, "dtshd" to Passthrough.DtsHd, "dtsx" to Passthrough.DtsX)
-private val AUDIO_NAMES = mapOf("truehd" to "TrueHD", "dts" to "DTS", "dtshd" to "DTS-HD", "dtsx" to "DTS:X")
-private val DAY = DateTimeFormatter.ofPattern("d MMM", Locale.UK).withZone(ZoneId.systemDefault())
+private val AUDIO_FAMILIES = mapOf(Correction.PassesTrueHd to "TrueHD", Correction.PassesDts to "DTS")
+/** "5 Nov", as marks and learnt failures are dated. */
+internal val DAY = DateTimeFormatter.ofPattern("d MMM", Locale.UK).withZone(ZoneId.systemDefault())
 
 /**
  * The judgements the ranker reads, kept per setup or title in [store] and in memory after the first
@@ -244,10 +255,22 @@ class CopyChoices(private val store: KeyValueStore, private val now: () -> Long 
     }
     private val corrections: MutableMap<String, Set<Correction>> by lazy { read<Map<String, Set<Correction>>>(CORRECTIONS).orEmpty().toMutableMap() }
     private val pins: MutableMap<String, String> by lazy { read<Map<String, String>>(PINS).orEmpty().toMutableMap() }
+    private val learnt: MutableMap<String, Map<Correction, Long>> by lazy { read<Map<String, Map<Correction, Long>>>(LEARNT).orEmpty().toMutableMap() }
 
-    /** Ranks [copies] of [titleId] for [setup] with this setup's marks and corrections and the title's pin. */
+    /** Ranks [copies] of [titleId] for [setup] with this setup's marks, corrections and learnt audio, and the title's pin. */
     fun rank(titleId: String, copies: List<Copy>, originalLanguage: String?, setup: SetupProfile, typicalMbps: (Source) -> Float?) =
-        rankCopies(copies, originalLanguage, setup, typicalMbps, marks(setup), corrections(setup), pin(titleId))
+        rankCopies(copies, originalLanguage, setup, typicalMbps, marks(setup), corrections(setup), pin(titleId), learnt(setup))
+
+    /** The audio [setup] was found not to play (no track of a file could), by the correction that would pass it, with when. */
+    @Synchronized fun learnt(setup: SetupProfile): Map<Correction, Long> = learnt[setup.fingerprint].orEmpty()
+
+    /** Records that [family]'s audio didn't play on [setup] ([failed]), or forgets that; nothing for a blank reading. */
+    @Synchronized fun learn(setup: SetupProfile, family: Correction, failed: Boolean) {
+        if (setup.isBlank) return
+        val next = learnt(setup).let { if (failed) it + (family to now()) else it - family }
+        if (next.isEmpty()) learnt.remove(setup.fingerprint) else learnt[setup.fingerprint] = next
+        write<Map<String, Map<Correction, Long>>>(LEARNT, learnt)
+    }
 
     @Synchronized fun marks(setup: SetupProfile): Map<String, Mark> =
         marks[setup.fingerprint]?.filterValues { it.expires > now() }.orEmpty()
@@ -289,6 +312,7 @@ class CopyChoices(private val store: KeyValueStore, private val now: () -> Long 
         const val MARKS = "copies.marks"
         const val CORRECTIONS = "copies.corrections"
         const val PINS = "copies.pins"
+        const val LEARNT = "copies.learnt"
         const val RD_MARK_MS = 30L * 24 * 3_600_000
         val json = Json { ignoreUnknownKeys = true }
     }

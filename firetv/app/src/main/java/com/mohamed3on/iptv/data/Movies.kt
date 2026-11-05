@@ -34,6 +34,9 @@ interface Scored {
     val ir: Double?
 }
 
+/** Any score is known. */
+val Scored.known get() = sn != null || lb != null || ir != null
+
 /** The net share, "60%", "−11%", "~60%" when estimated; null without one. The conviction score only orders rows: its raw number says nothing. */
 fun Scored.scoreLabel(): String? =
     sn?.let { (if (se == 1) "~" else "") + (if (it < 0) "−${-it}" else "$it") + "%" }

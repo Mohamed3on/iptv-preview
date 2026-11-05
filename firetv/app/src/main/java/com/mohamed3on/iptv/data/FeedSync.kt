@@ -154,12 +154,19 @@ class FeedSync(
     }
     private val searches = java.util.concurrent.ConcurrentHashMap<String, List<Movie>>()
 
-    /** A library title's page: TMDB's plot, people, More like this and scores (/api/app/title); kept for the app session. */
+    /**
+     * A library title's page: TMDB's plot, people, More like this and scores (/api/app/title); kept for the app session.
+     * One without scores is asked again (the box fills them on demand), and its scores, once they come, go to [scores].
+     */
     suspend fun title(id: TitleId): Result<MovieInfo> = withContext(Dispatchers.IO) {
-        titles[id]?.let { return@withContext Result.success(it) }
-        runCatching { parseMovieInfo(get("title?id=${q(id)}")).also { titles[id] = it } }
+        val kept = titles[id]
+        if (kept != null && kept.known) return@withContext Result.success(kept)
+        runCatching { parseMovieInfo(get("title?id=${q(id)}")).also { titles[id] = it; if (it.known) scores[id] = it } }
+            .let { if (it.isFailure && kept != null) Result.success(kept) else it }
     }
     private val titles = java.util.concurrent.ConcurrentHashMap<TitleId, MovieInfo>()
+    /** Scores title pages learnt for titles the library had none for, so their cards show them too (Compose state). */
+    val scores = androidx.compose.runtime.mutableStateMapOf<TitleId, Scored>()
 
     /** A person's films and shows, best score first; kept for the app session. */
     suspend fun person(id: Int): Result<List<Movie>> = withContext(Dispatchers.IO) {

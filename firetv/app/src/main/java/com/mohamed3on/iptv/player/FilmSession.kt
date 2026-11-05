@@ -43,7 +43,7 @@ interface FilmPlayer {
         /** Playback stopped to buffer mid-film; not for the buffering after an open or a seek. */
         fun onRebuffer()
         fun onEnded()
-        /** [StreamErrors.failureOf]; also [StreamFailure.Unsupported] for no playable audio track or a detected Dolby Vision profile 7. */
+        /** [StreamErrors.failureOf]; also [StreamFailure.NoAudio] for no playable audio track, [StreamFailure.Unsupported] for none in the language asked or a detected Dolby Vision profile 7. */
         fun onError(failure: StreamFailure)
     }
 }
@@ -438,6 +438,8 @@ class FilmSession(
         player.stop()
         val permanent = StreamErrors.permanent(failure)
         report(FilmEvent.Failover(copy, failure, permanent, playing))
+        // No track played: this setup doesn't play that audio (DTS, TrueHD), so every such copy is ruled out here.
+        if (failure is StreamFailure.NoAudio) for (f in failure.audio.mapNotNull(::audioFamily)) choices.learn(setup(), f, failed = true)
         if (permanent) fault(copy)
         val to = back
         when {

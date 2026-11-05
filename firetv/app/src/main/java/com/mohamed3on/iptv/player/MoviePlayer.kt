@@ -67,7 +67,8 @@ class ExoFilmPlayer(private val exo: ExoPlayer) : FilmPlayer {
         }
 
         // Once per open: a file whose audio can't play here, or whose track in the language asked for (the film's
-        // own, R2) can't while a dub could, is the wrong copy for this setup (e.g. a remux with DTS-HD English).
+        // own, R2) can't while a dub could, is the wrong copy for this setup (e.g. a remux with DTS-HD English). Only
+        // a file none of whose tracks plays teaches the session its formats don't play here ([StreamFailure.NoAudio]).
         override fun onTracksChanged(tracks: Tracks) {
             val audio = tracks.groups.filter { it.type == C.TRACK_TYPE_AUDIO }
             if (checked || audio.isEmpty()) return
@@ -75,7 +76,10 @@ class ExoFilmPlayer(private val exo: ExoPlayer) : FilmPlayer {
             fun plays(g: Tracks.Group) = (0 until g.length).any { g.isTrackSupported(it, true) }
             val asked = wanted?.let(Util::normalizeLanguageCode)
             val inLanguage = audio.filter { asked != null && it.getTrackFormat(0).language?.let(Util::normalizeLanguageCode) == asked }
-            if (audio.none(::plays) || (inLanguage.isNotEmpty() && inLanguage.none(::plays))) listener?.onError(StreamFailure.Unsupported)
+            when {
+                audio.none(::plays) -> listener?.onError(StreamFailure.NoAudio(audio.mapNotNull { AUDIO_NAMES[it.getTrackFormat(0).sampleMimeType] }.toSet()))
+                inLanguage.isNotEmpty() && inLanguage.none(::plays) -> listener?.onError(StreamFailure.Unsupported)
+            }
         }
 
         override fun onPositionDiscontinuity(oldPosition: Player.PositionInfo, newPosition: Player.PositionInfo, reason: Int) {
@@ -217,3 +221,8 @@ private const val REBUFFER_MS = 5_000
 /** Margins under the caps, beyond the loader's 1 MB top-ups, where it counts as filling. */
 private const val TOP_UP_BYTES = 8 * 1024 * 1024
 private const val TOP_UP_MS = 5_000
+/** Audio formats the stick can only pass through, by MIME type, as the ranker names them. */
+private val AUDIO_NAMES = mapOf(
+    MimeTypes.AUDIO_TRUEHD to "truehd", MimeTypes.AUDIO_DTS to "dts", MimeTypes.AUDIO_DTS_HD to "dtshd",
+    MimeTypes.AUDIO_DTS_EXPRESS to "dtshd", MimeTypes.AUDIO_DTS_X to "dtsx",
+)

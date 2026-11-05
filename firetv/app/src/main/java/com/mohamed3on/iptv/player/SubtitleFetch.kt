@@ -53,9 +53,9 @@ fun osHash(head: ByteArray, tail: ByteArray, size: Long): String {
 }
 
 /**
- * Subtitles from the box for a copy with no English ones (R30, KTD18). Each copy is looked up as it opens: its
- * OpenSubtitles hash from two 64 KB range reads in parallel, then the box's list. Once its tracks are known and none
- * is English, the best one shows at once: subtitles are always on by default ([onPicked] hears it). The app draws the lines
+ * Subtitles from the box for a copy with no English ones (R30, KTD18). A copy's own English track shows as soon as its
+ * tracks are known, with no lookup; else it is looked up then: its OpenSubtitles hash from two 64 KB range reads in
+ * parallel, then the box's list, and the best English one shows at once: subtitles are always on by default ([onPicked] hears it). The app draws the lines
  * from the file's cues at the player's position ([at]), so loading a file or moving its timing never touches
  * playback. Main thread, like the player.
  */
@@ -86,6 +86,8 @@ class SubtitleFetch(
     /** A fetched file showed on the copy before: an English track in the next one shows instead. */
     private var wanted = false
     private var finding: Job? = null
+    /** The open copy's lookup, run once its tracks are known and none is English. */
+    private var lookup: (() -> Unit)? = null
     private var loading: Job? = null
 
     private val listener = object : Player.Listener {
@@ -105,16 +107,18 @@ class SubtitleFetch(
         finding?.cancel()
         loading?.cancel()
         _state.value = State(Status.Searching)
-        finding = scope.launch {
-            val (hash, size) = hashOf(url) ?: ("" to 0L)
-            val answer = sync.subtitles(title, hash, size, name).getOrNull()
-            val status = when {
-                answer?.status == "quota" -> Status.NoneToday
-                answer == null || answer.subs.isEmpty() -> Status.None
-                else -> Status.Found
+        lookup = {
+            finding = scope.launch {
+                val (hash, size) = hashOf(url) ?: ("" to 0L)
+                val answer = sync.subtitles(title, hash, size, name).getOrNull()
+                val status = when {
+                    answer?.status == "quota" -> Status.NoneToday
+                    answer == null || answer.subs.isEmpty() -> Status.None
+                    else -> Status.Found
+                }
+                _state.value = State(status, answer?.subs.orEmpty())
+                decide()
             }
-            _state.value = State(status, answer?.subs.orEmpty())
-            decide()
         }
     }
 
@@ -149,20 +153,22 @@ class SubtitleFetch(
     }
 
     private fun decide() {
-        val found = _state.value.subs.firstOrNull()
         val groups = player.currentTracks.groups
-        val status = _state.value.status
-        if (decided || status == Status.Idle || status == Status.Searching || groups.isEmpty()) return
-        decided = true
-        fun language(type: Int, selected: Boolean) = groups.filter { it.type == type }.flatMap { g ->
-            (0 until g.length).filter { !selected || g.isTrackSelected(it) }.map { g.getTrackFormat(it).language }
-        }
-        // Subtitles are on by default (owner's choice): the file's own English track, else a fetched one.
-        if (language(C.TRACK_TYPE_TEXT, false).any { it?.startsWith("en") == true }) {
+        if (decided || groups.isEmpty()) return
+        // Subtitles are on by default (owner's choice): the file's own English track at once, with no lookup.
+        if (groups.any { g -> g.type == C.TRACK_TYPE_TEXT && (0 until g.length).any { g.getTrackFormat(it).language?.startsWith("en") == true } }) {
+            decided = true
+            lookup = null
+            _state.value = State()
             player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
                 .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false).setPreferredTextLanguage("en").build()
             return
         }
+        lookup?.let { lookup = null; return it() }
+        val status = _state.value.status
+        if (status == Status.Idle || status == Status.Searching) return
+        decided = true
+        val found = _state.value.subs.firstOrNull()
         // Only English switches on by itself; Arabic is there to pick in Options.
         if (found == null || !found.lang.startsWith("en")) return
         select(found)

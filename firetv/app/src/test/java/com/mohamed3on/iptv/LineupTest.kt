@@ -25,15 +25,15 @@ class LineupTest {
         assertEquals(listOf(3, 1, 2, 4), Lineup(store).applyTo(feed(ch(1), ch(2), ch(3), ch(4))).ids(ru))
     }
 
-    @Test fun favouritesAreTheFirstGroupAndZapInTheirOwnOrder() {
+    @Test fun favouritesAreTheFirstGroupAndLeadTheirOwn() {
         val lineup = Lineup(MapStore())
-        lineup.toggleFavourite("$ru|2")
+        lineup.toggleFavourite("$ru|3")
         lineup.toggleFavourite("$ru|1")
         val f = lineup.applyTo(feed(ch(1), ch(2), ch(3)))
         assertEquals(listOf(FAVOURITES, ru), f.groups)
-        assertEquals(listOf(2, 1), f.ids(FAVOURITES))
-        assertEquals(listOf(1, 2, 3), f.ids(ru))
-        lineup.toggleFavourite("$ru|2")
+        assertEquals(listOf(3, 1), f.ids(FAVOURITES))
+        assertEquals(listOf(1, 3, 2), f.ids(ru))
+        lineup.toggleFavourite("$ru|3")
         lineup.toggleFavourite("$ru|1")
         assertEquals(listOf(ru), lineup.applyTo(feed(ch(1))).groups)
     }

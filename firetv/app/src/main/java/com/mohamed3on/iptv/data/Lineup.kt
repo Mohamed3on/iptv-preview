@@ -9,7 +9,8 @@ const val FAVOURITES = "Favourites"
 /**
  * The viewer's own lineup, kept on this device: favourite channels, shown as a group of their own
  * (copies, like the 🏆 groups'), and each group's channels in the order they were arranged. Both
- * are by family, so they outlive a refresh that renumbers streams. [version] moves on each change.
+ * are by family, so they outlive a refresh that renumbers streams. Favourites also lead their own group
+ * (not the 🏆 groups, which stay quality-sorted for Live now). [version] moves on each change.
  */
 class Lineup(private val store: KeyValueStore) {
     private val _version = MutableStateFlow(0)
@@ -23,21 +24,22 @@ class Lineup(private val store: KeyValueStore) {
         write(FAVOURITES_KEY, favourites)
     }
 
-    /** Moves [family] one place down (or up) in [group], whose rows' families are [families]; never past an end. */
+    /** Moves [family] one place down (or up) in [group], whose rows' families are [families]; never past an end, nor across the favourites at the top. */
     fun move(group: String, families: List<String>, family: String, down: Boolean) {
         val i = families.indexOf(family)
         val j = i + if (down) 1 else -1
-        if (i < 0 || j !in families.indices) return
+        if (i < 0 || j !in families.indices || isFavourite(families[j]) != isFavourite(family)) return
         write(ORDER_KEY + group, families.toMutableList().apply { this[i] = this[j]; this[j] = family })
     }
 
-    /** [feed] with the favourites group first and each arranged group in its order; channels new since come last. */
+    /** [feed] with the favourites group first and each arranged group in its order, favourites first; channels new since come last. */
     fun applyTo(feed: Feed): Feed {
         val favs = favourites.mapNotNull { feed.familyMembers(it).firstOrNull()?.copy(group = FAVOURITES) }
         val channels = feed.channels + favs
         val sorted = channels.groupBy { it.group }.mapValues { (group, rows) ->
             val order = read(ORDER_KEY + group)
-            (if (order.isEmpty()) rows else rows.sortedBy { order.indexOf(it.family).let { i -> if (i < 0) Int.MAX_VALUE else i } }).iterator()
+            val arranged = if (order.isEmpty()) rows else rows.sortedBy { order.indexOf(it.family).let { i -> if (i < 0) Int.MAX_VALUE else i } }
+            (if (group.startsWith("🏆")) arranged else arranged.sortedBy { it.family !in favourites }).iterator()
         }
         return feed.copy(
             groups = (if (favs.isEmpty()) emptyList() else listOf(FAVOURITES)) + feed.groups,

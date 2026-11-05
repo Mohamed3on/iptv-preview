@@ -566,6 +566,8 @@ fun ChannelOverlay(
     var actions by remember(opens) { mutableStateOf<ChannelItem?>(null) }
     var actionsShown by remember(opens) { mutableStateOf<ChannelItem?>(null) }
     var moving by remember(opens) { mutableStateOf<String?>(null) }
+    // A row just (un)favourited: focus follows it to its new place (favourites lead their group).
+    var follow by remember(opens) { mutableStateOf<String?>(null) }
     val rowFocus = remember { FocusRequester() }
     val groupFocus = remember { FocusRequester() }
     val keyFocus = remember { FocusRequester() }
@@ -778,6 +780,10 @@ fun ChannelOverlay(
     // The row being moved stays in view: the list scrolls a row at a time as it nears an edge.
     val rowStep = with(density) { (ROW_HEIGHT + Space.xs).toPx() }
     LaunchedEffect(items) {
+        follow?.let { key ->
+            follow = null
+            items?.indexOfFirst { it.key == key }?.takeIf { it >= 0 }?.let { focusChannels(it) }
+        }
         val i = items?.indexOfFirst { it.key == moving }?.takeIf { it >= 0 } ?: return@LaunchedEffect
         val was = focusedIndex
         focusedIndex = i
@@ -930,6 +936,15 @@ fun ChannelOverlay(
                 }
                 .onKeyEvent {
                     val code = it.nativeKeyEvent.keyCode
+                    // ⏪ to the first row, ⏩ to the last: one press from hundreds of channels deep.
+                    if (code == AndroidKeyEvent.KEYCODE_MEDIA_REWIND || code == AndroidKeyEvent.KEYCODE_MEDIA_FAST_FORWARD) {
+                        val list = items
+                        if (list == null || onKeyboard) return@onKeyEvent false
+                        if (it.type == KeyEventType.KeyDown) {
+                            focusChannels(if (code == AndroidKeyEvent.KEYCODE_MEDIA_REWIND) list.indexOfFirst { item -> item.focusable } else list.indexOfLast { item -> item.focusable })
+                        }
+                        return@onKeyEvent true
+                    }
                     if (code == AndroidKeyEvent.KEYCODE_MENU) {
                         val row = items?.firstOrNull { item -> item.key == focusedKey } as? ChannelItem
                         if (row == null || onKeyboard) return@onKeyEvent false
@@ -1063,8 +1078,9 @@ fun ChannelOverlay(
                     canMove = (source as? GroupSource)?.name == row.channel.group,
                     stay = { actions != null },
                     onFavourite = {
+                        follow = row.key
+                        actions = null
                         lineup.toggleFavourite(row.channel.family)
-                        closeActions()
                     },
                     onMove = {
                         actions = null

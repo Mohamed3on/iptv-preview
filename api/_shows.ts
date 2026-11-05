@@ -33,6 +33,8 @@ export interface Episode {
   ext: string
   /** Running time in seconds; 0 when the provider doesn't say. */
   secs: number
+  /** A still from the episode; empty when the provider has none. */
+  image: string
 }
 
 const FILE = new URL('../.cache/shows.json', import.meta.url)
@@ -106,12 +108,18 @@ export async function showList(cfg: XtreamConfig): Promise<ShowList> {
 }
 
 interface SeriesInfo {
-  info?: { plot?: string }
-  episodes?: Record<string, { id: string; episode_num: number | string; title?: string; container_extension?: string; season?: number; info?: { duration_secs?: number | string } }[]>
+  info?: { plot?: string; genre?: string; cast?: string; rating?: string | number; backdrop_path?: string[] | string }
+  episodes?: Record<string, { id: string; episode_num: number | string; title?: string; container_extension?: string; season?: number; info?: { duration_secs?: number | string; movie_image?: string } }[]>
 }
 
-/** A show's plot and its episodes, in season and episode order. */
-export async function showEpisodes(cfg: XtreamConfig, seriesId: number): Promise<{ plot: string; episodes: Episode[] }> {
+/** The first of the provider's backdrops (a list, sometimes one string); "" when none. */
+const firstBackdrop = (b: string[] | string | undefined) => String((Array.isArray(b) ? b[0] : b) ?? '').trim()
+/** The first few names of a cast list. */
+const castOf = (c: string | undefined) => String(c ?? '').split(',').map((s) => s.trim()).filter(Boolean).slice(0, 4).join(', ')
+const ratingOf = (r: string | number | undefined) => (Number(r) > 0 ? Number(r).toFixed(1) : '')
+
+/** A show's plot, backdrop, genres, cast and rating, and its episodes in season and episode order. */
+export async function showEpisodes(cfg: XtreamConfig, seriesId: number) {
   const info = await apiGet<SeriesInfo>(cfg, `get_series_info&series_id=${seriesId}`)
   const episodes = Object.entries(info.episodes ?? {})
     .flatMap(([season, eps]) =>
@@ -123,25 +131,29 @@ export async function showEpisodes(cfg: XtreamConfig, seriesId: number): Promise
         title: String(e.title ?? '').match(/S\d+\s*E\d+\s*-\s*(.+)$/i)?.[1]?.trim() ?? '',
         ext: e.container_extension || 'mkv',
         secs: Number(e.info?.duration_secs) || 0,
+        image: String(e.info?.movie_image ?? '').trim(),
       })),
     )
     .filter((e) => e.id > 0)
     .sort((a, b) => a.season - b.season || a.episode - b.episode)
-  return { plot: String(info.info?.plot ?? '').trim(), episodes }
+  const i = info.info ?? {}
+  return { plot: String(i.plot ?? '').trim(), backdrop: firstBackdrop(i.backdrop_path), genre: String(i.genre ?? '').trim(), cast: castOf(i.cast), rating: ratingOf(i.rating), episodes }
 }
 
 interface VodInfo {
-  info?: { plot?: string; description?: string; genre?: string; duration_secs?: number | string; rating?: string | number }
+  info?: { plot?: string; description?: string; genre?: string; duration_secs?: number | string; rating?: string | number; backdrop_path?: string[] | string; cast?: string; actors?: string; director?: string }
 }
 
-/** A film's plot, running time (seconds, 0 when unknown), genres and rating ("" when unknown). */
+/** A film's plot, running time (seconds, 0 when unknown), genres, rating, backdrop, cast and director ("" when unknown). */
 export async function movieInfo(cfg: XtreamConfig, vodId: number) {
   const info = (await apiGet<VodInfo>(cfg, `get_vod_info&vod_id=${vodId}`)).info ?? {}
-  const rating = Number(info.rating)
   return {
     plot: String(info.plot || info.description || '').trim(),
     secs: Number(info.duration_secs) || 0,
     genre: String(info.genre ?? '').trim(),
-    rating: rating > 0 ? rating.toFixed(1) : '',
+    rating: ratingOf(info.rating),
+    backdrop: firstBackdrop(info.backdrop_path),
+    cast: castOf(info.cast || info.actors),
+    director: String(info.director ?? '').trim(),
   }
 }

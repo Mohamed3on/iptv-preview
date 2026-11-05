@@ -10,10 +10,12 @@
 // POST /api/app/bitrate?t=TOKEN — a feed's bitrate the app measured while playing.
 // POST /api/app/events?t=TOKEN — what happened while watching, for later analysis.
 // POST /api/app/title-ids?t=TOKEN — title ids for the provider ids the app saved marks under.
+// GET /api/app/library?t=TOKEN — Movies & Shows: titles and rows (see _library.ts).
 import { appendFile, mkdir, rename, stat } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import { buildAppFeed, buildAppGuide } from './_app-feed.js'
 import { appTokenOk, backupConfigFromEnv, configFromEnv, fetchCuratedChannels, saneFps, savedVodChannels, withBackupFeeds, withCompetitionGroups } from './_lib.js'
+import { providerLibrary, servedLibrary } from './_library.js'
 import { addBitrate, mergeAppReading, saveQuality, type Meta } from './_quality.js'
 import { QUALITY } from './quality-cache.js'
 import { curatedGuide } from './epg.js'
@@ -227,6 +229,21 @@ export async function episodes(req: Request): Promise<Response> {
     return Response.json({ ...show, ...(await tmdbFacts(show.titleId)) }, {
       headers: { 'Cache-Control': 'private, s-maxage=21600, stale-while-revalidate=86400' },
     })
+  } catch (e) {
+    return new Response(e instanceof Error ? e.message : 'upstream error', { status: 502 })
+  }
+}
+
+// GET /api/app/library?t=TOKEN — the Movies & Shows library the nightly job builds (see _library.ts), held in
+// memory; a request whose If-None-Match names the current ETag gets an empty 304.
+export async function library(req: Request): Promise<Response> {
+  if (!appTokenOk(req.url)) return forbidden()
+  try {
+    const { body, etag } = await servedLibrary(() => providerLibrary(configFromEnv()))
+    const headers = { ETag: etag, 'Cache-Control': 'private, no-cache' }
+    // Cloudflare weakens the ETag (W/) when it compresses the response.
+    if (req.headers.get('if-none-match')?.replace(/^W\//, '') === etag) return new Response(null, { status: 304, headers })
+    return new Response(body, { headers: { ...headers, 'Content-Type': 'application/json' } })
   } catch (e) {
     return new Response(e instanceof Error ? e.message : 'upstream error', { status: 502 })
   }

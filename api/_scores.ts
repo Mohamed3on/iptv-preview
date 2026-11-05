@@ -1,5 +1,5 @@
-// Scores for the library (KTD16). Rows sort by [s], TrueScore's conviction on Letterboxd's histogram where TrueScore's
-// store on the box has one ([letterboxdHistograms]), else on IMDb's 1–10 one (loved 9–10
+// Scores for the library (KTD16). Rows sort by [s], TrueScore's own score where its store on the box has one
+// ([letterboxdFilms]), else its conviction on Letterboxd's histogram from there, else on IMDb's 1–10 one (loved 9–10
 // minus hated 1–2, weighted by that net share); titles without one follow, by [s10], and a title with neither sorts
 // at its row's median. [s10] is IMDb's and Letterboxd's averages (MDBList), each pulled toward 6.5/10 by a Bayesian
 // prior (3,000 votes for IMDb, 1,000 for Letterboxd), averaged by votes. Answers are kept in .cache/scores.json:
@@ -36,18 +36,22 @@ const median = (xs: number[]) => xs.slice().sort((a, b) => a - b)[Math.floor(xs.
 export const netScore = (net: number, total: number) => (total > 0 ? Math.sign(net) * Math.round((net * net) / total) : 0)
 
 const LBX_FILE = process.env.LETTERBOXD_HISTOGRAMS || '/var/lib/truescore/letterboxd.json'
-const lbx = { at: 0, byId: new Map<string, number[]>() }
+type LbxFilm = { h?: number[]; score?: number }
+const lbx = { at: 0, byId: new Map<string, LbxFilm>() }
 /**
- * Letterboxd's histograms (½★ to 5★) by movie:<tmdb>, from TrueScore's store on this box (what its extension saw on
- * letterboxd.com), the busiest per id; read again after 5 minutes, the last one kept while the file can't be read.
+ * TrueScore's score and Letterboxd's histogram (½★ to 5★) by movie:<tmdb>, from TrueScore's store on this box (what
+ * its extension saw on letterboxd.com), the busiest histogram per id; read again after 5 minutes, the last one kept
+ * while the file can't be read.
  */
-export function letterboxdHistograms(now = Date.now()) {
+export function letterboxdFilms(now = Date.now()) {
   if (now - lbx.at < 5 * 60e3) return lbx.byId
   lbx.at = now
   try {
-    const byId = new Map<string, number[]>()
-    for (const { h, tmdb } of Object.values(JSON.parse(readFileSync(LBX_FILE, 'utf8')) as Record<string, { h: number[]; tmdb?: number | null }>)) {
-      if (tmdb && sum(h) > sum(byId.get(`movie:${tmdb}`) ?? [])) byId.set(`movie:${tmdb}`, h)
+    const byId = new Map<string, LbxFilm>()
+    for (const { h, score, tmdb } of Object.values(JSON.parse(readFileSync(LBX_FILE, 'utf8')) as Record<string, LbxFilm & { tmdb?: number | null }>)) {
+      if (!tmdb) continue
+      const id = `movie:${tmdb}`, was = byId.get(id) ?? {}
+      byId.set(id, { score: score ?? was.score, h: h && sum(h) > sum(was.h ?? []) ? h : was.h })
     }
     lbx.byId = byId
   } catch { /* the last read stands */ }
@@ -61,15 +65,17 @@ export function letterboxdHistograms(now = Date.now()) {
  * IMDb's votes and the histogram's, so a Letterboxd-ranked film sits on the same scale as an IMDb-ranked one
  * (share × |share| × votes, which is [netScore] when the histogram is IMDb's own).
  */
-export function scoreTitles(cache: ScoreCache, lbxH = letterboxdHistograms()): Map<string, Score> {
+export function scoreTitles(cache: ScoreCache, lbxFilms = letterboxdFilms()): Map<string, Score> {
   const out = new Map<string, Score>()
   for (const [id, e] of Object.entries(cache)) {
     const src = ([[e.ir, e.iv, 3000], [e.lb && e.lb * 2, e.lv, 1000]] as number[][]).filter(([r, v]) => r && v)
     const votes = sum(src.map(([, v]) => v))
     const raw = votes && sum(src.map(([r, v, m]) => (v * (v * r + m * 6.5)) / (v + m))) / votes
     const shown = { ...(e.ir && { ir: e.ir }), ...(e.iv && { iv: e.iv }), ...(e.lb && { lb: e.lb }), ...(e.lv && { lv: e.lv }) }
-    const h = lbxH.get(id) ?? e.h, total = h ? sum(h) : 0
-    if (total) {
+    const lf = lbxFilms.get(id), h = lf?.h ?? e.h, total = h ? sum(h) : 0
+    // TrueScore's own score (its net conviction over Letterboxd's and IMDb's ratings) first, then a histogram's, then IMDb's.
+    if (lf?.score !== undefined) out.set(id, { s: lf.score })
+    else if (total) {
       const share = (h![8] + h![9] - h![0] - h![1]) / total
       out.set(id, { s: Math.round(share * Math.abs(share) * Math.max(total, e.iv ?? 0)) })
     }

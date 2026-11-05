@@ -63,12 +63,14 @@ class CopyRankerTest {
         val copies = listOf(trueHd, hdr10Web)
         val choices = CopyChoices(MapStore())
         choices.learn(hdr10Tv, Correction.PassesTrueHd, failed = true)
-        assertEquals(Support.Wont, choices.rank("movie:1", copies, "en", hdr10Tv) { null }.copies.first { it.copy == trueHd }.support)
+        val learnt = choices.rank("movie:1", copies, "en", hdr10Tv) { null }
+        assertEquals(trueHd, learnt.pick?.copy) // only demoted: the remux may carry a Dolby track too
+        assertTrue(learnt.pick!!.reason, learnt.pick!!.reason.startsWith("TrueHD didn’t play here"))
 
         choices.correct(hdr10Tv, Correction.PassesTrueHd, true)
         val corrected = choices.rank("movie:1", copies, "en", hdr10Tv) { null }
         assertEquals(trueHd, corrected.pick?.copy)
-        assertEquals(Support.Works, corrected.pick?.support)
+        assertEquals("best for this setup", corrected.pick?.reason)
     }
 
     @Test fun ae9AnUnknownDolbyVisionProfileIsOfferedNotPlayed() {

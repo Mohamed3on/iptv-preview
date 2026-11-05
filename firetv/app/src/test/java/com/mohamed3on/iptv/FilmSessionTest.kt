@@ -167,20 +167,23 @@ class FilmSessionTest {
         assertEquals(false, r.choices.marks(tv)[rd4k.id]?.works)
     }
 
-    // Unreported audio is tried; a file none of whose tracks plays teaches the setup, whose copies of that kind are skipped after.
-    @Test fun audioThatDidntPlayIsLearntForTheSetupAndItsCopiesSkipped() = runTest {
+    // Unreported audio is tried; a file none of whose tracks plays is marked and teaches the setup, whose copies of
+    // that kind then rank below otherwise equal ones (never ruled out: a remux may carry a Dolby track too).
+    @Test fun audioThatDidntPlayIsLearntForTheSetupAndItsCopiesDemoted() = runTest {
         val r = rig()
         val dts = rd4k.copy(id = "rd:dts", audio = "dts")
         r.player.respond = { if ("rd:dts" in it) StreamFailure.NoAudio(setOf("dts")) else null }
         play(r, dts, iptv1080)
         assertEquals(listOf("rd:dts", "iptv:1"), r.player.opens.map { it.first.substringAfter("test/").substringBefore('/') })
         assertEquals(iptv1080, r.state.copy)
+        assertEquals(false, r.choices.marks(tv)[dts.id]?.works)
 
         val dtsHd = rd4k.copy(id = "rd:dtshd", audio = "dtshd")
-        val ranked = r.choices.rank("movie:2", listOf(dtsHd, iptv1080), "en", tv) { null }
-        assertEquals(iptv1080, ranked.pick?.copy)
+        val ranked = r.choices.rank("movie:2", listOf(dtsHd, rd4k), "en", tv) { null }
+        assertEquals(listOf(rd4k, dtsHd), ranked.copies.map { it.copy })
         assertTrue(ranked.copies[1].reason, ranked.copies[1].reason.startsWith("DTS didn’t play here on"))
-        assertEquals(dtsHd, r.choices.rank("movie:2", listOf(dtsHd, iptv1080), "en", dvTv) { null }.pick?.copy) // a new setup tries again
+        assertEquals(dtsHd, r.choices.rank("movie:2", listOf(dtsHd, iptv1080), "en", tv) { null }.pick?.copy) // not ruled out
+        assertEquals(dtsHd, r.choices.rank("movie:2", listOf(dtsHd, rd4k), "en", dvTv) { null }.pick?.copy) // a new setup: no demotion, a tie keeps order
     }
 
     // R2: a multi-language file's default track is often a dub; a first play asks for the film's own language.

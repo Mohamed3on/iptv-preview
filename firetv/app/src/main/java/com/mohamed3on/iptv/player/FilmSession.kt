@@ -438,7 +438,7 @@ class FilmSession(
         player.stop()
         val permanent = StreamErrors.permanent(failure)
         report(FilmEvent.Failover(copy, failure, permanent, playing))
-        // No track played: this setup doesn't play that audio (DTS, TrueHD), so every such copy is ruled out here.
+        // No track played: this setup doesn't play that audio (DTS, TrueHD); copies listing it rank lower here (this one is marked).
         if (failure is StreamFailure.NoAudio) for (f in failure.audio.mapNotNull(::audioFamily)) choices.learn(setup(), f, failed = true)
         if (permanent) fault(copy)
         val to = back

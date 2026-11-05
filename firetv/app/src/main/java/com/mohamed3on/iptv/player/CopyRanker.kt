@@ -107,7 +107,9 @@ class Ranking internal constructor(
  * Ranks a title's [copies] for [setup] (U6): language, then support, then bandwidth, picture, sound,
  * English subtitles for a foreign film, and Real-Debrid on a tie (KTD15); a [pin] beats all of it.
  * [marks] are this setup's, by copy id; [typicalMbps] is per source, null when unknown (optimistic). Audio the
- * setup doesn't report passing is taken to play until it [learnt] otherwise (the audio's correction, when).
+ * setup doesn't report passing is taken to play: a release name lists only its headline track, and a remux often
+ * carries a Dolby one too. Audio it [learnt] doesn't play (the audio's correction, when) only ranks the copy's sound
+ * lowest; a copy that itself had no playable track is marked as any failure is.
  */
 fun rankCopies(
     copies: List<Copy>,
@@ -171,9 +173,10 @@ private fun judge(c: Copy, p: SetupProfile, mark: Mark?, language: String?, typi
         mark != null -> if (mark.works) "works here" else "failed here on ${DAY.format(Instant.ofEpochMilli(mark.at))}".also { support = Support.Wont }
         mime != null && mime !in p.videoCodecs -> "${c.codec.uppercase()} not decoded here".also { support = Support.Wont }
         dv && c.dvProfile != null && c.dvProfile !in p.dolbyVisionProfiles -> "Dolby Vision profile ${c.dvProfile} not supported".also { support = Support.Wont }
-        dv && c.dvProfile == null -> "Dolby Vision profile unknown".also { support = Support.Unsure }
+        // A TV without Dolby Vision shows a named HDR10 layer: the profile doesn't matter there (a hybrid remux, say).
+        dv && c.dvProfile == null && (Hdr.DolbyVision in p.hdr || !hdr10) -> "Dolby Vision profile unknown".also { support = Support.Unsure }
         !dv && hdr10 && shown == 0 -> "TV shows no HDR10".also { support = Support.Unsure }
-        failed != null -> "${AUDIO_FAMILIES[audioFamily(c.audio)]} didn’t play here on ${DAY.format(Instant.ofEpochMilli(failed))}".also { support = Support.Wont }
+        failed != null -> "${AUDIO_FAMILIES[audioFamily(c.audio)]} didn’t play here on ${DAY.format(Instant.ofEpochMilli(failed))}"
         else -> ""
     }
     val channels = if (p.maxChannels > 0) min(c.channels, p.maxChannels) else c.channels
@@ -187,7 +190,7 @@ private fun judge(c: Copy, p: SetupProfile, mark: Mark?, language: String?, typi
         dvMissing = dv && Hdr.DolbyVision !in p.hdr,
         hdr = shown,
         bits = c.mbps * (GAIN[c.codec] ?: if (c.resolution >= 2160) 2f else 1f),
-        sound = if (atmos) 3 else if (channels >= 6) 2 else 1,
+        sound = if (failed != null) 0 else if (atmos) 3 else if (channels >= 6) 2 else 1,
         subs = language != null && language != "en" && c.englishSubs,
     )
 }
@@ -224,7 +227,7 @@ private fun reason(r: Ranked, pick: Ranked?): String = when {
         2 -> if (r.copy.resolution > 0) "only ${r.copy.resolution}p" else "resolution unknown"
         3 -> if (r.dvMissing) "TV has no Dolby Vision" else if (r.hdr == 0) "SDR" else "lesser HDR"
         4 -> "lower bitrate"
-        5 -> if (pick.sound == 3) "no Atmos" else "fewer channels"
+        5 -> if (r.sound == 0) r.why else if (pick.sound == 3) "no Atmos" else "fewer channels"
         6 -> "no English subtitles"
         7 -> "same on IPTV"
         0 -> "same as the pick"

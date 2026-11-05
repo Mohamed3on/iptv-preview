@@ -221,7 +221,7 @@ private val ORDER = Comparator<Ranked> { a, b ->
 }
 
 private fun reason(r: Ranked, pick: Ranked?): String = when {
-    r === pick -> if (r.pinned) "pinned" else r.why.ifEmpty { "best for this setup" }
+    r === pick -> if (r.pinned) "Your choice" else r.why.ifEmpty { "best for this setup" }
     pick == null || r.support == Support.Wont -> r.why
     !r.original && pick.original -> "dub"
     r.support == Support.Unsure -> r.why

@@ -176,7 +176,7 @@ internal fun Versions(title: String, data: VersionsData, first: FocusRequester, 
                 when {
                     reported -> "Yes, reported"
                     c in corrections -> "Yes, set by you"
-                    failed != null -> "No, learnt ${DAY.format(Instant.ofEpochMilli(failed))} · Menu clears"
+                    failed != null -> "No, learnt ${DAY.format(Instant.ofEpochMilli(failed))} · ☰ to undo"
                     c == Correction.IgnoreBandwidth -> "No"
                     else -> "Not reported, tried"
                 },
@@ -255,7 +255,7 @@ private fun VersionRow(r: Ranked, reason: String, data: VersionsData, focus: Foc
     val status = listOfNotNull(
         reason.ifEmpty { null },
         rdState(c, data.rd),
-        onClear?.let { "Menu clears" },
+        onClear?.let { "☰ to undo" },
     ).joinToString(" · ")
     var focused by remember { mutableStateOf(false) }
     Column(

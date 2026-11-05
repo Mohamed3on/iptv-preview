@@ -33,8 +33,15 @@ export interface LibTitle {
   t?: Tier
   /** 1 when [t] is a category's claim (its resolution's ceiling), not measured. */
   e?: 1
-  /** Conviction score (U12). */
+  /** Conviction score (api/_scores.ts); absent when unknown. */
   s?: number
+  /** Its net share, (loved − hated) / total, in %. */
+  sn?: number
+  /** 1 when [s] is estimated (under 50 Trakt votes, fitted from Letterboxd or IMDb). */
+  se?: 1
+  /** Letterboxd average (0–5) and IMDb average (0–10), from MDBList. */
+  lb?: number
+  ir?: number
 }
 export interface Row { id: string; n: string; /** Indexes into Library.titles. */ i: number[] }
 export interface Library { v: 1; src: 'tmdb' | 'provider'; at: string; img: string; gn: Record<string, string>; titles: LibTitle[]; rows: Row[] }
@@ -172,6 +179,8 @@ export async function providerLibrary(cfg: XtreamConfig): Promise<Library> {
 }
 
 export const LIBRARY_FILE = fileURLToPath(new URL('../.cache/library.json', import.meta.url))
+/** The build's uncut library (every title, unscored): the next build's memory of TMDB details and tiers. */
+export const LIBRARY_FULL_FILE = fileURLToPath(new URL('../.cache/library-full.json', import.meta.url))
 
 /** Writes the library atomically (temp + rename). */
 export async function saveLibrary(lib: Library, file = LIBRARY_FILE): Promise<void> {

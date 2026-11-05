@@ -24,7 +24,8 @@ import java.nio.ByteOrder
 data class SrtCue(val start: Long, val end: Long, val text: String)
 
 private val TIMES = Regex("""(\d+):(\d{2}):(\d{2})[,.](\d{3})\s*-->\s*(\d+):(\d{2}):(\d{2})[,.](\d{3})""")
-private val TAGS = Regex("""<[^>]+>|\{\\[^}]*}""")
+// Android's ICU regex rejects a bare "}" (the JVM's doesn't): escaped, or the first fetched file crashes the app.
+private val TAGS = Regex("""<[^>]+>|\{\\[^}]*\}""")
 
 /** An SRT's cues in start order, their formatting tags dropped. */
 fun parseSrt(srt: String): List<SrtCue> = srt.removePrefix("﻿").replace("\r", "").split(Regex("""\n\s*\n""")).mapNotNull { block ->

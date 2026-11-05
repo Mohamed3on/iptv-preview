@@ -1,8 +1,21 @@
 package com.mohamed3on.iptv.ui
 
 import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.Crossfade
+import android.graphics.Bitmap
+import android.graphics.LinearGradient
+import android.graphics.Paint
+import android.graphics.Rect
+import android.graphics.Shader
+import android.util.LruCache
 import androidx.compose.animation.core.tween
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.unit.IntSize
+import coil3.PlatformContext
+import coil3.request.allowHardware
+import coil3.toBitmap
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.BoxScope
@@ -11,7 +24,6 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
-import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.sp
@@ -694,54 +706,99 @@ private fun backdropOf(movie: Movie?, info: MovieInfo?): String? =
  * sits; with [solidFrom], it fades to the plain ground there, so rows below sit on ink (and their edge
  * fades, drawn in ink, match it). A new backdrop is loaded before it cross-fades in,
  * so the screen never flashes to ink between titles; a title with none fades to the plain ground.
- * Drawn in its own layer: rows moving over it never repaint the picture.
+ * The scrims are baked into the still ([bakedBackdrop]), so a frame draws one or two pictures and no
+ * offscreen layer: compositing the layered crossfade cost the stick's GPU ~50 ms a frame.
  */
 @Composable
 private fun Backdrop(url: String?, solidFrom: Dp?, modifier: Modifier = Modifier) {
     val context = LocalPlatformContext.current
-    var shownUrl by remember { mutableStateOf<String?>(null) }
+    val topShare = TOP_SCRIM.value / LocalConfiguration.current.screenHeightDp
+    // [shown] fades in over [under] (drawn whole), or, when null, [under] fades out to ink.
+    var shown by remember { mutableStateOf<ImageBitmap?>(null) }
+    var under by remember { mutableStateOf<ImageBitmap?>(null) }
+    val fade = remember { Animatable(1f) }
     val lastSolid = remember { arrayOf(0.dp) }
-    fun request(u: String) = ImageRequest.Builder(context).data(tmdbAt(u, "w1280")).size(BACKDROP_PX.first, BACKDROP_PX.second).build()
     LaunchedEffect(url) {
-        if (url.isNullOrEmpty()) {
-            shownUrl = null
-            return@LaunchedEffect
-        }
-        if (SingletonImageLoader.get(context).execute(request(url)) is SuccessResult) shownUrl = url
+        val next = if (url.isNullOrEmpty()) null else bakedBackdrop(context, url, topShare) ?: return@LaunchedEffect
+        if (next == shown) return@LaunchedEffect
+        under = shown
+        shown = next
+        fade.snapTo(0f)
+        fade.animateTo(1f, tween(BACKDROP_FADE_MS))
+        under = null
     }
     // Up next to the rows: the ground rises from the bottom to [solidFrom].
     val cover = animateFloatAsState(if (solidFrom != null) 1f else 0f, Motion.panel(), label = "cover")
     val solid = solidFrom ?: lastSolid[0]
     if (solidFrom != null) lastSolid[0] = solidFrom
-    Box(modifier.fillMaxSize().graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }.drawBehind { drawRect(Palette.ink) }) {
-        Crossfade(shownUrl, animationSpec = tween(BACKDROP_FADE_MS), label = "backdrop") { u ->
-            if (u != null) AsyncImage(model = request(u), contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
-        }
-        Box(
-            Modifier.fillMaxSize().drawWithCache {
-                val ink = Palette.ink
-                // Dense across the text column (to ~60% of the width), so plot text clears 4.5:1 over a white sky, then off.
-                val left = Brush.horizontalGradient(0f to ink.copy(alpha = 0.94f), 0.6f to ink.copy(alpha = 0.86f), 0.88f to ink.copy(alpha = 0f))
-                val bottom = Brush.verticalGradient(0.4f to ink.copy(alpha = 0f), 1f to ink.copy(alpha = 0.96f))
-                val band = SOLID_BAND.toPx()
-                val topBand = TOP_SCRIM.toPx()
-                val top = Brush.verticalGradient(0f to ink.copy(alpha = 0.7f), 1f to ink.copy(alpha = 0f), startY = 0f, endY = topBand)
-                onDrawBehind {
-                    drawRect(left)
-                    drawRect(bottom)
-                    drawRect(top, size = Size(size.width, topBand))
-                    val c = cover.value.coerceIn(0f, 1f)
-                    // The rows page sets a wider hero over the picture: it sits back further.
-                    if (c > 0f) drawRect(ink, alpha = HERO_DIM * c)
-                    if (c > 0f) {
-                        val y = size.height - (size.height - solid.toPx()) * c
-                        drawRect(Brush.verticalGradient(listOf(ink.copy(alpha = 0f), ink), startY = y - band, endY = y), topLeft = Offset(0f, y - band), size = Size(size.width, band))
-                        drawRect(ink, topLeft = Offset(0f, y), size = Size(size.width, size.height - y))
-                    }
+    Box(
+        modifier.fillMaxSize().drawWithCache {
+            val ink = Palette.ink
+            val band = SOLID_BAND.toPx()
+            val whole = IntSize(size.width.toInt(), size.height.toInt())
+            onDrawBehind {
+                val p = fade.value
+                val top = shown
+                val base = under
+                if (top == null || (base == null && p < 1f)) drawRect(ink)
+                if (top == null) {
+                    base?.let { drawImage(it, dstSize = whole, alpha = 1f - p) }
+                } else {
+                    base?.let { drawImage(it, dstSize = whole) }
+                    drawImage(top, dstSize = whole, alpha = p)
                 }
-            },
-        )
+                val c = cover.value.coerceIn(0f, 1f)
+                // The rows page sets a wider hero over the picture: it sits back further.
+                if (c > 0f) {
+                    drawRect(ink, alpha = HERO_DIM * c)
+                    val y = size.height - (size.height - solid.toPx()) * c
+                    drawRect(Brush.verticalGradient(listOf(ink.copy(alpha = 0f), ink), startY = y - band, endY = y), topLeft = Offset(0f, y - band), size = Size(size.width, band))
+                    drawRect(ink, topLeft = Offset(0f, y), size = Size(size.width, size.height - y))
+                }
+            }
+        },
+    )
+}
+
+/** The last few baked backdrops, so a title page opened from its hero, or Back to the hero, starts at once. */
+private val baked = LruCache<String, ImageBitmap>(3)
+
+/**
+ * [url]'s still at 720p with the scrims drawn in, on the CPU off the main thread, and handed to the GPU
+ * early: ink across the text column, dense enough to the left (~60% of the width) that plot text clears
+ * 4.5:1 over a white sky, then off by 88%; a bottom scrim; a top band ([topShare] of the height) so Search
+ * reads. Null when it doesn't load.
+ */
+private suspend fun bakedBackdrop(context: PlatformContext, url: String, topShare: Float): ImageBitmap? {
+    baked.get(url)?.let { return it }
+    val request = ImageRequest.Builder(context).data(tmdbAt(url, "w1280")).size(BACKDROP_PX.first, BACKDROP_PX.second).allowHardware(false).build()
+    val src = (SingletonImageLoader.get(context).execute(request) as? SuccessResult)?.image?.toBitmap() ?: return null
+    val out = withContext(Dispatchers.Default) {
+        val (w, h) = BACKDROP_PX
+        val bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        val canvas = android.graphics.Canvas(bitmap)
+        // Centre-cropped to the screen's 16:9.
+        val scale = maxOf(w.toFloat() / src.width, h.toFloat() / src.height)
+        val cw = w / scale
+        val ch = h / scale
+        val from = Rect(((src.width - cw) / 2).toInt(), ((src.height - ch) / 2).toInt(), ((src.width + cw) / 2).toInt(), ((src.height + ch) / 2).toInt())
+        canvas.drawColor(Palette.ink.toArgb())
+        canvas.drawBitmap(src, from, Rect(0, 0, w, h), Paint(Paint.FILTER_BITMAP_FLAG))
+        fun ink(alpha: Float) = Palette.ink.copy(alpha = alpha).toArgb()
+        val paint = Paint()
+        fun scrim(x1: Float, y1: Float, colors: IntArray, stops: FloatArray, bottom: Float = h.toFloat()) {
+            paint.shader = LinearGradient(0f, 0f, x1, y1, colors, stops, Shader.TileMode.CLAMP)
+            canvas.drawRect(0f, 0f, w.toFloat(), bottom, paint)
+        }
+        scrim(w.toFloat(), 0f, intArrayOf(ink(0.94f), ink(0.86f), ink(0f)), floatArrayOf(0f, 0.6f, 0.88f))
+        scrim(0f, h.toFloat(), intArrayOf(ink(0f), ink(0.96f)), floatArrayOf(0.4f, 1f))
+        scrim(0f, h * topShare, intArrayOf(ink(0.7f), ink(0f)), floatArrayOf(0f, 1f), bottom = h * topShare)
+        bitmap.setHasAlpha(false)
+        bitmap.prepareToDraw()
+        bitmap.asImageBitmap()
     }
+    baked.put(url, out)
+    return out
 }
 
 /**
@@ -1572,6 +1629,12 @@ private fun TitleScroll(main: @Composable BoxScope.() -> Unit, extras: @Composab
     val scope = rememberCoroutineScope()
     val inherited = LocalBringIntoViewSpec.current
     val keepClear = rememberKeepClear()
+    // The extras come a frame after the page, so its opening frame lays out only what shows.
+    var below by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        withFrameNanos {}
+        below = true
+    }
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val screen = maxHeight
         CompositionLocalProvider(LocalBringIntoViewSpec provides NO_SCROLL) {
@@ -1584,7 +1647,7 @@ private fun TitleScroll(main: @Composable BoxScope.() -> Unit, extras: @Composab
                     )
                 }
                 Box(Modifier.onFocusChanged { if (it.hasFocus) scope.launch { scroll.animateScrollTo(scroll.maxValue) } }) {
-                    CompositionLocalProvider(LocalBringIntoViewSpec provides keepClear, content = extras)
+                    if (below) CompositionLocalProvider(LocalBringIntoViewSpec provides keepClear, content = extras)
                 }
             }
         }
@@ -1601,6 +1664,12 @@ private fun TitleExtras(info: MovieInfo?, watched: Set<TitleId>, focus: ExtrasFo
     val more = info?.moreMovies.orEmpty()
     if (people.isEmpty() && more.isEmpty()) return
     val focusManager = LocalFocusManager.current
+    // More like this a frame after the cast: laying out both in one frame took ~30 ms on the stick.
+    var posters by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        withFrameNanos {}
+        posters = true
+    }
     Column(Modifier.padding(bottom = Space.xl), verticalArrangement = Arrangement.spacedBy(Space.s)) {
         if (people.isNotEmpty()) {
             Text("Cast and crew", style = Type.headline, maxLines = 1, modifier = Modifier.padding(start = EDGE))
@@ -1623,7 +1692,7 @@ private fun TitleExtras(info: MovieInfo?, watched: Set<TitleId>, focus: ExtrasFo
                 }
             }
         }
-        if (more.isNotEmpty()) {
+        if (more.isNotEmpty() && posters) {
             val opened = focus.opened?.removePrefix("m:")
             PosterRow(
                 remember(more) { MovieRow("more", "More like this", null, more, emptyMap()) },

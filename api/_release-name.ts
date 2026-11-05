@@ -52,7 +52,9 @@ function tail(line: string): string {
 
 export function parseRelease(text: string): Attrs {
   const t = text.normalize('NFKC').split('\n').map(tail).join('\n').toLowerCase()
-  const res = Number(t.match(/(?<!\d)(2160|1080|720|576|480)[pi](?![a-z0-9])/)?.[1] ?? (/\b(?:4k|uhd)\b/.test(t) ? 2160 : 0))
+  const named = Number(t.match(/(?<!\d)(2160|1080|720|576|480)[pi](?![a-z0-9])/)?.[1] ?? (/\b(?:4k|uhd)\b/.test(t) ? 2160 : 0))
+  // AI upscales ("Ai-Enhanced", "AI Upscaled") are a lower-resolution source stretched up: rank them a step down.
+  const res = named === 2160 && /\bai[ ._-]?(?:enhanced|upscal)|\bupscal/.test(t) ? 1080 : named
   const fel = /\b(?:fel|mel)\b/.test(t)
   const dv = fel || /\b(?:dv|dovi|dolby[ .]?vision)\b/.test(t)
   const plus = /\bhdr10(?:\+|plus)/.test(t)

@@ -25,6 +25,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -42,6 +43,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -73,6 +75,7 @@ import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
+import androidx.media3.common.VideoSize
 import androidx.tv.material3.Text
 import com.mohamed3on.iptv.data.Movie
 import com.mohamed3on.iptv.graph
@@ -153,6 +156,8 @@ internal fun MoviePlayback(movie: Movie, from: Long, url: String, onSave: (pos: 
     val audio = remember { AudioTracks(exo) }
     val subtitles = remember { SubtitleTracks(exo) }
     var cues by remember { mutableStateOf<List<Cue>>(emptyList()) }
+    // The picture keeps its own shape (a 2.39:1 film letterboxed), never stretched to the screen; 0 until known.
+    var aspect by remember { mutableFloatStateOf(0f) }
     val focus = remember { FocusRequester() }
 
     fun save() {
@@ -182,6 +187,10 @@ internal fun MoviePlayback(movie: Movie, from: Long, url: String, onSave: (pos: 
                     ui.started = false
                     ended()
                 }
+            }
+
+            override fun onVideoSizeChanged(videoSize: VideoSize) {
+                if (videoSize.width > 0 && videoSize.height > 0) aspect = videoSize.width * videoSize.pixelWidthHeightRatio / videoSize.height
             }
 
             override fun onCues(cueGroup: CueGroup) {
@@ -351,7 +360,7 @@ internal fun MoviePlayback(movie: Movie, from: Long, url: String, onSave: (pos: 
     ) {
         AndroidView(
             factory = { SurfaceView(it).apply { keepScreenOn = true }.also(exo::setVideoSurfaceView) },
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier.align(Alignment.Center).then(if (aspect > 0f) Modifier.aspectRatio(aspect) else Modifier.fillMaxSize()),
         )
         Subtitles(cues)
 

@@ -3,7 +3,9 @@
 package com.mohamed3on.iptv.player
 
 import android.content.Context
+import android.net.Uri
 import androidx.media3.common.C
+import androidx.media3.common.Format
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
@@ -20,6 +22,15 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.SeekParameters
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.upstream.DefaultAllocator
+import androidx.media3.extractor.DefaultExtractorsFactory
+import androidx.media3.extractor.Extractor
+import androidx.media3.extractor.ExtractorOutput
+import androidx.media3.extractor.ExtractorsFactory
+import androidx.media3.extractor.ForwardingExtractor
+import androidx.media3.extractor.ForwardingExtractorOutput
+import androidx.media3.extractor.ForwardingTrackOutput
+import androidx.media3.extractor.TrackOutput
+import androidx.media3.extractor.text.SubtitleParser
 import okhttp3.OkHttpClient
 import java.util.concurrent.atomic.AtomicLong
 
@@ -33,7 +44,7 @@ import java.util.concurrent.atomic.AtomicLong
  */
 fun moviePlayer(context: Context, http: OkHttpClient, heads: FilmHeads, load: FilmLoad = FilmLoad(), onFileSize: (Long) -> Unit = {}): ExoPlayer =
     ExoPlayer.Builder(context)
-        .setMediaSourceFactory(DefaultMediaSourceFactory(HeadSource.Factory(OkHttpDataSource.Factory(http).setTransferListener(FileSize(load.bytes, onFileSize)), heads)))
+        .setMediaSourceFactory(DefaultMediaSourceFactory(HeadSource.Factory(OkHttpDataSource.Factory(http).setTransferListener(FileSize(load.bytes, onFileSize)), heads), Dv7AsHevc()))
         .setLoadControl(
             DefaultLoadControl.Builder()
                 .setAllocator(load.allocator)
@@ -44,6 +55,43 @@ fun moviePlayer(context: Context, http: OkHttpClient, heads: FilmHeads, load: Fi
         )
         .build()
         .apply { setSeekParameters(SeekParameters.CLOSEST_SYNC) }
+
+/**
+ * Every container Media3 reads, with a Dolby Vision profile 7 track (UHD Blu-ray's dual layer) read as the HEVC
+ * it is underneath: the stick's Dolby Vision decoder takes no profile 7 and shows black, while its HEVC
+ * decoder plays the HDR10 base layer and skips the enhancement layer. Other profiles stay Dolby Vision (5 has no
+ * HDR10 layer). Setters return this factory, not [base], so the wrapping survives DefaultMediaSourceFactory's set-up.
+ */
+private class Dv7AsHevc(private val base: ExtractorsFactory = DefaultExtractorsFactory()) : ExtractorsFactory {
+    override fun createExtractors() = wrap(base.createExtractors())
+    override fun createExtractors(uri: Uri, responseHeaders: Map<String, List<String>>) = wrap(base.createExtractors(uri, responseHeaders))
+    override fun setSubtitleParserFactory(subtitleParserFactory: SubtitleParser.Factory) = apply { base.setSubtitleParserFactory(subtitleParserFactory) }
+    @Deprecated("Media3's")
+    override fun experimentalSetTextTrackTranscodingEnabled(textTrackTranscodingEnabled: Boolean) = apply {
+        @Suppress("DEPRECATION") base.experimentalSetTextTrackTranscodingEnabled(textTrackTranscodingEnabled)
+    }
+    override fun experimentalSetCodecsToParseWithinGopSampleDependencies(codecsToParseWithinGopSampleDependencies: Int) = apply {
+        base.experimentalSetCodecsToParseWithinGopSampleDependencies(codecsToParseWithinGopSampleDependencies)
+    }
+    override fun setParseHagcMetadata(parseHagcMetadata: Boolean) = apply { base.setParseHagcMetadata(parseHagcMetadata) }
+
+    private fun wrap(extractors: Array<Extractor>) = Array<Extractor>(extractors.size) { i ->
+        object : ForwardingExtractor(extractors[i]) {
+            override fun init(output: ExtractorOutput) = super.init(object : ForwardingExtractorOutput(output) {
+                override fun track(id: Int, type: Int): TrackOutput {
+                    val track = super.track(id, type)
+                    return object : ForwardingTrackOutput(track) {
+                        override fun format(format: Format) = super.format(
+                            if (format.sampleMimeType == MimeTypes.VIDEO_DOLBY_VISION && dolbyVisionProfile(format) == 7) {
+                                format.buildUpon().setSampleMimeType(MimeTypes.VIDEO_H265).setCodecs(null).build()
+                            } else format,
+                        )
+                    }
+                }
+            })
+        }
+    }
+}
 
 /**
  * [FilmSession]'s view of a film's ExoPlayer: each open carries the place and its audio and subtitle

@@ -443,7 +443,9 @@ fun MoviesLayer(
         if (verb != "search") Check.open.value = null // MoviesBrowse takes a search
         if (verb != "play" && playing != null) stopped()
         pages.clear()
-        val id = target.substringAfter(':')
+        val id = target.substringAfter(':').substringBefore('@')
+        // play:<titleId>@<copyId> pins that copy first, as choosing it in Versions does.
+        target.substringAfter('@', "").ifEmpty { null }?.let { copy -> graph.copyChoices.pin(id, copy).also { graph.films.rerank(id) } }
         val title = lib.find(id) ?: Movie(id = -1, name = id, group = "", titleId = id)
         when (verb) {
             "title", "versions" -> push(LibraryPage.Title(title, versions = verb == "versions"))

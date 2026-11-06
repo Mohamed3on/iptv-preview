@@ -6,7 +6,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 
 /**
  * Hooks for firetv/check.sh. `am start … --es open <target>` asks for a screen: `movies`, `live` (Movies
- * & Shows closed), `title:<titleId>`, `versions:<titleId>`, `play:<titleId>` (a film), `search:<query>`.
+ * & Shows closed), `title:<titleId>`, `versions:<titleId>`, `play:<titleId>` (a film; `play:<titleId>@<copyId>` pins that copy first), `search:<query>`.
  * Each event is one `IptvCheck` logcat line, `<event> ms=<since the last open> key=value …`.
  */
 object Check {

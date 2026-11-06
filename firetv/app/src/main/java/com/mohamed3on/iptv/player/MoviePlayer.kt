@@ -118,7 +118,9 @@ class ExoFilmPlayer(private val exo: ExoPlayer) : FilmPlayer {
         // own, R2) can't while a dub could, is the wrong copy for this setup (e.g. a remux with DTS-HD English). Only
         // a file none of whose tracks plays teaches the session its formats don't play here ([StreamFailure.NoAudio]).
         override fun onTracksChanged(tracks: Tracks) {
-            val audio = tracks.groups.filter { it.type == C.TRACK_TYPE_AUDIO }
+            // Commentary doesn't count: a DTS-HD remux's only track that plays here is often its AC-3 commentary.
+            val all = tracks.groups.filter { it.type == C.TRACK_TYPE_AUDIO }
+            val audio = all.filterNot { isCommentary(it.getTrackFormat(0)) }.ifEmpty { all }
             if (checked || audio.isEmpty()) return
             checked = true
             fun plays(g: Tracks.Group) = (0 until g.length).any { g.isTrackSupported(it, true) }
@@ -274,3 +276,6 @@ private val AUDIO_NAMES = mapOf(
     MimeTypes.AUDIO_TRUEHD to "truehd", MimeTypes.AUDIO_DTS to "dts", MimeTypes.AUDIO_DTS_HD to "dtshd",
     MimeTypes.AUDIO_DTS_EXPRESS to "dtshd", MimeTypes.AUDIO_DTS_X to "dtsx",
 )
+
+/** A commentary track: flagged so by its container, or named so. */
+private fun isCommentary(f: Format) = f.roleFlags and C.ROLE_FLAG_COMMENTARY != 0 || f.label?.contains("comment", ignoreCase = true) == true

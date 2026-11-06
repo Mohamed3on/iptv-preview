@@ -152,6 +152,12 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.text.InlineTextContent
+import androidx.compose.foundation.text.appendInlineContent
+import androidx.compose.ui.text.Placeholder
+import androidx.compose.ui.text.PlaceholderVerticalAlign
+import androidx.compose.ui.unit.em
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.withStyle
@@ -1183,11 +1189,11 @@ private fun MetaLine(movie: Movie, info: MovieInfo?, extra: String? = null) {
     val rating = info?.rating?.ifEmpty { null }?.takeIf { scored?.lb == null && scored?.ir == null }?.let { "$it/10" }
     val yours = LocalContext.current.graph.marks.ratings.collectAsState().value[movie.titleId]
     // Without TrueScore's own ratio, the title page's histogram share stands in (TrueScore's line, no recent trend).
-    val net = info?.takeIf { it.hn != null && scored?.tr == null }?.let { it.copy(tr = it.hn, s = it.s ?: scored?.s) }
+    val net = info?.takeIf { it.hn != null && scored?.tr == null }?.let { it.copy(tr = it.hn, s = it.s ?: scored?.s, ir = it.ir ?: scored?.ir, iv = it.iv ?: scored?.iv, lb = it.lb ?: scored?.lb, lv = it.lv ?: scored?.lv) }
     val scores = remember(scored, yours, net) { scoresLine(net ?: scored, yours, onImdb = net?.hs == "i") }
     // The facts go under the scores when both don't fit on one line (beside a show's episodes); only then does a line scroll.
     FlowRow(horizontalArrangement = Arrangement.spacedBy(Space.m), itemVerticalAlignment = Alignment.CenterVertically) {
-        if (scores != null) Text(scores, style = SCORE_STYLE, maxLines = 1)
+        if (scores != null) Text(scores, style = SCORE_STYLE, maxLines = 1, inlineContent = SCORE_LOGOS)
         movie.title.badge?.let { Badges(remember(it) { listOf(it) }) }
         val group = movie.group.takeIf { movie.lib != null } ?: groupLabel(movie.group).name
         FitText(listOfNotNull(movie.title.year, extra, runtime, info?.language?.ifEmpty { null }, genre ?: group.ifEmpty { null }, rating).joinToString(" · "), style = Type.body, active = true)
@@ -1195,45 +1201,63 @@ private fun MetaLine(movie: Movie, info: MovieInfo?, extra: String? = null) {
 }
 
 /**
- * "TrueScore 7,735 · 23% → 27% net loved · You 9/10" for a film in TrueScore's store (all-time then recent net-loved
- * share, the score in the colour of the latest; "… 47% net loved on IMDb" [onImdb] when the share is IMDb histogram's), else "IMDb 8.8 (2.9M) · Letterboxd 8.4 (4.6M) · You 9/10": IMDb's and
- * Letterboxd's averages out of 10 (Letterboxd's doubled) with their vote counts; then the owner's rating. Each number in
- * its colour on the review-score ramp, the rest text-secondary; null when none is known.
+ * "TrueScore 7,735 · 23% → 27% net loved · [IMDb] 8.8 · [Letterboxd] 8.4 · You 9/10": TrueScore's score and its all-time then
+ * recent net-loved share (the score in the colour of the latest; "… on IMDb" [onImdb] when the share is IMDb histogram's and
+ * IMDb's average isn't known to say so), then IMDb's and Letterboxd's averages out of 10 (Letterboxd's doubled) behind their
+ * logos ([SCORE_LOGOS]), with vote counts when TrueScore's line isn't there to carry them, then the owner's rating. Each number
+ * in its colour on the review-score ramp, the rest text-secondary; null when none is known.
  */
 private fun scoresLine(scored: Scored?, yours: Int?, onImdb: Boolean = false): AnnotatedString? {
     val all = scored?.tr?.let(::pct)
-    if (all != null) return buildAnnotatedString {
-        val recent = scored.tq?.let(::pct)
+    val averages = listOfNotNull(scored?.ir?.let { Triple(IMDB, it, scored.iv) }, scored?.lb?.let { Triple(LETTERBOXD, it * 2, scored.lv) })
+    if (all == null && averages.isEmpty() && yours == null) return null
+    return buildAnnotatedString {
         withStyle(SpanStyle(color = Palette.textSecondary)) {
-            append("TrueScore ")
-            withStyle(SpanStyle(color = Palette.share(recent ?: all))) { append("%,d".format(Locale.US, scored.ta ?: scored.s ?: 0)) }
-            append(" · $all%")
-            if (recent != null) append(" → $recent%")
-            append(" net loved")
-            if (onImdb) append(" on IMDb")
+            var first = true
+            fun part() { if (!first) append(" · "); first = false }
+            if (all != null) {
+                part()
+                val recent = scored.tq?.let(::pct)
+                append("TrueScore ")
+                withStyle(SpanStyle(color = Palette.share(recent ?: all))) { append("%,d".format(Locale.US, scored.ta ?: scored.s ?: 0)) }
+                append(" · $all%")
+                if (recent != null) append(" → $recent%")
+                append(" net loved")
+                if (onImdb && scored.ir == null) append(" on IMDb")
+            }
+            for ((logo, value, votes) in averages) {
+                part()
+                appendInlineContent(logo, logo)
+                append(" ")
+                withStyle(SpanStyle(color = Palette.outOf10(value))) { append("%.1f".format(Locale.ROOT, value)) }
+                if (votes != null && all == null) append(" (${compactCount(votes)})")
+            }
             if (yours != null) {
-                append(" · You ")
+                part()
+                append("You ")
                 withStyle(SpanStyle(color = Palette.outOf10(yours.toDouble()))) { append("$yours/10") }
             }
         }
     }
-    val parts = listOfNotNull(
-        scored?.ir?.let { Triple("IMDb ", it, scored.iv) },
-        scored?.lb?.let { Triple("Letterboxd ", it * 2, scored.lv) },
-        yours?.let { Triple("You ", it.toDouble(), null) },
-    )
-    if (parts.isEmpty()) return null
-    return buildAnnotatedString {
-        withStyle(SpanStyle(color = Palette.textSecondary)) {
-            parts.forEachIndexed { i, (label, value, votes) ->
-                if (i > 0) append(" · ")
-                append(label)
-                withStyle(SpanStyle(color = Palette.outOf10(value))) { append(if (label == "You ") "${value.toInt()}/10" else "%.1f".format(Locale.ROOT, value)) }
-                if (votes != null) append(" (${compactCount(votes)})")
-            }
-        }
-    }
 }
+
+private const val IMDB = "IMDb"
+private const val LETTERBOXD = "Letterboxd"
+
+/** The scores line's IMDb badge (black on its yellow) and Letterboxd's three dots, in place of their names. */
+private val SCORE_LOGOS = mapOf(
+    IMDB to InlineTextContent(Placeholder(2.3.em, 1.1.em, PlaceholderVerticalAlign.Center)) {
+        Box(Modifier.fillMaxSize().background(Color(0xFFF5C518), RoundedCornerShape(3.dp)), contentAlignment = Alignment.Center) {
+            Text("IMDb", style = Type.caption.copy(color = Color.Black, fontSize = 10.sp, lineHeight = 10.sp, fontWeight = FontWeight.Black, letterSpacing = 0.em))
+        }
+    },
+    LETTERBOXD to InlineTextContent(Placeholder(1.45.em, 0.6.em, PlaceholderVerticalAlign.Center)) {
+        Canvas(Modifier.fillMaxSize()) {
+            val r = size.height / 2
+            listOf(Color(0xFFFF8000), Color(0xFF00E054), Color(0xFF40BCF4)).forEachIndexed { i, c -> drawCircle(c, r, Offset(r + i * (size.width / 2 - r), r)) }
+        }
+    },
+)
 
 /** A 0–1 ratio as a whole percentage. */
 private fun pct(ratio: Double) = Math.round(ratio * 100).toInt()

@@ -43,7 +43,7 @@ test('details come from TMDB once, then from the cache file', async () => {
       recommendations: [{ title: 'movie:9620', name: 'Paycheck', year: '2003' }, { title: 'movie:353491' }],
     })
     // A v3 key rides in the query; details, IMDb id, credits and recommendations come in one call.
-    expect(String(fetchSpy.mock.calls[0][0])).toContain('append_to_response=external_ids,credits,recommendations&api_key=')
+    expect(String(fetchSpy.mock.calls[0][0])).toContain('append_to_response=external_ids,credits,recommendations,videos&')
     // A show: IMDb id from external_ids, runtime from its latest episode, creators as directors.
     expect(await tmdbFacts('tv:1396:s1e3')).toEqual({ imdb: 'tt0903747', originalLanguage: 'en' })
     expect(await tmdbTitle('tv', 1396)).toMatchObject({ runtime: 56, directors: [{ name: 'Vince Gilligan' }] })

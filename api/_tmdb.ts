@@ -51,6 +51,16 @@ export interface TmdbTitle {
   recommendations: { title: string; name: string; year: string; poster: string; vote?: number; votes?: number }[]
   /** The best YouTube trailer's key ("JE9z-gy4De4"); "" when TMDB lists none. */
   trailer: string
+  /** The title in its own language ("Le fabuleux destin d'Amélie Poulain"); "" when TMDB has none. */
+  originalTitle: string
+  /** A film's franchise as TMDB groups it ("The Lord of the Rings Collection"). */
+  collection?: { id: number; name: string }
+  /** A show's first network ("HBO"). */
+  network?: string
+  /** A show's status as TMDB words it: "Returning Series", "Ended", "Canceled", "In Production", "Planned". */
+  status?: string
+  /** A show's next episode, its air date "2026-11-14". */
+  next?: { season: number; episode: number; air: string }
 }
 
 interface Raw {
@@ -73,6 +83,12 @@ interface Raw {
   credits?: { cast?: { id: number; name: string; character?: string }[]; crew?: { id: number; name: string; job?: string }[] }
   recommendations?: { results?: (Raw & { id: number; media_type?: string; vote_average?: number; vote_count?: number })[] }
   videos?: { results?: Video[] }
+  original_title?: string
+  original_name?: string
+  belongs_to_collection?: { id: number; name: string } | null
+  networks?: { name: string }[]
+  status?: string
+  next_episode_to_air?: { season_number: number; episode_number: number; air_date?: string | null } | null
 }
 
 interface Video { key: string; site?: string; type?: string; official?: boolean; iso_639_1?: string; published_at?: string }
@@ -117,12 +133,19 @@ function trim(kind: Kind, r: Raw): TmdbTitle {
       votes: x.vote_count ?? 0,
     })),
     trailer: pickTrailer(r.videos?.results ?? [], r.original_language ?? ''),
+    originalTitle: r.original_title ?? r.original_name ?? '',
+    ...(r.belongs_to_collection && { collection: { id: r.belongs_to_collection.id, name: r.belongs_to_collection.name } }),
+    ...(kind === 'tv' && {
+      ...(r.networks?.[0]?.name && { network: r.networks[0].name }),
+      ...(r.status && { status: r.status }),
+      ...(r.next_episode_to_air?.air_date && { next: { season: r.next_episode_to_air.season_number, episode: r.next_episode_to_air.episode_number, air: r.next_episode_to_air.air_date } }),
+    }),
   }
 }
 
 const MAX_AGE_MS = 30 * 864e5
 const cacheFile = () => process.env.TMDB_CACHE_FILE ?? fileURLToPath(new URL('../.cache/tmdb-titles.json', import.meta.url))
-type Entry = { at: number; t?: TmdbTitle | null; e?: TmdbEpisode[] }
+type Entry = { at: number; t?: TmdbTitle | null; e?: TmdbEpisode[]; c?: TmdbPart[] }
 let cache: Promise<Record<string, Entry>> | null = null
 const loaded = () => (cache ??= readFile(cacheFile(), 'utf8').then((s) => JSON.parse(s) as Record<string, Entry>).catch(() => ({} as Record<string, Entry>)))
 const pending = new Map<string, Promise<TmdbTitle | null>>()
@@ -146,8 +169,11 @@ export async function tmdbTitle(kind: Kind, id: string | number): Promise<TmdbTi
   if (!key || !tmdb) return null
   const k = `${kind}:${tmdb}`
   const all = await loaded()
-  // An entry kept before plots and backdrops, recommendations' votes, or trailers were is fetched again.
-  if (all[k] && Date.now() - all[k].at < MAX_AGE_MS && (!all[k].t || (all[k].t!.plot !== undefined && (all[k].t!.recommendations[0] ?? { votes: 0 }).votes !== undefined && all[k].t!.trailer !== undefined))) return all[k].t ?? null
+  // An entry kept before plots and backdrops, recommendations' votes, trailers, or original titles were is fetched again;
+  // a running show's daily, as its next episode moves.
+  const kept = all[k]?.t
+  const maxAge = kept?.status === 'Returning Series' ? 864e5 : MAX_AGE_MS
+  if (all[k] && Date.now() - all[k].at < maxAge && (!kept || (kept.plot !== undefined && (kept.recommendations[0] ?? { votes: 0 }).votes !== undefined && kept.trailer !== undefined && kept.originalTitle !== undefined))) return kept ?? null
   let job = pending.get(k)
   if (!job) {
     job = tmdbGet<Raw>(`${kind}/${tmdb}?append_to_response=external_ids,credits,recommendations,videos&include_video_language=${VIDEO_LANGUAGES}`, key)
@@ -165,6 +191,30 @@ export async function tmdbTitle(kind: Kind, id: string | number): Promise<TmdbTi
     pending.set(k, job)
   }
   return job
+}
+
+/** A film of a TMDB collection, as far as a card needs it. */
+export interface TmdbPart { id: number; title?: string; release_date?: string; poster_path?: string | null; backdrop_path?: string | null; original_language?: string; genre_ids?: number[] }
+
+/** A TMDB collection's films with a release date, oldest first, kept 30 days in the same cache; [] when TMDB fails with nothing kept. */
+export async function tmdbCollection(id: number): Promise<TmdbPart[]> {
+  const key = process.env.TMDB_TOKEN
+  if (!key) return []
+  const k = `collection:${id}`
+  const all = await loaded()
+  if (all[k] && Date.now() - all[k].at < MAX_AGE_MS) return all[k].c ?? []
+  try {
+    const r = await tmdbGet<{ parts?: TmdbPart[] }>(`collection/${id}`, key)
+    const c = (r.parts ?? [])
+      .filter((p) => p.release_date)
+      .sort((a, b) => a.release_date!.localeCompare(b.release_date!))
+      .map(({ id, title, release_date, poster_path, backdrop_path, original_language, genre_ids }) => ({ id, title, release_date, poster_path, backdrop_path, original_language, genre_ids }))
+    all[k] = { at: Date.now(), c }
+    save(all)
+    return c
+  } catch {
+    return all[k]?.c ?? []
+  }
 }
 
 /** Runtimes in minutes (a show's: an episode's) from the kept details, whatever their age, by title id; never asks TMDB. */

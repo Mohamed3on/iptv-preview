@@ -7,7 +7,7 @@ import type { XtreamConfig } from './_lib.js'
 import { fromTmdb, LIBRARY_FILE, LIBRARY_FULL_FILE, type LibTitle, type Library, type TmdbItem } from './_library.js'
 import { due, loadScores, scoreNow, scoreOf, scoreTitles, type Score, type ScoreCache } from './_scores.js'
 import { showList } from './_shows.js'
-import { episodeTitle, keptRuntimes, parseTitleId, tmdbEpisodes, tmdbTitle } from './_tmdb.js'
+import { episodeTitle, keptRuntimes, parseTitleId, tmdbCollection, tmdbEpisodes, tmdbTitle } from './_tmdb.js'
 import type { VodItem } from './_vod.js'
 
 /** The built library (null when missing), every title it has seen with its tier (the uncut build), scores (with what the APIs said) and kept runtimes. */
@@ -63,6 +63,7 @@ export async function titleDetails(cfg: XtreamConfig, id: string) {
       if (s) k.scores.set(id, s)
     })
   }
+  const parts = t.collection ? (await tmdbCollection(t.collection.id)).filter((x) => String(x.id) !== tmdb) : []
   const series = kind === 'tv' ? (await showList(cfg).catch(() => null))?.movies.find((s) => s.titleId === id)?.id : undefined
   const episodes = kind === 'tv' && !series ? await tmdbEpisodes(tmdb, t.seasons) : []
   const people = new Map<number, { id: number; name: string; role: string }>()
@@ -80,6 +81,13 @@ export async function titleDetails(cfg: XtreamConfig, id: string) {
     more: t.recommendations.map((r) => decorate(k, { id: r.title, k: r.title.startsWith('tv:') ? 't' : 'm', n: r.name, ...(Number(r.year) && { y: Number(r.year) }), ...(r.poster && { p: r.poster }) })),
     ...scoreOf(id, cache),
     ...(t.trailer && { trailer: t.trailer }),
+    ...(languageOf(t.originalLanguage) && { language: languageOf(t.originalLanguage) }),
+    // Only when it says more than the name does ("Amélie" → "Le fabuleux destin d'Amélie Poulain", never "Léon" → "Leon").
+    ...(t.originalTitle && letters(t.originalTitle) !== letters(t.name) && { originalTitle: t.originalTitle }),
+    ...(parts.length && { collection: t.collection!.name, parts: parts.map((x) => decorate(k, fromTmdb('movie', x))) }),
+    ...(t.network && { network: t.network }),
+    ...(t.status && { status: t.status }),
+    ...(t.next && { next: t.next }),
     ...(series && { series }),
     ...(episodes.length && {
       episodes: episodes.map((e) => ({ id: -(e.season * 10_000 + e.episode), titleId: episodeTitle(id, e.season, e.episode), ...e })),
@@ -116,6 +124,14 @@ export interface SearchDeps {
   /** The owner's Watchlist (lifted) and watched titles (lowered a little). */
   history?: { watchlist: Set<string>; watched: Set<string> }
 }
+
+/** An ISO 639-1 code's English name ("fr" → "French"); "" for TMDB's "xx" (no language) and codes it doesn't know. */
+function languageOf(code: string) {
+  if (code === 'cn') return 'Cantonese' // TMDB's own code
+  const name = code ? languageName.of(code) : ''
+  return name && name !== code ? name : ''
+}
+const letters = (s: string) => norm(s).replace(/[^\p{L}\p{N}]+/gu, '')
 
 const norm = (s: string) => s.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase().replace(/\s+/g, ' ').trim()
 

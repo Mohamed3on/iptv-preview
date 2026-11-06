@@ -228,13 +228,30 @@ data class MovieInfo(
     val episodes: List<Episode> = emptyList(),
     /** TMDB's best YouTube trailer ("JE9z-gy4De4"); "" when there is none. */
     val trailer: String = "",
+    /** The original language's name ("French"); "" when unknown. */
+    val language: String = "",
+    /** The title in its own language, only when it differs from the name ("千と千尋の神隠し"). */
+    val originalTitle: String = "",
+    /** A film's franchise ("The Lord of the Rings Collection") and its other films, oldest first. */
+    val collection: String = "",
+    val parts: List<LibTitle> = emptyList(),
+    /** A show's network ("HBO"), TMDB's status ("Returning Series", "Ended", "Canceled"…) and next episode. */
+    val network: String = "",
+    val status: String = "",
+    val next: NextAir? = null,
     override val s: Int? = null, override val sn: Int? = null, override val se: Int = 0, override val lb: Double? = null, override val ir: Double? = null,
     override val lv: Int? = null, override val iv: Int? = null, override val s10: Double? = null,
     override val ta: Int? = null, override val tr: Double? = null, override val tq: Double? = null,
 ) : Scored {
     /** [more] as cards, built once. */
     @Transient val moreMovies: List<Movie> = more.map { it.toMovie() }
+    /** [parts] as cards, built once. */
+    @Transient val partMovies: List<Movie> = parts.map { it.toMovie() }
 }
+
+/** A show's next episode and its air date ("2026-11-14"). */
+@Serializable
+data class NextAir(val season: Int, val episode: Int, val air: String)
 
 fun parseMovieInfo(text: String): MovieInfo = json.decodeFromString(MovieInfo.serializer(), text)
 

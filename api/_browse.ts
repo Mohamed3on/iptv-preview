@@ -78,7 +78,8 @@ export async function titleDetails(cfg: XtreamConfig, id: string) {
     cast: t.cast.slice(0, 4).map((c) => c.name).join(', '),
     director: t.directors.map((d) => d.name).join(', '),
     people: [...people.values()],
-    more: t.recommendations.map((r) => decorate(k, { id: r.title, k: r.title.startsWith('tv:') ? 't' : 'm', n: r.name, ...(Number(r.year) && { y: Number(r.year) }), ...(r.poster && { p: r.poster }) })),
+    // The franchise's own films are its row, not More like this.
+    more: t.recommendations.filter((r) => !parts.some((x) => r.title === `movie:${x.id}`)).map((r) => decorate(k, { id: r.title, k: r.title.startsWith('tv:') ? 't' : 'm', n: r.name, ...(Number(r.year) && { y: Number(r.year) }), ...(r.poster && { p: r.poster }) })),
     ...scoreOf(id, cache),
     ...(t.trailer && { trailer: t.trailer }),
     ...(languageOf(t.originalLanguage) && { language: languageOf(t.originalLanguage) }),

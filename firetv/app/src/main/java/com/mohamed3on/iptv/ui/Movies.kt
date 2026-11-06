@@ -110,6 +110,8 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onPlaced
+import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextOverflow
@@ -146,6 +148,8 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.withStyle
+import java.time.LocalDate
+import java.time.format.DateTimeFormatter
 import java.util.Locale
 import com.mohamed3on.iptv.data.Resume
 import com.mohamed3on.iptv.data.TitleId
@@ -1158,7 +1162,7 @@ private fun MetaLine(movie: Movie, info: MovieInfo?, extra: String? = null) {
         if (scores != null) Text(scores, style = SCORE_STYLE, maxLines = 1)
         movie.title.badge?.let { Badges(remember(it) { listOf(it) }) }
         val group = movie.group.takeIf { movie.lib != null } ?: groupLabel(movie.group).name
-        FitText(listOfNotNull(movie.title.year, extra, runtime, genre ?: group.ifEmpty { null }, rating).joinToString(" · "), style = Type.body, active = true)
+        FitText(listOfNotNull(movie.title.year, extra, runtime, info?.language?.ifEmpty { null }, genre ?: group.ifEmpty { null }, rating).joinToString(" · "), style = Type.body, active = true)
     }
 }
 
@@ -1766,7 +1770,7 @@ private val Prepared.unavailable get() = plays == null && rdChecked && ranking !
 
 /**
  * Where focus goes back to on a title page after a page its cast or More like this opened: the item [opened]
- * ([back] is on it); [first] is the first More like this card (else the first person), an unavailable title's landing.
+ * ([back] is on it); [first] is the franchise's first card, else More like this's, else the first person: an unavailable title's landing.
  */
 private class ExtrasFocus {
     val first = FocusRequester()
@@ -1794,7 +1798,7 @@ private fun FilmPage(
     val versionsButton = remember { FocusRequester() }
     val noCopy = remember { FocusRequester() }
     val extras = remember { ExtrasFocus() }
-    val hasExtras = info != null && (info.people.isNotEmpty() || info.more.isNotEmpty())
+    val hasExtras = info != null && (info.people.isNotEmpty() || info.more.isNotEmpty() || info.parts.isNotEmpty())
     var hasFocus by remember { mutableStateOf(false) }
     var versions by remember { mutableStateOf(openVersions) }
     val closedVersions = remember { booleanArrayOf(false) }
@@ -1835,7 +1839,7 @@ private fun FilmPage(
         TitleScroll(
             main = {
                 Column(Modifier.padding(start = EDGE, bottom = Space.xl).widthIn(max = PAGE_WIDTH), verticalArrangement = Arrangement.spacedBy(Space.s)) {
-                    ScrollText(film.title.title, style = BIG_TITLE, lines = 2)
+                    PageTitle(film.title.title, info)
                     // The tier is the copy's that plays, on the Plays line.
                     MetaLine(film, info)
                     if (started && resume!!.dur > 0) Row(horizontalArrangement = Arrangement.spacedBy(Space.m), verticalAlignment = Alignment.CenterVertically) {
@@ -1866,7 +1870,7 @@ private fun FilmPage(
                     }
                 }
             },
-            extras = { TitleExtras(info, watched, extras, onPerson, onOpen) },
+            extras = { TitleExtras(info, watched, extras, onPerson, onOpen, it) },
         )
         if (versions) VersionsPanel(
             film.titleId,
@@ -1913,6 +1917,45 @@ private fun PlaysLine(title: TitleId, fallback: List<String>?, modifier: Modifie
 
 private val PLAYS_HEIGHT = 24.dp
 
+/** A title page's name in display type, its original-language title under it when TMDB has one that differs. */
+@Composable
+private fun PageTitle(title: String, info: MovieInfo?) {
+    Column(verticalArrangement = Arrangement.spacedBy(Space.xs)) {
+        ScrollText(title, style = BIG_TITLE, lines = 2)
+        info?.originalTitle?.ifBlank { null }?.let { FitText(it, style = ORIGINAL_TITLE, active = true) }
+    }
+}
+
+private val ORIGINAL_TITLE = Type.headline.copy(color = Palette.textSecondary)
+
+/** TMDB's show status in the app's words. */
+private val SHOW_STATUS = mapOf(
+    "Returning Series" to "Returning", "Ended" to "Ended", "Canceled" to "Cancelled",
+    "In Production" to "In production", "Planned" to "Planned", "Pilot" to "Pilot",
+)
+
+/**
+ * "AMC · Ended", "Apple TV · Returning", "HBO · Season 3 starts Sun 14 Dec", "Netflix · S2 E5 airs tomorrow": a show's network and
+ * where it stands, its next episode in place of "Returning" once dated (a date gone by falls back to the status); null when TMDB knows neither.
+ */
+private fun showStatus(info: MovieInfo): String? {
+    val today = LocalDate.now()
+    val next = info.next?.let { n ->
+        val day = runCatching { LocalDate.parse(n.air) }.getOrNull()?.takeIf { !it.isBefore(today) } ?: return@let null
+        val on = when {
+            day == today -> "today"
+            day == today.plusDays(1) -> "tomorrow"
+            day.year == today.year || day.isBefore(today.plusMonths(6)) -> day.format(DAY_MONTH)
+            else -> day.format(DAY_MONTH_YEAR)
+        }
+        if (n.episode == 1) "Season ${n.season} starts $on" else "S${n.season} E${n.episode} airs $on"
+    }
+    return listOfNotNull(info.network.ifEmpty { null }, next ?: SHOW_STATUS[info.status]).joinToString(" · ").ifEmpty { null }
+}
+
+private val DAY_MONTH = DateTimeFormatter.ofPattern("EEE d MMM", Locale.UK)
+private val DAY_MONTH_YEAR = DateTimeFormatter.ofPattern("d MMM yyyy", Locale.UK)
+
 /** A title page's ground: the backdrop, Back to leave, focus kept inside; undrawn while [hidden]. */
 @Composable
 private fun TitleFrame(backdrop: String?, hidden: Boolean, onBack: () -> Unit, onFocus: (Boolean) -> Unit, onMenu: (() -> Unit)? = null, content: @Composable BoxScope.() -> Unit) {
@@ -1950,13 +1993,14 @@ private val NO_SCROLL = object : BringIntoViewSpec {
 }
 
 /**
- * A title page's two screens: [main] fills the first, bottom-aligned; [extras] (cast, More like this) wait
- * below it. Focus going down to them scrolls them up whole, and back up to [main] scrolls back; nothing
- * else scrolls the page, so a row moving its cards never drags it.
+ * A title page's two screens: [main] fills the first, bottom-aligned; [extras] (franchise, cast, More like this) wait
+ * below it. Focus going down into a section of them ([extras]' scrollTo, with the section's top) scrolls it to the top
+ * of the screen, or as far as the page goes, and back up to [main] scrolls back; nothing else scrolls the page, so a
+ * row moving its cards never drags it.
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun TitleScroll(main: @Composable BoxScope.() -> Unit, extras: @Composable () -> Unit) {
+private fun TitleScroll(main: @Composable BoxScope.() -> Unit, extras: @Composable (scrollTo: (top: Float) -> Unit) -> Unit) {
     val scroll = rememberScrollState()
     val scope = rememberCoroutineScope()
     val inherited = LocalBringIntoViewSpec.current
@@ -1969,6 +2013,9 @@ private fun TitleScroll(main: @Composable BoxScope.() -> Unit, extras: @Composab
     }
     // The page fills the screen: its height is known without a subcomposition pass on the opening frame.
     val screen = LocalConfiguration.current.screenHeightDp.dp
+    val density = LocalDensity.current
+    val from = with(density) { (screen - PEEK - Space.safeY).toPx() }
+    val scrollTo = remember(from) { { top: Float -> scope.launch { scroll.animateScrollTo((from + top).toInt().coerceIn(0, scroll.maxValue)) }; Unit } }
     Box(Modifier.fillMaxSize()) {
         CompositionLocalProvider(LocalBringIntoViewSpec provides NO_SCROLL) {
             Column(Modifier.fillMaxSize().verticalScroll(scroll)) {
@@ -1979,64 +2026,84 @@ private fun TitleScroll(main: @Composable BoxScope.() -> Unit, extras: @Composab
                         content = main,
                     )
                 }
-                Box(Modifier.onFocusChanged { if (it.hasFocus) scope.launch { scroll.animateScrollTo(scroll.maxValue) } }) {
-                    if (below) CompositionLocalProvider(LocalBringIntoViewSpec provides keepClear, content = extras)
-                }
+                if (below) CompositionLocalProvider(LocalBringIntoViewSpec provides keepClear) { extras(scrollTo) }
             }
         }
     }
 }
 
 /**
- * A title's cast and director (OK opens their titles) and More like this, from its TMDB details (R32);
- * nothing when TMDB has neither. [focus] marks the item opened, so Back lands on it.
+ * A film's franchise (its other films, named as TMDB names the collection), the title's cast and director (OK opens
+ * their titles) and More like this, from its TMDB details (R32); nothing when TMDB has none. [focus] marks the item
+ * opened, so Back lands on it; each section scrolls itself into view ([scrollTo]) as focus enters it.
  */
 @Composable
-private fun TitleExtras(info: MovieInfo?, watched: Set<TitleId>, focus: ExtrasFocus, onPerson: (Person) -> Unit, onOpen: (Movie) -> Unit) {
+private fun TitleExtras(info: MovieInfo?, watched: Set<TitleId>, focus: ExtrasFocus, onPerson: (Person) -> Unit, onOpen: (Movie) -> Unit, scrollTo: (Float) -> Unit) {
+    val parts = info?.partMovies.orEmpty()
     val people = info?.people.orEmpty()
     val more = info?.moreMovies.orEmpty()
-    if (people.isEmpty() && more.isEmpty()) return
+    if (parts.isEmpty() && people.isEmpty() && more.isEmpty()) return
     val focusManager = LocalFocusManager.current
-    // Two items a frame, cast first: a row's visible cards built in one frame took 10-21 ms on the stick, on top of the page's.
+    // Two items a frame, in page order: a row's visible cards built in one frame took 10-21 ms on the stick, on top of the page's.
     var built by remember { mutableIntStateOf(0) }
-    val total = people.size + more.size
+    val total = parts.size + people.size + more.size
     LaunchedEffect(total) {
         while (built < total) {
             withFrameNanos {}
             built += 2
         }
     }
-    val cast = people.take(built)
-    val posters = more.take((built - people.size).coerceAtLeast(0))
+    val franchise = parts.take(built)
+    val cast = people.take((built - parts.size).coerceAtLeast(0))
+    val posters = more.take((built - parts.size - people.size).coerceAtLeast(0))
     Column(Modifier.padding(bottom = Space.xl), verticalArrangement = Arrangement.spacedBy(Space.s)) {
-        if (people.isNotEmpty()) {
-            Text("Cast and crew", style = Type.headline, maxLines = 1, modifier = Modifier.padding(start = EDGE))
-            LazyRow(
-                Modifier.fillMaxWidth().focusRestorer().focusGroup(),
-                contentPadding = PaddingValues(horizontal = EDGE, vertical = Space.m),
-                horizontalArrangement = Arrangement.spacedBy(Space.m),
-            ) {
-                itemsIndexed(cast, key = { _, p -> p.id }) { i, p ->
-                    val first = i == 0 && more.isEmpty()
-                    val back = focus.opened == "p:${p.id}"
-                    PageButton(
-                        if (p.role == "Director" || p.role == "Creator") "${p.name} · ${p.role.lowercase()}" else p.name,
-                        {
-                            focus.opened = "p:${p.id}"
-                            onPerson(p)
-                        },
-                        Modifier.then(if (first) Modifier.focusRequester(focus.first) else Modifier).then(if (back) Modifier.focusRequester(focus.back) else Modifier),
-                    )
+        if (franchise.isNotEmpty()) ExtrasSection(scrollTo) {
+            val opened = focus.opened?.takeIf { it.startsWith("c:") }?.removePrefix("c:")
+            PosterRow(
+                remember(parts, franchise.size) { MovieRow("parts", info!!.collection, null, franchise, emptyMap()) },
+                watched = watched,
+                rowFocus = remember { FocusRequester() },
+                entry = focus.first,
+                startAt = 0,
+                back = parts.firstOrNull { it.key == opened }?.let { it.id to focus.back },
+                onFocused = { _, _ -> },
+                onOpen = {
+                    focus.opened = "c:${it.key}"
+                    onOpen(it)
+                },
+                onVertical = { down -> focusManager.moveFocus(if (down) FocusDirection.Down else FocusDirection.Up) },
+            )
+        }
+        if (people.isNotEmpty()) ExtrasSection(scrollTo) {
+            Column(verticalArrangement = Arrangement.spacedBy(Space.s)) {
+                Text("Cast and crew", style = Type.headline, maxLines = 1, modifier = Modifier.padding(start = EDGE))
+                LazyRow(
+                    Modifier.fillMaxWidth().focusRestorer().focusGroup(),
+                    contentPadding = PaddingValues(horizontal = EDGE, vertical = Space.m),
+                    horizontalArrangement = Arrangement.spacedBy(Space.m),
+                ) {
+                    itemsIndexed(cast, key = { _, p -> p.id }) { i, p ->
+                        val first = i == 0 && more.isEmpty() && parts.isEmpty()
+                        val back = focus.opened == "p:${p.id}"
+                        PageButton(
+                            if (p.role == "Director" || p.role == "Creator") "${p.name} · ${p.role.lowercase()}" else p.name,
+                            {
+                                focus.opened = "p:${p.id}"
+                                onPerson(p)
+                            },
+                            Modifier.then(if (first) Modifier.focusRequester(focus.first) else Modifier).then(if (back) Modifier.focusRequester(focus.back) else Modifier),
+                        )
+                    }
                 }
             }
         }
-        if (posters.isNotEmpty()) {
+        if (posters.isNotEmpty()) ExtrasSection(scrollTo) {
             val opened = focus.opened?.removePrefix("m:")
             PosterRow(
                 remember(more, posters.size) { MovieRow("more", "More like this", null, posters, emptyMap()) },
                 watched = watched,
                 rowFocus = remember { FocusRequester() },
-                entry = focus.first,
+                entry = focus.first.takeIf { parts.isEmpty() },
                 startAt = 0,
                 back = more.firstOrNull { it.key == opened }?.let { it.id to focus.back },
                 onFocused = { _, _ -> },
@@ -2048,6 +2115,13 @@ private fun TitleExtras(info: MovieInfo?, watched: Set<TitleId>, focus: ExtrasFo
             )
         }
     }
+}
+
+/** One of a title page's extras, which scrolls its top to the top of the screen when focus enters it ([scrollTo]). */
+@Composable
+private fun ExtrasSection(scrollTo: (Float) -> Unit, content: @Composable () -> Unit) {
+    val top = remember { floatArrayOf(0f) }
+    Box(Modifier.onPlaced { top[0] = it.positionInParent().y }.onFocusChanged { if (it.hasFocus) scrollTo(top[0]) }) { content() }
 }
 
 /**
@@ -2220,9 +2294,10 @@ private fun ShowPage(
             main = {
                 Row(Modifier.fillMaxSize().padding(start = EDGE, end = EDGE), horizontalArrangement = Arrangement.spacedBy(Space.xxl)) {
                     Column(Modifier.width(SHOW_INFO_WIDTH).fillMaxHeight().padding(bottom = Space.xl), verticalArrangement = Arrangement.spacedBy(Space.s, Alignment.Bottom)) {
-                        ScrollText(show.title.title, style = BIG_TITLE, lines = 2)
+                        PageTitle(show.title.title, info)
                         val seasons = episodes?.map { it.season }?.distinct()?.size
                         MetaLine(show, info ?: data?.info, extra = seasons?.let { if (it == 1) "1 season" else "$it seasons" })
+                        remember(info) { info?.let(::showStatus) }?.let { FitText(it, style = Type.body, active = true) }
                         (info?.plot?.ifBlank { null } ?: data?.plot?.ifBlank { null })?.let { ScrollText(it, style = Type.body, lines = 10) }
                         if (info?.people.isNullOrEmpty()) data?.cast?.ifBlank { null }?.let { Text("Starring $it", style = Type.caption, maxLines = 2) }
                         val next = target?.let { episodes[it] }
@@ -2275,7 +2350,7 @@ private fun ShowPage(
                     }
                 }
             },
-            extras = { TitleExtras(info, watched, extras, onPerson, onOpen) },
+            extras = { TitleExtras(info, watched, extras, onPerson, onOpen, it) },
         )
         versionsFor?.let { i ->
             VersionsPanel(

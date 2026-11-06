@@ -17,6 +17,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
@@ -46,8 +47,10 @@ import com.mohamed3on.iptv.ui.theme.tabular
 @Composable
 internal fun MarksPanel(
     heading: String, rows: List<Pair<String, () -> Unit>>, rating: Int?, onRate: ((Int?) -> Unit)?, onClose: () -> Unit, modifier: Modifier = Modifier,
-    after: List<Pair<String, () -> Unit>> = emptyList(),
+    after: List<Pair<String, () -> Unit>> = emptyList(), open: Boolean = true,
 ) {
+    // Focus stays in while [open]; a closing panel, still sliding out, lets it go back to the page at once.
+    val stay by rememberUpdatedState(open)
     var rate by remember { mutableStateOf(false) }
     val first = remember { FocusRequester() }
     LaunchedEffect(rate) {
@@ -66,7 +69,7 @@ internal fun MarksPanel(
                 }
                 true
             }
-            .focusProperties { onExit = { cancelFocusChange() } }
+            .focusProperties { onExit = { if (stay) cancelFocusChange() } }
             .focusGroup()
             .padding(Space.xl),
         verticalArrangement = Arrangement.spacedBy(Space.xs),

@@ -3,7 +3,11 @@ package com.mohamed3on.iptv
 import android.content.Intent
 import android.os.Bundle
 import com.mohamed3on.iptv.system.Check
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
@@ -310,10 +314,18 @@ private fun Root(
             val arranged by lineup.version.collectAsState()
             val feed = remember(state.feed, arranged) { lineup.applyTo(state.feed) }
             PlayerScreen(feed, session, audio, surface, aspect, tiles, live, health)
-            when (idle) {
-                Idle.Asking -> StillWatching()
-                Idle.TimedOut -> IdleStopped()
-                else -> {}
+            // Fades in over the picture and out again, as the problem card does.
+            AnimatedContent(
+                targetState = idle?.takeIf { it != Idle.Watching },
+                transitionSpec = { fadeIn(Motion.panel()) togetherWith fadeOut(Motion.panel()) },
+                modifier = Modifier.fillMaxSize(),
+                label = "idle",
+            ) { shown ->
+                when (shown) {
+                    Idle.Asking -> StillWatching()
+                    Idle.TimedOut -> IdleStopped()
+                    else -> {}
+                }
             }
         }
     }

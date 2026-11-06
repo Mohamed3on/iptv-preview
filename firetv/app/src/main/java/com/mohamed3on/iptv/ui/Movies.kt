@@ -1,6 +1,13 @@
 package com.mohamed3on.iptv.ui
 
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.runtime.SideEffect
+import com.mohamed3on.iptv.ui.theme.reveal
 import android.graphics.Bitmap
 import android.graphics.LinearGradient
 import android.graphics.Paint
@@ -748,48 +755,64 @@ private fun MoviesBrowse(
                 kind == 1 -> Box(Modifier.padding(top = Space.xxxl)) { Unavailable(content, onRetry) }
                 kind == 0 -> Box(Modifier.padding(top = Space.xxxl)) { LoadingMovies(content) }
                 kind != 2 -> {}
-                shownPage == BrowsePage.UpNext -> UpNextPage(
-                    entries = upNext,
-                    newShows = newShows,
-                    resumeButton = resumeButton,
-                    onFocused = { focused.value = it },
-                    onResume = onResume,
-                    onStartOver = onStartOver,
-                    onOpen = onOpen,
-                    onMenu = { actions = Actions(it, removable = true) },
-                    onDown = { page = BrowsePage.Rows },
-                    modifier = Modifier.onFocusChanged { if (it.hasFocus) at = FocusAt.UpNext },
-                )
-                else -> Column(Modifier.fillMaxSize().padding(top = Space.safeY)) {
-                    val search = shownPage == BrowsePage.Search
-                    Hero(
-                        if (search && focused.value == null) null else rested, heroInfo, resume,
-                        placeholder = if (search) "Search ${LocalLibrary.current.noun}" else LocalLibrary.current.title,
-                        modifier = Modifier.fillMaxWidth().height(HERO_HEIGHT).padding(start = EDGE, end = EDGE + SEARCH_ROOM),
-                    )
-                    if (search) Box(Modifier.onFocusChanged { if (it.hasFocus) at = FocusAt.Search }) {
-                        SearchGrid(
-                            library!!, query, { query = it }, results, keys, onFocused = { focused.value = it },
-                            back = openedResult?.let { it to resultBack },
-                            stray = { !hasFocus },
-                            // Coming back to a result is no arrival at Search: the Fire TV keyboard stays shut.
-                            arrive = { openedResult == null },
-                            onPlay = {
-                                openedResult = it.id
-                                focused.value = null // so "back on the card" is only true once it is
-                                onOpen(it)
-                            },
-                            onMenu = { actions = Actions(it) },
+                else -> AnimatedContent(
+                    targetState = shownPage == BrowsePage.UpNext,
+                    transitionSpec = {
+                        when {
+                            reduced -> fadeIn(tween(Motion.FADE_MS)) togetherWith fadeOut(tween(Motion.FADE_MS))
+                            // Back to Up next: the rows sink back under the band.
+                            targetState -> fadeIn(Motion.spring(0.3f)) togetherWith
+                                (slideOutVertically(Motion.panel()) { it / 3 } + fadeOut(Motion.panel()))
+                            // Down to the rows: they rise with the band behind them (Backdrop's cover, the same spring).
+                            else -> (slideInVertically(Motion.panel()) { it / 3 } + fadeIn(Motion.panel())) togetherWith
+                                fadeOut(Motion.spring(0.2f))
+                        }
+                    },
+                    modifier = Modifier.fillMaxSize(),
+                    label = "browse",
+                ) { upNextShown ->
+                    if (upNextShown) UpNextPage(
+                        entries = upNext,
+                        newShows = newShows,
+                        resumeButton = resumeButton,
+                        onFocused = { focused.value = it },
+                        onResume = onResume,
+                        onStartOver = onStartOver,
+                        onOpen = onOpen,
+                        onMenu = { actions = Actions(it, removable = true) },
+                        onDown = { page = BrowsePage.Rows },
+                        modifier = Modifier.onFocusChanged { if (it.hasFocus) at = FocusAt.UpNext },
+                    ) else Column(Modifier.fillMaxSize().padding(top = Space.safeY)) {
+                        val search = shownPage == BrowsePage.Search
+                        Hero(
+                            if (search && focused.value == null) null else rested, heroInfo, resume,
+                            placeholder = if (search) "Search ${LocalLibrary.current.noun}" else LocalLibrary.current.title,
+                            modifier = Modifier.fillMaxWidth().height(HERO_HEIGHT).padding(start = EDGE, end = EDGE + SEARCH_ROOM),
                         )
-                    } else Box(Modifier.onFocusChanged { if (it.hasFocus) at = FocusAt.Rows }) {
-                        Rows(
-                            rows, watched, content, active,
-                            onFocused = { focused.value = it },
-                            onOpen = onOpen,
-                            onMenu = { m, continuing -> actions = Actions(m, removable = continuing, rows = true) },
-                            // Up from the first row: back to Up next, else to Search.
-                            onTop = { if (upNext.isNotEmpty()) page = BrowsePage.UpNext else runCatching { searchButton.requestFocus() } },
-                        )
+                        if (search) Box(Modifier.onFocusChanged { if (it.hasFocus) at = FocusAt.Search }) {
+                            SearchGrid(
+                                library!!, query, { query = it }, results, keys, onFocused = { focused.value = it },
+                                back = openedResult?.let { it to resultBack },
+                                stray = { !hasFocus },
+                                // Coming back to a result is no arrival at Search: the Fire TV keyboard stays shut.
+                                arrive = { openedResult == null },
+                                onPlay = {
+                                    openedResult = it.id
+                                    focused.value = null // so "back on the card" is only true once it is
+                                    onOpen(it)
+                                },
+                                onMenu = { actions = Actions(it) },
+                            )
+                        } else Box(Modifier.onFocusChanged { if (it.hasFocus) at = FocusAt.Rows }) {
+                            Rows(
+                                rows, watched, content, active,
+                                onFocused = { focused.value = it },
+                                onOpen = onOpen,
+                                onMenu = { m, continuing -> actions = Actions(m, removable = continuing, rows = true) },
+                                // Up from the first row: back to Up next, else to Search.
+                                onTop = { if (upNext.isNotEmpty()) page = BrowsePage.UpNext else runCatching { searchButton.requestFocus() } },
+                            )
+                        }
                     }
                 }
             }
@@ -802,7 +825,7 @@ private fun MoviesBrowse(
                     .onFocusChanged { if (it.isFocused) at = FocusAt.SearchButton },
             )
         }
-        actions?.let { a ->
+        SlidePanel(actions) { a, open, m ->
             TitleActions(
                 a.movie,
                 onClose = {
@@ -820,7 +843,8 @@ private fun MoviesBrowse(
                     hideWatched = !hideWatched
                     prefs.put(SHOW_WATCHED, if (hideWatched) null else "1")
                 },
-                modifier = Modifier.align(Alignment.CenterEnd).padding(Space.safe),
+                modifier = m,
+                open = open,
             )
         }
     } }
@@ -836,6 +860,7 @@ private class Actions(val movie: Movie, val removable: Boolean = false, val rows
 @Composable
 private fun TitleActions(
     movie: Movie, onClose: () -> Unit, onRemove: (() -> Unit)? = null, hideWatched: Boolean? = null, onHideWatched: () -> Unit = {}, modifier: Modifier = Modifier,
+    open: Boolean = true,
 ) {
     val graph = LocalContext.current.graph
     val id = movie.titleId
@@ -857,6 +882,7 @@ private fun TitleActions(
             onRemove?.let { "Remove from Up next" to { it(); onClose() } },
             hideWatched?.let { "Hide watched titles: ${if (it) "On" else "Off"}" to { onHideWatched(); onClose() } },
         ),
+        open = open,
     )
 }
 
@@ -1875,16 +1901,19 @@ private fun FilmPage(
             },
             extras = { TitleExtras(info, watched, extras, onPerson, onOpen, it) },
         )
-        if (versions) VersionsPanel(
-            film.titleId,
-            onPlay = { onPlay(false) },
-            onClose = {
-                closedVersions[0] = true
-                versions = false
-            },
-            modifier = Modifier.align(Alignment.CenterEnd).padding(Space.safe),
-        )
-        if (marking) TitleActions(film, onClose = { marking = false }, modifier = Modifier.align(Alignment.CenterEnd).padding(Space.safe))
+        SlidePanel(Unit.takeIf { versions }) { _, open, m ->
+            VersionsPanel(
+                film.titleId,
+                onPlay = { onPlay(false) },
+                onClose = {
+                    closedVersions[0] = true
+                    versions = false
+                },
+                modifier = m,
+                open = open,
+            )
+        }
+        SlidePanel(Unit.takeIf { marking }) { _, open, m -> TitleActions(film, onClose = { marking = false }, modifier = m, open = open) }
     }
 }
 
@@ -1919,6 +1948,33 @@ private fun PlaysLine(title: TitleId, fallback: List<String>?, modifier: Modifie
 }
 
 private val PLAYS_HEIGHT = 24.dp
+
+/**
+ * A panel at the right edge that slides in from the right and back out to it, as Options and Recent do on the
+ * live screen. A non-null [value] shows it; while it leaves, [content] keeps the last value. [content] gets
+ * whether the panel is still open (passed on, so focus can leave a closing panel) and the modifier for the panel.
+ */
+@Composable
+private fun <T : Any> BoxScope.SlidePanel(value: T?, content: @Composable (value: T, open: Boolean, modifier: Modifier) -> Unit) {
+    val reduced = LocalReducedMotion.current
+    val focusManager = LocalFocusManager.current
+    var last by remember { mutableStateOf(value) }
+    val holdsFocus = remember { booleanArrayOf(false) }
+    SideEffect {
+        if (value != null) last = value
+        // A closing panel lets focus go at once, so the page's own "focus is back with me" check moves it where it belongs.
+        else if (holdsFocus[0]) focusManager.clearFocus(force = true)
+    }
+    AnimatedVisibility(
+        visible = value != null,
+        enter = EnterTransition.None,
+        exit = ExitTransition.None,
+        modifier = Modifier.align(Alignment.CenterEnd).padding(Space.safe).onFocusChanged { holdsFocus[0] = it.hasFocus },
+    ) {
+        val shown = reveal()
+        (value ?: last)?.let { content(it, value != null, Modifier.slideFade({ shown.value }, Edge.Right, reduced)) }
+    }
+}
 
 /** A title page's name in display type, its original-language title under it when TMDB has one that differs. */
 @Composable
@@ -2355,7 +2411,7 @@ private fun ShowPage(
             },
             extras = { TitleExtras(info, watched, extras, onPerson, onOpen, it) },
         )
-        versionsFor?.let { i ->
+        SlidePanel(versionsFor) { i, open, m ->
             VersionsPanel(
                 episodes!![i].titleId,
                 onPlay = {
@@ -2363,12 +2419,12 @@ private fun ShowPage(
                     onPlay(episodes, i, false)
                 },
                 onClose = { versionsFor = null },
-                modifier = Modifier.align(Alignment.CenterEnd).padding(Space.safe),
+                modifier = m,
+                open = open,
             )
         }
-        marksFor?.let { i ->
+        SlidePanel(marksFor) { i, open, at ->
             val close = { marksFor = null }
-            val at = Modifier.align(Alignment.CenterEnd).padding(Space.safe)
             if (i < 0) {
                 val all = episodes.orEmpty().filter { it.season > 0 && it.titleId.isNotEmpty() }
                 val season = target?.let { episodes!![it].season }?.takeIf { s -> s > 0 && all.any { it.season != s } }
@@ -2380,7 +2436,7 @@ private fun ShowPage(
                         season?.let { s -> "Mark season $s watched" to { graph.marks.setWatched("${show.titleId}:s$s", true, all.filter { it.season == s }.map { it.titleId }); close() } },
                         "Mark show watched" to { graph.marks.setWatched(show.titleId, true, all.map { it.titleId }); close() },
                     ),
-                    ratings[show.titleId], onRate = { graph.marks.rate(show.titleId, it); close() }, onClose = close, modifier = at,
+                    ratings[show.titleId], onRate = { graph.marks.rate(show.titleId, it); close() }, onClose = close, modifier = at, open = open,
                 )
             } else {
                 val e = episodes!![i]
@@ -2391,7 +2447,7 @@ private fun ShowPage(
                         (if (done) "Mark unwatched" else "Mark watched") to { graph.marks.setWatched(e.titleId, !done); close() },
                         "Versions" to { marksFor = null; versionsFor = i },
                     ),
-                    ratings[e.titleId], onRate = { graph.marks.rate(e.titleId, it); close() }, onClose = close, modifier = at,
+                    ratings[e.titleId], onRate = { graph.marks.rate(e.titleId, it); close() }, onClose = close, modifier = at, open = open,
                 )
             }
         }

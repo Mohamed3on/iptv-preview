@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.withFrameNanos
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.focus.focusProperties
 import com.mohamed3on.iptv.ui.theme.material
 import androidx.compose.foundation.lazy.LazyColumn
@@ -210,7 +211,9 @@ internal fun Versions(title: String, data: VersionsData, first: FocusRequester, 
  * at once). OK pins the copy and plays it ([onPlay]); Back closes it ([onClose]).
  */
 @Composable
-internal fun VersionsPanel(title: String, onPlay: () -> Unit, onClose: () -> Unit, modifier: Modifier = Modifier) {
+internal fun VersionsPanel(title: String, onPlay: () -> Unit, onClose: () -> Unit, modifier: Modifier = Modifier, open: Boolean = true) {
+    // Focus stays in while [open]; a closing panel, still sliding out, lets it go back to the page at once.
+    val stay by rememberUpdatedState(open)
     val graph = LocalContext.current.graph
     val p by remember(title) { graph.films.state(title) }.collectAsState()
     val first = remember { FocusRequester() }
@@ -229,7 +232,7 @@ internal fun VersionsPanel(title: String, onPlay: () -> Unit, onClose: () -> Uni
                 if (it.type == KeyEventType.KeyDown) onClose()
                 true
             }
-            .focusProperties { onExit = { cancelFocusChange() } }
+            .focusProperties { onExit = { if (stay) cancelFocusChange() } }
             .focusGroup()
             .padding(Space.xl),
     ) {

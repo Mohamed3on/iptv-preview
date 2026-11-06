@@ -706,9 +706,20 @@ private fun MoviePanel(
                 fetchedNote(fetched)?.let { Text(it, style = Type.caption, modifier = Modifier.padding(start = Space.l, bottom = Space.s)) }
                 val list = rememberLazyListState()
                 LazyColumn(Modifier.weight(1f).scrollbar(list), state = list, verticalArrangement = Arrangement.spacedBy(Space.xs)) {
-                    if (fetched.selected != null) {
-                        item { PanelRow("Earlier", "−0.5 s") { onShift(-500) } }
-                        item { PanelRow("Later", "+0.5 s") { onShift(500) } }
+                    if (fetched.selected != null) item {
+                        // ◀ ▶ move the lines 0.1 s; a held key repeats.
+                        PanelRow(
+                            "Timing  ◀ ▶", "%+.1f s".format(java.util.Locale.ROOT, fetched.offset / 1000.0),
+                            modifier = Modifier.onKeyEvent {
+                                val by = when (it.nativeKeyEvent.keyCode) {
+                                    AndroidKeyEvent.KEYCODE_DPAD_LEFT -> -SHIFT_MS
+                                    AndroidKeyEvent.KEYCODE_DPAD_RIGHT -> SHIFT_MS
+                                    else -> return@onKeyEvent false
+                                }
+                                if (it.type == KeyEventType.KeyDown) onShift(by)
+                                true
+                            },
+                        ) {}
                     }
                     val off = subtitles.selected == null && fetched.selected == null
                     item { PanelRow("Off", checked = off, focus = if (off) first else null) { onSubtitle(null) } }
@@ -728,6 +739,8 @@ private fun MoviePanel(
 }
 
 private const val FILM_READING_MS = 5_000L
+/** One step of a fetched subtitle file's timing. */
+private const val SHIFT_MS = 100L
 
 @Composable
 private fun Unavailable(onBack: () -> Unit) {

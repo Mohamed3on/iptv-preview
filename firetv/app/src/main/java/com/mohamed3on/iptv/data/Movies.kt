@@ -239,6 +239,8 @@ data class MovieInfo(
     val network: String = "",
     val status: String = "",
     val next: NextAir? = null,
+    /** Without TrueScore's own ratio: the net-loved share (0–1) of the histogram the box scored it on, [hs] whose ("l" Letterboxd's, "i" IMDb's). */
+    val hn: Double? = null, val hs: String = "",
     override val s: Int? = null, override val sn: Int? = null, override val se: Int = 0, override val lb: Double? = null, override val ir: Double? = null,
     override val lv: Int? = null, override val iv: Int? = null, override val s10: Double? = null,
     override val ta: Int? = null, override val tr: Double? = null, override val tq: Double? = null,

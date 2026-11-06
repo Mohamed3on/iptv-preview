@@ -1156,7 +1156,9 @@ private fun MetaLine(movie: Movie, info: MovieInfo?, extra: String? = null) {
     val scored: Scored? = movie.lib?.takeIf { it.known } ?: info
     val rating = info?.rating?.ifEmpty { null }?.takeIf { scored?.lb == null && scored?.ir == null }?.let { "$it/10" }
     val yours = LocalContext.current.graph.marks.ratings.collectAsState().value[movie.titleId]
-    val scores = remember(scored, yours) { scoresLine(scored, yours) }
+    // Without TrueScore's own ratio, the title page's histogram share stands in (TrueScore's line, no recent trend).
+    val net = info?.takeIf { it.hn != null && scored?.tr == null }?.let { it.copy(tr = it.hn, s = it.s ?: scored?.s) }
+    val scores = remember(scored, yours, net) { scoresLine(net ?: scored, yours, onImdb = net?.hs == "i") }
     // The facts go under the scores when both don't fit on one line (beside a show's episodes); only then does a line scroll.
     FlowRow(horizontalArrangement = Arrangement.spacedBy(Space.m), itemVerticalAlignment = Alignment.CenterVertically) {
         if (scores != null) Text(scores, style = SCORE_STYLE, maxLines = 1)
@@ -1168,11 +1170,11 @@ private fun MetaLine(movie: Movie, info: MovieInfo?, extra: String? = null) {
 
 /**
  * "TrueScore 7,735 · 23% → 27% net loved · You 9/10" for a film in TrueScore's store (all-time then recent net-loved
- * share, the score in the colour of the latest), else "IMDb 8.8 (2.9M) · Letterboxd 8.4 (4.6M) · You 9/10": IMDb's and
+ * share, the score in the colour of the latest; "… 47% net loved on IMDb" [onImdb] when the share is IMDb histogram's), else "IMDb 8.8 (2.9M) · Letterboxd 8.4 (4.6M) · You 9/10": IMDb's and
  * Letterboxd's averages out of 10 (Letterboxd's doubled) with their vote counts; then the owner's rating. Each number in
  * its colour on the review-score ramp, the rest text-secondary; null when none is known.
  */
-private fun scoresLine(scored: Scored?, yours: Int?): AnnotatedString? {
+private fun scoresLine(scored: Scored?, yours: Int?, onImdb: Boolean = false): AnnotatedString? {
     val all = scored?.tr?.let(::pct)
     if (all != null) return buildAnnotatedString {
         val recent = scored.tq?.let(::pct)
@@ -1182,6 +1184,7 @@ private fun scoresLine(scored: Scored?, yours: Int?): AnnotatedString? {
             append(" · $all%")
             if (recent != null) append(" → $recent%")
             append(" net loved")
+            if (onImdb) append(" on IMDb")
             if (yours != null) {
                 append(" · You ")
                 withStyle(SpanStyle(color = Palette.outOf10(yours.toDouble()))) { append("$yours/10") }

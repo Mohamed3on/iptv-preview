@@ -303,8 +303,12 @@ export function withMark(h: Kept, title: string, covered: string[], watched?: bo
   return out
 }
 
+/** Every title the owner watched: Trakt's films, episodes and shows (one episode is enough), Letterboxd's diary, and anything rated on Trakt, Letterboxd or IMDb. */
+export const watchedOf = (h: Kept | null) =>
+  new Set([...(h?.movies ?? []), ...(h?.lb ?? []), ...(h?.eps ?? []), ...Object.keys(h?.shows ?? {}), ...Object.keys(h?.rated ?? {}), ...Object.keys(h?.ratings ?? {}), ...Object.keys(h?.imdb ?? {})])
+
 /**
- * What /api/app/history answers: each source's state, every title Trakt, Letterboxd and IMDb mark watched, the
+ * What /api/app/history answers: each source's state, every title watched ([watchedOf]), the
  * owner's ratings, the Watchlist (shortest first, then Trakt's order) as library titles, and the next episode of each followed show ([local] from the stick, see [followed]).
  */
 export async function historyAnswer(h: Kept | null, local: string[], k: Known) {
@@ -330,7 +334,7 @@ export async function historyAnswer(h: Kept | null, local: string[], k: Known) {
   ])
   return {
     src: { trakt: h?.trakt ?? 'off', letterboxd: h?.letterboxd ?? 'off' },
-    watched: [...new Set([...(h?.movies ?? []), ...(h?.lb ?? []), ...(h?.eps ?? []), ...Object.keys(h?.imdb ?? {})])],
+    watched: [...watchedOf(h)],
     watchlist,
     // On the Watchlist only through Letterboxd, which has no write API: the stick can't take them off.
     lbw: (h?.lbw ?? []).filter((id) => !h?.watchlist.includes(id)),

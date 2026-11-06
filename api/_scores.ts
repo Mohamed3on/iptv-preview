@@ -11,7 +11,7 @@ import { readFile } from 'node:fs/promises'
 import { basename, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { writeAtomic } from './_fs.js'
-import type { Kept } from './_history.js'
+import { watchedOf, type Kept } from './_history.js'
 import { fromTmdb, LIBRARY_FULL_FILE, ordered, rowDefs, type LibTitle, type Library, type TmdbItem } from './_library.js'
 import { keptRuntimes, parseTitleId, tmdbGet } from './_tmdb.js'
 
@@ -97,23 +97,51 @@ export function scoreOf(id: string, cache: ScoreCache = {}) {
   return scoreTitles({ [id]: cache[id] ?? {} }, new Map(f ? [[id, f]] : [])).get(id)
 }
 
+/** [ids] (best first) up to and including the 90th the owner hasn't watched ([seen]). */
+function untilUnseen(ids: string[], seen: Set<string>) {
+  let unseen = 0
+  return ids.filter((id) => unseen < 90 && (seen.has(id) || ++unseen, true))
+}
+
 /**
  * TrueScore's rows by id: the films its store has that exact score for (recent-adjusted, all-time), best first, until
  * 90 the owner hasn't watched are in (the rows keep this order and length, so the app can leave watched titles out, its
  * own new marks too, and still show 60).
  */
 export function trueScoreRows(h: Kept | null, films = letterboxdFilms()): [string, string[]][] {
-  const seen = new Set([...(h?.movies ?? []), ...(h?.lb ?? []), ...Object.keys(h?.imdb ?? {})])
-  return ([['ts-recent', 'adjusted'], ['ts-all', 'score']] as const).map(([row, by]) => {
-    const ids: string[] = []
-    let unseen = 0
-    for (const [id] of [...films].filter(([, f]) => f[by] !== undefined).sort(([, a], [, b]) => b[by]! - a[by]!)) {
-      if (unseen >= 90) break
-      ids.push(id)
-      if (!seen.has(id)) unseen++
-    }
-    return [row, ids]
-  })
+  const seen = watchedOf(h)
+  return ([['ts-recent', 'adjusted'], ['ts-all', 'score']] as const).map(([row, by]) =>
+    [row, untilUnseen([...films].filter(([, f]) => f[by] !== undefined).sort(([, a], [, b]) => b[by]! - a[by]!).map(([id]) => id), seen)])
+}
+
+/**
+ * The TrueScore shows row by id: IMDb's Top 250 and Most Popular TV shows ([shows]) by TrueScore's net score on IMDb's histogram
+ * ([scoreTitles]' [s]; a show without one last, in IMDb's order), until 90 the owner hasn't watched are in, like [trueScoreRows].
+ */
+export function trueScoreShows(shows: string[], scores: Map<string, Score>, h: Kept | null): string[] {
+  const s = (id: string) => scores.get(id)?.s ?? -Infinity
+  return untilUnseen(shows.slice().sort((a, b) => s(b) - s(a)), watchedOf(h))
+}
+
+const TOP_TV_Q = 'query { top: chartTitles(first: 250, chart: { chartType: TOP_RATED_TV_SHOWS }) { edges { node { id } } } popular: chartTitles(first: 100, chart: { chartType: MOST_POPULAR_TV_SHOWS }) { edges { node { id } } } }'
+/**
+ * IMDb's Top 250 TV shows, then its 100 Most Popular (imdb.com/chart/tvmeter) not among them, as tv:<tmdb> ids: each IMDb id matched through [cache]'s, else TMDB's
+ * find (then kept in [cache], which also lets [refreshScores] ask IMDb for its histogram). Empty when IMDb doesn't answer.
+ */
+export async function imdbTopShows(cache: ScoreCache, get: typeof fetch = fetch): Promise<string[]> {
+  const r = await get('https://caching.graphql.imdb.com/', { method: 'POST', body: JSON.stringify({ query: TOP_TV_Q }), headers: IMDB_HEADERS })
+    .then((r) => (r.ok ? (r.json() as Promise<{ data?: Record<'top' | 'popular', { edges?: { node: { id: string } }[] } | null> }>) : null), () => null)
+  const tts = [...new Set([...(r?.data?.top?.edges ?? []), ...(r?.data?.popular?.edges ?? [])].map((e) => e.node.id))].filter((tt) => TT.test(tt))
+  const byTt = new Map(Object.entries(cache).flatMap(([id, e]) => (id.startsWith('tv:') && e.im ? [[e.im, id]] : [])))
+  const ids = await Promise.all(tts.map(async (tt) => {
+    if (byTt.has(tt)) return byTt.get(tt)!
+    const found = await tmdbGet<{ tv_results?: { id: number }[] }>(`find/${tt}?external_source=imdb_id`).catch(() => null)
+    const n = found?.tv_results?.[0]?.id
+    if (!n) return null
+    cache[`tv:${n}`] = { ...cache[`tv:${n}`], im: tt }
+    return `tv:${n}`
+  }))
+  return [...new Set(ids.filter((id): id is string => !!id))]
 }
 
 const lookedUp = new Map<string, LibTitle | null>()
@@ -135,7 +163,7 @@ export async function rescoredLibrary(h: Kept | null): Promise<Library> {
       if (!index.has(x) && t?.p) index.set(x, titles.push(t) - 1)
       return titles[index.get(x) ?? -1]?.p ? [index.get(x)!] : []
     }))] })).filter((r) => r.i.length),
-    ...full.rows.filter((r) => !ordered(r.id)),
+    ...full.rows.filter((r) => !ts.some(([id]) => id === r.id)),
   ]
   const shown = ranked({ ...full, titles, rows }, scoreTitles(cache))
   return { ...shown, titles: shown.titles.map((t) => ({ ...t, ...(rt(t.id) && { rt: rt(t.id) }) })) }
@@ -211,13 +239,14 @@ function entry(m: Mdb | undefined, now: number): ScoreEntry {
 
 /** An IMDb title id (some lookups give others, which fail IMDb's whole batch). */
 const TT = /^tt\d+$/
+const IMDB_HEADERS = { 'content-type': 'application/json', 'x-imdb-client-name': 'imdb-web-next-localized', 'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36' }
 const IMDB_Q = 'query($ids: [ID!]!) { titles(ids: $ids) { id ratingsSummary { aggregateRating voteCount } aggregateRatingsBreakdown { histogram { histogramValues { rating voteCount } } } } }'
 /** IMDb's answers for the titles [ims] by IMDb id (none for one IMDb doesn't know), or null when IMDb didn't answer. */
 async function imdb(ims: string[], now: number, get: typeof fetch, signal?: AbortSignal): Promise<Map<string, ScoreEntry> | null> {
   type T = { id: string; ratingsSummary?: { aggregateRating?: number | null; voteCount?: number | null }; aggregateRatingsBreakdown?: { histogram?: { histogramValues?: { rating: number; voteCount: number }[] } | null } } | null
   const r = await get('https://caching.graphql.imdb.com/', {
     method: 'POST', signal, body: JSON.stringify({ query: IMDB_Q, variables: { ids: ims } }),
-    headers: { 'content-type': 'application/json', 'x-imdb-client-name': 'imdb-web-next-localized', 'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36' },
+    headers: IMDB_HEADERS,
   }).then((r) => (r.ok ? (r.json() as Promise<{ data?: { titles?: T[] } }>) : null), () => null)
   if (!r?.data?.titles) return null
   return new Map(r.data.titles.filter((t) => !!t).map((t) => {

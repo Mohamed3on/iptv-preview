@@ -200,6 +200,19 @@ export function scoreTitles(cache: ScoreCache, lbxFilms = letterboxdFilms()): Ma
   return out
 }
 
+/**
+ * A title page's net-loved share ((loved − hated) / total, 3 places) [hn] from the histogram [scoreTitles] scored it on, when
+ * TrueScore's store has no score of its own for it, so the page can show TrueScore's line without the recent trend; [hs] says
+ * whose: 'l' Letterboxd's (from the store), 'i' IMDb's. {} when there is no histogram.
+ */
+export function histogramShare(id: string, cache: ScoreCache = {}): { hn?: number; hs?: 'l' | 'i' } {
+  const lf = letterboxdFilms().get(id)
+  if (lf?.ratio !== undefined || lf?.score !== undefined || lf?.adjusted !== undefined) return {}
+  const h = lf?.h ?? cache[id]?.h, total = h ? sum(h) : 0
+  if (!total) return {}
+  return { hn: Math.round(((h![8] + h![9] - h![0] - h![1]) / total) * 1000) / 1000, hs: lf?.h ? 'l' : 'i' }
+}
+
 const SCORE_KEYS = new Set(['s', 's10', 'sn', 'se', 'ir', 'iv', 'lb', 'lv', 'ta', 'tr', 'tq'])
 /** [t] without the scores a build gave it (older builds' sn and se too). */
 export const unscored = (t: LibTitle): LibTitle => Object.fromEntries(Object.entries(t).filter(([k]) => !SCORE_KEYS.has(k))) as LibTitle

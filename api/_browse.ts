@@ -5,7 +5,7 @@
 import { readFile } from 'node:fs/promises'
 import type { XtreamConfig } from './_lib.js'
 import { fromTmdb, LIBRARY_FILE, LIBRARY_FULL_FILE, type LibTitle, type Library, type TmdbItem } from './_library.js'
-import { due, loadScores, scoreNow, scoreOf, scoreTitles, type Score, type ScoreCache } from './_scores.js'
+import { due, histogramShare, loadScores, scoreNow, scoreOf, scoreTitles, type Score, type ScoreCache } from './_scores.js'
 import { showList } from './_shows.js'
 import { episodeTitle, keptRuntimes, parseTitleId, tmdbCollection, tmdbEpisodes, tmdbTitle } from './_tmdb.js'
 import type { VodItem } from './_vod.js'
@@ -81,6 +81,7 @@ export async function titleDetails(cfg: XtreamConfig, id: string) {
     // The franchise's own films are its row, not More like this.
     more: t.recommendations.filter((r) => !parts.some((x) => r.title === `movie:${x.id}`)).map((r) => decorate(k, { id: r.title, k: r.title.startsWith('tv:') ? 't' : 'm', n: r.name, ...(Number(r.year) && { y: Number(r.year) }), ...(r.poster && { p: r.poster }) })),
     ...scoreOf(id, cache),
+    ...histogramShare(id, cache),
     ...(t.trailer && { trailer: t.trailer }),
     ...(languageOf(t.originalLanguage) && { language: languageOf(t.originalLanguage) }),
     // Only when it says more than the name does ("Amélie" → "Le fabuleux destin d'Amélie Poulain", never "Léon" → "Leon").

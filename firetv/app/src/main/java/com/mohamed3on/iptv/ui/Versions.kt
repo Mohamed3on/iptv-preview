@@ -45,6 +45,7 @@ import com.mohamed3on.iptv.data.RdStatus
 import com.mohamed3on.iptv.graph
 import com.mohamed3on.iptv.player.Capacity.Source
 import com.mohamed3on.iptv.player.Copy
+import com.mohamed3on.iptv.player.pictureTier
 import com.mohamed3on.iptv.player.Correction
 import com.mohamed3on.iptv.player.Hdr
 import com.mohamed3on.iptv.player.Passthrough
@@ -317,31 +318,8 @@ internal fun copyLabels(c: Copy): List<String> = listOfNotNull(
     c.mbps.takeIf { it > 0f }?.let { "${it.roundToInt()} Mbps" },
 )
 
-/** The picture in a word, as the server's `pictureTier` gives it: resolution, capped by codec-adjusted bits per pixel when the bitrate is known. */
-internal fun copyTier(c: Copy): String? {
-    val (w, h) = when {
-        c.resolution >= 2000 -> 3840 to 2160
-        c.resolution >= 1000 -> 1920 to 1080
-        c.resolution >= 700 -> 1280 to 720
-        c.resolution > 0 -> 720 to 480
-        else -> return null
-    }
-    val cap = when {
-        h >= 2000 -> 0
-        h >= 1000 -> 1
-        h >= 700 -> 2
-        else -> 3
-    }
-    val gain = GAIN[c.codec] ?: if (h >= 2000) 2f else 1f
-    val bpp = c.mbps * 1_000_000 * gain / (w * h * 24f)
-    val bits = when {
-        c.mbps <= 0f || bpp >= 0.24f -> 0
-        bpp >= 0.14f -> 1
-        bpp >= 0.07f -> 2
-        else -> 3
-    }
-    return TIERS[maxOf(cap, bits)]
-}
+/** The picture in a word (see [pictureTier]). */
+internal fun copyTier(c: Copy): String? = pictureTier(c)?.let(TIERS::get)
 
 /** "14.2 GB"; null when unknown. */
 internal fun sizeLabel(bytes: Long): String? = when {
@@ -393,7 +371,6 @@ private fun bandwidthLine(typical: (Source, Long) -> Float?): String {
 
 /** The picture of a copy, best first (the server calls them Reference, Great, OK and Soft). */
 private val TIERS = listOf("Best", "High", "Medium", "Low")
-private val GAIN = mapOf("h264" to 1f, "hevc" to 2f, "vp9" to 1.8f, "av1" to 2.4f, "mpeg2video" to 0.6f)
 private val VIDEO = mapOf("hevc" to "HEVC", "h264" to "H.264", "av1" to "AV1", "vp9" to "VP9", "mpeg2video" to "MPEG-2", "vc1" to "VC-1")
 private val AUDIO_LABEL = mapOf(
     "truehd" to "TrueHD", "dtshd" to "DTS-HD", "dtsx" to "DTS:X", "dts" to "DTS", "eac3" to "E-AC3", "ac3" to "AC3", "aac" to "AAC", "opus" to "Opus", "flac" to "FLAC",

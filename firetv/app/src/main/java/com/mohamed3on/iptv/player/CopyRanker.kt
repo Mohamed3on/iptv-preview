@@ -69,6 +69,8 @@ class Ranked internal constructor(
     internal val dvMissing: Boolean,
     internal val hdr: Int,
     internal val bits: Float,
+    /** [pictureTier]; 4 when unknown. */
+    internal val tier: Int,
     internal val sound: Int,
     internal val subs: Boolean,
 ) {
@@ -193,15 +195,47 @@ private fun judge(c: Copy, p: SetupProfile, mark: Mark?, language: String?, typi
         dvMissing = dv && Hdr.DolbyVision !in p.hdr,
         hdr = shown,
         bits = c.mbps * (GAIN[c.codec] ?: if (c.resolution >= 2160) 2f else 1f),
+        tier = pictureTier(c) ?: 4,
         sound = if (failed != null) 0 else if (atmos) 3 else if (channels >= 6) 2 else 1,
         subs = language != null && language != "en" && c.englishSubs,
     )
 }
 
-/** Where [a] first differs from [b] in KTD15's quality keys: -k when [a] is better at key k, +k when worse, 0 on a tie. */
+/**
+ * The picture as the server's `pictureTier` grades it, 0 (Best) to 3 (Low): resolution, capped by codec-adjusted bits per
+ * pixel when the bitrate is known; null when the resolution isn't.
+ */
+fun pictureTier(c: Copy): Int? {
+    val (w, h) = when {
+        c.resolution >= 2000 -> 3840 to 2160
+        c.resolution >= 1000 -> 1920 to 1080
+        c.resolution >= 700 -> 1280 to 720
+        c.resolution > 0 -> 720 to 480
+        else -> return null
+    }
+    val cap = when {
+        h >= 2000 -> 0
+        h >= 1000 -> 1
+        h >= 700 -> 2
+        else -> 3
+    }
+    val gain = GAIN[c.codec] ?: if (h >= 2000) 2f else 1f
+    val bpp = c.mbps * 1_000_000 * gain / (w * h * 24f)
+    val bits = when {
+        c.mbps <= 0f || bpp >= 0.24f -> 0
+        bpp >= 0.14f -> 1
+        bpp >= 0.07f -> 2
+        else -> 3
+    }
+    return maxOf(cap, bits)
+}
+
+/** Where [a] first differs from [b] in KTD15's quality keys (picture tier between resolution and HDR): -k when [a] is better at key k, +k when worse, 0 on a tie. */
 private fun versus(a: Ranked, b: Ranked, fit: Boolean = true): Int = when {
     fit && a.fits != b.fits -> if (a.fits) -1 else 1
     a.copy.resolution != b.copy.resolution -> if (a.copy.resolution > b.copy.resolution) -2 else 2
+    // A starved encode loses to a full one before HDR flavours count: 4 Mbps HDR10+ is no match for a 72 Mbps HDR10 remux.
+    a.tier != b.tier -> if (a.tier < b.tier) -4 else 4
     a.hdr != b.hdr -> if (a.hdr > b.hdr) -3 else 3
     a.bits != b.bits -> if (a.bits > b.bits) -4 else 4
     a.sound != b.sound -> if (a.sound > b.sound) -5 else 5

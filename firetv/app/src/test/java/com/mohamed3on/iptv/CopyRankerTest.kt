@@ -37,6 +37,12 @@ class CopyRankerTest {
         assertTrue(why, "Dolby Vision" in why)
     }
 
+    @Test fun aStarvedHdr10PlusRipLosesToAFullHdr10Remux() {
+        val rip = Copy("rd:rip", RealDebrid, 2160, listOf("DV", "HDR10+", "HDR10"), codec = "hevc", audio = "ac3", channels = 6, mbps = 4f)
+        val remux = Copy("rd:remux", RealDebrid, 2160, listOf("HDR10"), codec = "hevc", audio = "eac3", channels = 6, mbps = 72f)
+        assertEquals(remux, rank(listOf(rip, remux)).pick?.copy)
+    }
+
     @Test fun ae2ADolbyVisionTvPicksTheDolbyVisionCopy() {
         assertEquals(dvRemux, rank(listOf(dvRemux, hdr10Web, iptv1080), oled).pick?.copy)
     }

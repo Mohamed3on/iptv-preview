@@ -45,6 +45,7 @@ import com.mohamed3on.iptv.data.RdStatus
 import com.mohamed3on.iptv.graph
 import com.mohamed3on.iptv.player.Capacity.Source
 import com.mohamed3on.iptv.player.Copy
+import com.mohamed3on.iptv.player.TIER_NAMES
 import com.mohamed3on.iptv.player.pictureTier
 import com.mohamed3on.iptv.player.Correction
 import com.mohamed3on.iptv.player.Hdr
@@ -83,7 +84,7 @@ private fun kind(c: Copy) = listOf(c.resolution, c.hdr.firstOrNull(), if (c.atmo
 /**
  * Every copy of [title], grouped by how it stands on this setup, each with its labels, picture tier,
  * source, size and why it ranks where it does (R11, R12). OK plays a copy and pins it ([onChoose]); Menu on
- * a pinned or marked one clears that (R13). Below: what the setup reported and the typical bandwidth the
+ * a pinned or marked one clears that (R13), on any other marks it as not playing here. Below: what the setup reported and the typical bandwidth the
  * pick used, the corrections (R14) and the sources' states. [onChanged] re-ranks after any change.
  */
 @Composable
@@ -142,11 +143,15 @@ internal fun Versions(title: String, data: VersionsData, first: FocusRequester, 
         shown.forEachIndexed { i, (r, s) ->
             if (i == 0 || shown[i - 1].second != s) item(key = "h${s.name}") { Heading(s.heading) }
             item(key = r.copy.id) {
-                VersionRow(r, ranking!!.reasonFor(r, plays), data, focus = if (i == 0) first else if (r.copy.id == firstMore) more else null, onClick = { onChoose(r.copy) }, onClear = if (r.pinned || r.mark != null) ({
+                VersionRow(r, ranking!!.reasonFor(r, plays), data, focus = if (i == 0) first else if (r.copy.id == firstMore) more else null, onClick = { onChoose(r.copy) }, undo = r.pinned || r.mark != null, onMenu = {
                     cleared = r.copy.id
-                    if (r.pinned) choices.pin(title, null) else choices.clearMark(setup, r.copy.id)
+                    when {
+                        r.pinned -> choices.pin(title, null)
+                        r.mark != null -> choices.clearMark(setup, r.copy.id)
+                        else -> choices.mark(setup, r.copy, works = false)
+                    }
                     onChanged()
-                }) else null, modifier = if (r.copy.id == cleared) Modifier.focusRequester(clearedFocus) else Modifier)
+                }, modifier = if (r.copy.id == cleared) Modifier.focusRequester(clearedFocus) else Modifier)
             }
         }
         if (rows.size > shown.size) item(key = "all") { PanelRow("Show all", "${rows.size} copies") { all = true } }
@@ -251,22 +256,23 @@ private fun Heading(text: String) {
 
 /** A copy: tier and labels, then why it ranks where it does, then source, size and release name. */
 @Composable
-private fun VersionRow(r: Ranked, reason: String, data: VersionsData, focus: FocusRequester?, onClick: () -> Unit, onClear: (() -> Unit)?, modifier: Modifier = Modifier) {
+private fun VersionRow(r: Ranked, reason: String, data: VersionsData, focus: FocusRequester?, onClick: () -> Unit, undo: Boolean, onMenu: () -> Unit, modifier: Modifier = Modifier) {
     val c = r.copy
+    var focused by remember { mutableStateOf(false) }
+    // ☰ undoes a pin or mark; on another copy, while focused, it says the copy doesn’t play here (a black screen, say).
     val status = listOfNotNull(
         reason.ifEmpty { null },
         rdState(c, data.rd),
-        onClear?.let { "☰ to undo" },
+        if (undo) "☰ to undo" else if (focused) "☰ if it doesn’t play" else null,
     ).joinToString(" · ")
-    var focused by remember { mutableStateOf(false) }
     Column(
         modifier
             .fillMaxWidth()
             .then(if (focus != null) Modifier.focusRequester(focus) else Modifier)
             .onFocusChanged { focused = it.isFocused }
             .onKeyEvent {
-                if (onClear == null || remoteKey(it.nativeKeyEvent.keyCode) != RemoteKey.Menu) return@onKeyEvent false
-                if (it.type == KeyEventType.KeyDown) onClear()
+                if (remoteKey(it.nativeKeyEvent.keyCode) != RemoteKey.Menu) return@onKeyEvent false
+                if (it.type == KeyEventType.KeyDown) onMenu()
                 true
             }
             .pressable(onClick)
@@ -319,7 +325,7 @@ internal fun copyLabels(c: Copy): List<String> = listOfNotNull(
 )
 
 /** The picture in a word (see [pictureTier]). */
-internal fun copyTier(c: Copy): String? = pictureTier(c)?.let(TIERS::get)
+internal fun copyTier(c: Copy): String? = pictureTier(c)?.let(TIER_NAMES::get)
 
 /** "14.2 GB"; null when unknown. */
 internal fun sizeLabel(bytes: Long): String? = when {
@@ -369,8 +375,6 @@ private fun bandwidthLine(typical: (Source, Long) -> Float?): String {
     return "Typical " + Source.entries.joinToString(" · ") { s -> "${sourceName(s)} " + (typical(s, now)?.let { "${it.roundToInt()} Mbps" } ?: "not measured yet") }
 }
 
-/** The picture of a copy, best first (the server calls them Reference, Great, OK and Soft). */
-private val TIERS = listOf("Best", "High", "Medium", "Low")
 private val VIDEO = mapOf("hevc" to "HEVC", "h264" to "H.264", "av1" to "AV1", "vp9" to "VP9", "mpeg2video" to "MPEG-2", "vc1" to "VC-1")
 private val AUDIO_LABEL = mapOf(
     "truehd" to "TrueHD", "dtshd" to "DTS-HD", "dtsx" to "DTS:X", "dts" to "DTS", "eac3" to "E-AC3", "ac3" to "AC3", "aac" to "AAC", "opus" to "Opus", "flac" to "FLAC",

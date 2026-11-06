@@ -260,19 +260,48 @@ private fun reason(r: Ranked, pick: Ranked?): String = when {
     pick == null || r.support == Support.Wont -> r.why
     !r.original && pick.original -> "dub"
     r.support == Support.Unsure -> r.why
-    else -> when (versus(r, pick)) {
-        1 -> "needs ~${r.copy.mbps.roundToInt()} Mbps, typical ${r.typical?.roundToInt()}"
-        2 -> if (r.copy.resolution > 0) "only ${r.copy.resolution}p" else "resolution unknown"
-        3 -> if (r.dvMissing) "TV has no Dolby Vision" else if (r.hdr == 0) "SDR" else "lesser HDR"
-        4 -> "lower bitrate"
-        5 -> if (r.sound == 0) r.why else if (pick.sound == 3) "no Atmos" else "fewer channels"
-        6 -> "no English subtitles"
-        7 -> "same on IPTV"
-        8 -> "same, less popular release"
-        0 -> "same as the pick"
-        else -> if (pick.pinned) "another copy is pinned" else ""
+    // Every reason reads this copy against the pick ("1080p vs 4K"); a copy that beats a pinned pick says so.
+    else -> versus(r, pick).let { k ->
+        when {
+            k > 0 -> difference(k, r, pick)
+            k < 0 -> difference(-k, r, pick) + if (pick.pinned) " · your choice is pinned" else ""
+            else -> "same as the pick"
+        }
     }
 }
+
+/** How [r] differs from [p] at [versus]' key [k], this copy first: "1080p vs 4K", "Low picture vs Best (4 vs 72 Mbps)". */
+private fun difference(k: Int, r: Ranked, p: Ranked): String = when (k) {
+    1 -> if (!r.fits) "needs ~${r.copy.mbps.roundToInt()} Mbps, typical ${r.typical?.roundToInt()}" else "fits the bandwidth, the pick needs ~${p.copy.mbps.roundToInt()} Mbps"
+    2 -> "${lines(r.copy)} vs ${lines(p.copy)}"
+    3 -> if (r.dvMissing && r.hdr < p.hdr) "TV can’t show its Dolby Vision" else "${HDR_SHOWN[r.hdr]} vs ${HDR_SHOWN[p.hdr]}"
+    4 -> if (r.tier != p.tier) "${tierName(r.tier)} picture vs ${tierName(p.tier)} (${rate(r, p)})" else rate(r, p)
+    5 -> if (r.sound == 0) r.why else "${SOUNDS[r.sound]} vs ${SOUNDS[p.sound]}"
+    6 -> if (r.subs) "English subtitles, the pick has none" else "no English subtitles"
+    7 -> if (r.copy.source == Source.Iptv) "same, on IPTV" else "same, on Real-Debrid"
+    8 -> "same, ${r.copy.seeds} vs ${p.copy.seeds} seeders"
+    else -> ""
+}
+
+private fun lines(c: Copy) = when {
+    c.resolution >= 2000 -> "4K"
+    c.resolution > 0 -> "${c.resolution}p"
+    else -> "resolution unknown"
+}
+
+/** "4 vs 72 Mbps", with codecs when they differ (bitrates compare codec-adjusted). */
+private fun rate(r: Ranked, p: Ranked): String {
+    fun mbps(c: Copy) = if (c.mbps > 0f) "${c.mbps.roundToInt()}" else "?"
+    return if (r.copy.codec != p.copy.codec && r.copy.codec.isNotEmpty() && p.copy.codec.isNotEmpty()) {
+        "${mbps(r.copy)} Mbps ${r.copy.codec.uppercase()} vs ${mbps(p.copy)} Mbps ${p.copy.codec.uppercase()}"
+    } else "${mbps(r.copy)} vs ${mbps(p.copy)} Mbps"
+}
+
+/** The picture tiers' names, best first; [pictureTier] indexes them. */
+val TIER_NAMES = listOf("Best", "High", "Medium", "Low")
+private fun tierName(t: Int) = TIER_NAMES.getOrElse(t) { "Unknown" }
+private val HDR_SHOWN = mapOf(5 to "Dolby Vision", 4 to "HDR10+", 3 to "HDR10", 2 to "HLG", 1 to "converted Dolby Vision", 0 to "SDR")
+private val SOUNDS = mapOf(1 to "stereo", 2 to "surround", 3 to "Atmos")
 
 private val MIMES = mapOf(
     "hevc" to "video/hevc", "h264" to "video/avc", "av1" to "video/av01", "vp9" to "video/x-vnd.on2.vp9", "mpeg2video" to "video/mpeg2", "vc1" to "video/wvc1",

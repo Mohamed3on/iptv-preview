@@ -1883,7 +1883,7 @@ private fun FilmPage(
                     }
                     if (unavailable) {
                         Text("No copy available", style = Type.headline.copy(color = Palette.warning), modifier = Modifier.padding(top = Space.s).focusRequester(noCopy).focusable())
-                        Text("Neither IPTV nor Real-Debrid has one that plays here. It stays in the library for when one turns up.", style = Type.caption)
+                        Text("Neither IPTV nor TorBox has one that plays here. It stays in the library for when one turns up.", style = Type.caption)
                     } else {
                         // The Plays line may run past the column, across the page's whole width.
                         if (!buttons) Box(Modifier.padding(top = Space.s).height(PLAYS_HEIGHT)) else PlaysLine(

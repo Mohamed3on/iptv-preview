@@ -69,7 +69,7 @@ import kotlin.math.roundToInt
 class VersionsData(val ranking: Ranking?, val rd: Map<String, RdCheck>, val answer: TitleAnswer?, val playing: String? = null, val failed: Boolean = false)
 
 /** How a copy stands here, in the order Versions groups them (R11). */
-private enum class Standing(val heading: String) { Plays("Plays here"), Untested("Untested here"), NotReady("Not ready on Real-Debrid"), Wont("Won’t play here") }
+private enum class Standing(val heading: String) { Plays("Plays here"), Untested("Untested here"), NotReady("Not ready on TorBox"), Wont("Won’t play here") }
 
 /** A cached Real-Debrid copy not checked yet stands with the copies that play: it likely does. */
 private fun standing(r: Ranked, data: VersionsData) = when {
@@ -201,7 +201,7 @@ internal fun Versions(title: String, data: VersionsData, first: FocusRequester, 
             }
         }
         item(key = "sources") { Heading("Sources") }
-        item(key = "rd") { PanelRow("Real-Debrid", rdStatus(debridStatus, data.answer)) {} }
+        item(key = "rd") { PanelRow("TorBox", rdStatus(debridStatus, data.answer)) {} }
         item(key = "iptv") { PanelRow("IPTV", if (data.answer?.iptvUnavailable == true) "Unavailable" else "Ready") {} }
     }
 }
@@ -311,7 +311,7 @@ internal fun Modifier.scrollbar(state: LazyListState): Modifier = drawWithConten
     drawRoundRect(Palette.accent, topLeft = Offset(size.width - w, top), size = Size(w, h), cornerRadius = CornerRadius(w / 2))
 }
 
-internal fun sourceName(source: Source) = if (source == Source.RealDebrid) "Real-Debrid" else "IPTV"
+internal fun sourceName(source: Source) = if (source == Source.RealDebrid) "TorBox" else "IPTV"
 
 /** "4K", "HDR10", "HEVC", "E-AC3 5.1 Atmos", "DE", "18 Mbps": what is known of a copy. */
 internal fun copyLabels(c: Copy): List<String> = listOfNotNull(
@@ -347,7 +347,7 @@ private fun rdState(c: Copy, rd: Map<String, RdCheck>): String? {
     return when (val r = rd[c.id]) {
         is RdCheck.Ready, null -> null
         RdCheck.NotCached -> "not cached"
-        is RdCheck.Failed -> if (r.error.permanent) "refused by Real-Debrid" else "check failed"
+        is RdCheck.Failed -> if (r.error.permanent) "refused by TorBox" else "check failed"
     }
 }
 

@@ -63,6 +63,7 @@ function tmdbThen(imdb: string, torrentioAnswer: () => Promise<Response>) {
   process.env.TMDB_CACHE_FILE = join(mkdtempSync(join(tmpdir(), 'tmdb-')), 'tmdb.json')
   process.env.TORRENTIO_CACHE_FILE = join(mkdtempSync(join(tmpdir(), 'torrentio-')), 'torrentio.json')
   delete process.env.REAL_DEBRID_TOKEN
+  delete process.env.TORBOX_TOKEN
   const urls: string[] = []
   const spy = spyOn(globalThis, 'fetch').mockImplementation((async (url: string) => (urls.push(url), url.includes('themoviedb') ? Response.json({ ...movie, imdb_id: imdb }) : torrentioAnswer())) as typeof fetch)
   return Object.assign(spy, { urls })
@@ -80,13 +81,13 @@ test('a failing Torrentio leaves the IPTV copies, marked rd unavailable', async 
 })
 
 test('a slow Torrentio never holds the IPTV copies back; its answer is there for the next ask', async () => {
-  let answer!: (r: Response) => void
-  const spy = tmdbThen('tt0000002', () => new Promise((r) => (answer = r)))
+  const waiting: ((r: Response) => void)[] = []
+  const spy = tmdbThen('tt0000002', () => new Promise((r) => waiting.push(r)))
   try {
     const first = await titleCopies('movie:27206', Promise.resolve(iptv), 50)
     expect(first.sources.rd).toBe('pending')
     expect(first.copies).toEqual(iptv)
-    answer(Response.json(torrentio))
+    for (const answer of waiting) answer(Response.json(torrentio)) // Torrentio and TorrentsDB
     const next = await titleCopies('movie:27206', Promise.resolve(iptv), 50)
     expect(next.sources.rd).toBe('ok')
     // Bitrate is size over TMDB's runtime (148 min): the 66 GB remux is ~64 Mbps.

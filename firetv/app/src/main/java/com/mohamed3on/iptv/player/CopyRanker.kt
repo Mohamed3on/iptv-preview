@@ -278,7 +278,7 @@ private fun difference(k: Int, r: Ranked, p: Ranked): String = when (k) {
     4 -> if (r.tier != p.tier) "${tierName(r.tier)} picture vs ${tierName(p.tier)} (${rate(r, p)})" else rate(r, p)
     5 -> if (r.sound == 0) r.why else "${SOUNDS[r.sound]} vs ${SOUNDS[p.sound]}"
     6 -> if (r.subs) "English subtitles, the pick has none" else "no English subtitles"
-    7 -> if (r.copy.source == Source.Iptv) "same, on IPTV" else "same, on Real-Debrid"
+    7 -> if (r.copy.source == Source.Iptv) "same, on IPTV" else "same, on TorBox"
     8 -> "same, ${r.copy.seeds} vs ${p.copy.seeds} seeders"
     else -> ""
 }

@@ -59,6 +59,8 @@ class FeedSync(
     val guide: StateFlow<GuideDb?> = _guide
     /** The Real-Debrid token from the feed, for [RealDebrid]; null until a feed is loaded or when the server has none. */
     val realDebridToken: String? get() = (_state.value as? FeedState.Ready)?.feed?.realDebrid
+    /** The TorBox token from the feed, for [TorBox]; null until a feed is loaded or when the server has none. */
+    val torboxToken: String? get() = (_state.value as? FeedState.Ready)?.feed?.torbox
     /** The 4K films and UFC replays (v2): the IPTV copy Play falls back on when the box can't list copies. */
     val movies = Library("movies") { text -> parseMovies(text).also { require(it.movies[0].titleId.isNotEmpty()) } }
     /** Movies & Shows (U11): title-first rows of films and shows, revalidated by its ETag (a 304 when unchanged). */

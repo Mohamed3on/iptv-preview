@@ -52,7 +52,7 @@ export async function channels(req: Request): Promise<Response> {
   try {
     const cfg = configFromEnv()
     const backup = backupConfigFromEnv()
-    const feed = buildAppFeed(cfg, withCompetitionGroups(await withBackupFeeds(await fetchCuratedChannels(cfg, false), backup)), backup, process.env.REAL_DEBRID_TOKEN)
+    const feed = buildAppFeed(cfg, withCompetitionGroups(await withBackupFeeds(await fetchCuratedChannels(cfg, false), backup)), backup, process.env.REAL_DEBRID_TOKEN, process.env.TORBOX_TOKEN)
     return Response.json(feed, {
       headers: { 'Cache-Control': 'private, s-maxage=1800, stale-while-revalidate=3600' },
     })

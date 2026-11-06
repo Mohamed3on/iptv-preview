@@ -113,8 +113,9 @@ const UNIT: Record<string, number> = { KB: 2 ** 10, MB: 2 ** 20, GB: 2 ** 30, TB
  * Torrentio's streams as candidates, one per torrent file; CAM, telesync, screener and 3D releases left
  * out. A title reads "<release>[\n<file in a pack>]\n👤 seeds 💾 size ⚙️ tracker[\n<audio flags>]"; the file name
  * (behaviorHints) is read with it, as it often names the audio the release doesn't. The
- * debrid list carries hash and file index only in its resolve URL (`/resolve/realdebrid/<key>/<hash>/null/<fileIdx>/…`),
- * which is read for them and then dropped with the key it holds; "[RD+]" marks a copy Torrentio saw resolve lately.
+ * debrid list carries hash and file index only in its resolve URL (`/resolve/realdebrid/<key>/<hash>/null/<fileIdx>/…`,
+ * `/resolve/torbox/<key>/<hash>/<name>/<fileIdx>/…`), which is read for them and then dropped with the key it holds;
+ * "[RD+]" / "[TB+]" mark a copy the debrid holds. TorrentsDB answers in the same format, without the debrid flags.
  */
 export function torrentioCandidates(streams: Stream[]): Candidate[] {
   const seen = new Set<string>()
@@ -122,7 +123,7 @@ export function torrentioCandidates(streams: Stream[]): Candidate[] {
     const [label = '', quality = ''] = (s.name ?? '').split('\n')
     const lines = (s.title ?? '').split('\n')
     const stats = lines.findIndex((l) => l.includes('💾'))
-    const resolve = s.url?.match(/\/resolve\/realdebrid\/[^/]+\/([0-9a-f]{40})\/[^/]+\/([^/]+)\//i)
+    const resolve = s.url?.match(/\/resolve\/(?:realdebrid|torbox)\/[^/]+\/([0-9a-f]{40})\/[^/]+\/([^/]+)\//i)
     const hash = (s.infoHash ?? resolve?.[1] ?? '').toLowerCase()
     const file = s.fileIdx ?? (/^\d+$/.test(resolve?.[2] ?? '') ? Number(resolve![2]) : undefined)
     const key = `${hash}:${file}`
@@ -140,7 +141,7 @@ export function torrentioCandidates(streams: Stream[]): Candidate[] {
       name: lines[0],
       size: size ? Math.round(Number(size[1]) * UNIT[size[2]]) : 0,
       seeds: Number(lines[stats].match(/👤 (\d+)/)?.[1] ?? 0),
-      ...(label.startsWith('[RD+]') && { cached: true as const }),
+      ...(/^\[(?:RD|TB)\+\]/.test(label) && { cached: true as const }),
       ...a,
       langs: [...new Set([...a.langs, ...flagLanguages(flags)])],
       ...(subs.length ? { subs: [...new Set(subs)] } : {}),
@@ -150,11 +151,13 @@ export function torrentioCandidates(streams: Stream[]): Candidate[] {
 
 const readJson = <T>(file: string, empty: T) => readFile(file, 'utf8').then((s) => JSON.parse(s) as T).catch(() => empty)
 
-// Torrentio answers per IMDb id (and season and episode), asked with the Real-Debrid key so copies carry
-// its "[RD+]" flag (Torrentio makes no Real-Debrid call for a list), else, without a key or when that
-// fails, bare. Cached 2 h, as the flags change, in this process and on disk (so a restart stays warm); an
-// older answer is served at once while a fresh one is fetched, and kept a week for when Torrentio
-// fails. A failed lookup isn't retried for 5 minutes. The key never leaves this function.
+// Torrentio answers per IMDb id (and season and episode), asked with the debrid key (TorBox's, else
+// Real-Debrid's) so copies carry its "[TB+]" / "[RD+]" flag, else, without a key or when that fails, bare.
+// TorrentsDB (Torrentio's format, its own trackers and servers) is asked alongside and merged in after
+// Torrentio's copies, so either one being down costs nothing; an answer missing one is re-asked after 5 min.
+// Cached 2 h, as the flags change, in this process and on disk (so a restart stays warm); an older answer
+// is served at once while a fresh one is fetched, and kept a week for when both fail. A failed lookup isn't
+// retried for 5 minutes. The key never leaves this function.
 const FRESH_MS = 2 * 3600_000
 const KEEP_MS = 7 * 864e5
 const RETRY_MS = 5 * 60_000
@@ -173,11 +176,14 @@ async function torrentio(path: string): Promise<Candidate[]> {
   }
   let job = pending.get(path)
   if (!job) {
-    const key = process.env.REAL_DEBRID_TOKEN
-    const list = (prefix: string) => getJson<{ streams?: Stream[] }>(`https://torrentio.strem.fun/${prefix}stream/${path}.json`, { timeoutMs: 8000, retries: 1 })
-    job = (key ? list(`realdebrid=${key}/`).catch(() => list('')) : list(''))
-      .then((r) => {
-        all[path] = { at: Date.now(), copies: torrentioCandidates(r.streams ?? []) }
+    const key = process.env.TORBOX_TOKEN ? `torbox=${process.env.TORBOX_TOKEN}/` : process.env.REAL_DEBRID_TOKEN ? `realdebrid=${process.env.REAL_DEBRID_TOKEN}/` : ''
+    const list = (url: string) => getJson<{ streams?: Stream[] }>(`${url}stream/${path}.json`, { timeoutMs: 8000, retries: 1 })
+    const primary = list(`https://torrentio.strem.fun/${key}`)
+    job = Promise.allSettled([key ? primary.catch(() => list('https://torrentio.strem.fun/')) : primary, list('https://torrentsdb.com/')])
+      .then((answers) => {
+        const got = answers.flatMap((a) => (a.status === 'fulfilled' ? [a.value.streams ?? []] : []))
+        if (!got.length) throw (answers[0] as PromiseRejectedResult).reason
+        all[path] = { at: Date.now() - (got.length < answers.length ? FRESH_MS - RETRY_MS : 0), copies: torrentioCandidates(got.flat()) }
         for (const [k, e] of Object.entries(all)) if (Date.now() - e.at > KEEP_MS) delete all[k]
         writeAtomic(cacheFile(), all).catch(() => {})
         return all[path].copies

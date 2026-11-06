@@ -38,6 +38,8 @@ export interface AppFeed {
   backup?: ProviderRoute
   /** The Real-Debrid API token (REAL_DEBRID_TOKEN), when set: the stick makes every Real-Debrid call itself. */
   realDebrid?: string
+  /** The TorBox API token (TORBOX_TOKEN), when set: the stick uses TorBox instead, every call its own. */
+  torbox?: string
   channels: AppChannel[]
 }
 
@@ -56,7 +58,7 @@ function badges(streamId: number): string[] {
   return out
 }
 
-export function buildAppFeed(cfg: XtreamConfig, channels: Channel[], backup?: BackupConfig, realDebrid?: string): AppFeed {
+export function buildAppFeed(cfg: XtreamConfig, channels: Channel[], backup?: BackupConfig, realDebrid?: string, torbox?: string): AppFeed {
   const live = channels.filter((c) => !c.vodExt)
   const home = new Map<number, string>()
   for (const c of live) if (!isComp(c.group) && !home.has(c.streamId)) home.set(c.streamId, c.group)
@@ -74,6 +76,7 @@ export function buildAppFeed(cfg: XtreamConfig, channels: Channel[], backup?: Ba
     route: { plain: cfg.host, vpn: VPN_HOST, user: cfg.user, pass: cfg.pass },
     ...(backup && { backup: { plain: backup.host, vpn: backup.vpnHost, user: backup.user, pass: backup.pass } }),
     ...(realDebrid && { realDebrid }),
+    ...(torbox && { torbox }),
     channels: live.map((c) => {
       const family = familyOf(c)
       return {

@@ -42,6 +42,8 @@ data class Feed(
     val backup: ProviderRoute? = null,
     /** The Real-Debrid API token, when the server has one ([RealDebrid] makes every call from the stick, KTD2). */
     val realDebrid: String? = null,
+    /** The TorBox API token, when the server has one: [TorBox] then stands in for Real-Debrid, every call from the stick. */
+    val torbox: String? = null,
 ) {
     private val byGroup by lazy { channels.groupBy { it.group } }
     @kotlinx.serialization.Transient private val rowsByGroup = java.util.concurrent.ConcurrentHashMap<String, List<Channel>>()

@@ -1,0 +1,190 @@
+package com.mohamed3on.iptv.data
+
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
+import kotlinx.serialization.SerialName
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
+import okhttp3.MultipartBody
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import java.io.IOException
+import java.time.Instant
+import java.util.concurrent.ConcurrentHashMap
+
+@Serializable private class TbEnvelope<T>(val success: Boolean = false, val error: String? = null, val data: T? = null)
+@Serializable private class TbFile(val id: Int, @SerialName("short_name") val name: String = "", val size: Long = 0)
+@Serializable private class TbTorrent(
+    val id: Long,
+    val hash: String,
+    @SerialName("download_finished") val finished: Boolean = false,
+    val files: List<TbFile> = emptyList(),
+)
+@Serializable private class TbAdded(@SerialName("torrent_id") val id: Long)
+@Serializable private class TbHash(val hash: String)
+@Serializable private class TbUser(val plan: Int = 0, @SerialName("premium_expires_at") val expires: String? = null)
+
+private val json = Json { ignoreUnknownKeys = true }
+
+/**
+ * TorBox from the stick's own IP, in Real-Debrid's place behind [Debrid] (copies keep their "rd:" ids, so marks
+ * carry over). A check asks TorBox which torrents it holds (checkcached), then adds the best of them with
+ * `add_only_if_cached`, which never leaves an uncached download in the account; it needs no Torrentio flag, so
+ * TorrentsDB's copies are checked too. [RdCheck.Ready.link] holds the TorBox file id. TorBox's file ids don't follow
+ * the torrent's order, so a file is found by name. The download URL [link] returns carries the API key: never log it.
+ */
+class TorBox(
+    private val client: OkHttpClient,
+    private val token: () -> String?,
+    private val base: String = "https://api.torbox.app/v1/api",
+    private val now: () -> Long = System::currentTimeMillis,
+) : Debrid {
+    private val _status = MutableStateFlow(RdStatus.Ok)
+    override val status: StateFlow<RdStatus> = _status
+
+    private val listLock = Mutex()
+    private var listed: List<TbTorrent>? = null
+    private var listedAt = 0L
+    private val answers = ConcurrentHashMap<RdCandidate, RdCheck>()
+    @Volatile private var notPremium = false
+    @Volatile private var accountRead = false
+    @Volatile private var pausedUntil = 0L
+
+    /** Reads the account once per app session, off Play's path: the free plan or a past expiry means [RdStatus.NotPremium]. */
+    suspend fun readAccount() {
+        if (accountRead || token() == null) return
+        runCatching { call<TbUser>(get("user/me?settings=false")) }.onSuccess {
+            accountRead = true
+            val expired = it.expires?.let { at -> runCatching { Instant.parse(at).toEpochMilli() < now() }.getOrNull() } == true
+            if (it.plan == 0 || expired) lapsed()
+        }
+    }
+
+    private fun lapsed() {
+        notPremium = true
+        _status.value = RdStatus.NotPremium
+    }
+
+    /** The account first, then TorBox's cache answer for the best ranked rest, adding the best held copy (at most 3 tries). */
+    override suspend fun check(candidates: List<RdCandidate>): Map<RdCandidate, RdCheck> {
+        val out = LinkedHashMap(inAccount(candidates))
+        val rest = candidates.takeWhile { it !in out }.take(ASK_MAX)
+        if (rest.isEmpty() || status.value != RdStatus.Ok) return out
+        // Unknown when the cache check fails: the box's "[TB+]" flags decide, as for Real-Debrid.
+        val held = runCatching { call<List<TbHash>>(get("torrents/checkcached?hash=${rest.joinToString(",") { it.hash }}&format=list")) }
+            .getOrNull()?.mapTo(HashSet()) { it.hash.lowercase() }
+        var tries = 0
+        for (c in rest) {
+            if (held != null && c.hash.lowercase() !in held) {
+                out[c] = RdCheck.NotCached
+                continue
+            }
+            if (held == null && !c.cached) continue
+            if (tries++ == 3 || status.value != RdStatus.Ok) break
+            val result = probe(c) ?: break
+            out[c] = result
+            if (result is RdCheck.Ready) break
+        }
+        return out
+    }
+
+    override suspend fun inAccount(candidates: List<RdCandidate>): Map<RdCandidate, RdCheck> {
+        if (token() == null) return emptyMap<RdCandidate, RdCheck>().also { _status.value = RdStatus.NoToken }
+        if (notPremium) return emptyMap()
+        if (now() >= pausedUntil && _status.value != RdStatus.TokenInvalid) _status.value = RdStatus.Ok
+        return try {
+            val list = torrents()
+            candidates.mapNotNull { c ->
+                (answers[c] as? RdCheck.Ready)?.let { return@mapNotNull c to it }
+                list.firstOrNull { it.hash.equals(c.hash, true) && it.finished }?.let { ready(it, c) }?.let { c to it }
+            }.toMap()
+        } catch (e: RdError) {
+            emptyMap()
+        }
+    }
+
+    override suspend fun probe(c: RdCandidate, wait: Boolean): RdCheck? {
+        if (notPremium) return RdCheck.Failed(RdError(false, "not_premium"))
+        if (now() - listedAt >= KEEP_MS) answers.clear()
+        answers[c]?.let { return it }
+        if (now() < pausedUntil) return RdCheck.Failed(RdError(false, "too_many_requests"))
+        return add(c).also { if (it !is RdCheck.Failed) answers[c] = it }
+    }
+
+    override suspend fun link(ready: RdCheck.Ready): String {
+        if (notPremium) throw RdError(false, "not_premium")
+        val key = token() ?: throw RdError(false, "no_token")
+        return call(get("torrents/requestdl?token=$key&torrent_id=${ready.torrentId}&file_id=${ready.link}&zip_link=false"))
+    }
+
+    private suspend fun add(c: RdCandidate): RdCheck = try {
+        val body = MultipartBody.Builder().setType(MultipartBody.FORM)
+            .addFormDataPart("magnet", "magnet:?xt=urn:btih:${c.hash.lowercase()}")
+            .addFormDataPart("seed", "3") // don't seed
+            .addFormDataPart("allow_zip", "false")
+            .addFormDataPart("add_only_if_cached", "true")
+            .build()
+        val id = call<TbAdded>(Request.Builder().url("$base/torrents/createtorrent").post(body)).id
+        val torrent = call<TbTorrent>(get("torrents/mylist?id=$id&bypass_cache=true"))
+        listLock.withLock { listed = listed?.plus(torrent) }
+        ready(torrent, c) ?: RdCheck.NotCached
+    } catch (e: RdError) {
+        if (e.code == "DOWNLOAD_NOT_CACHED") RdCheck.NotCached else RdCheck.Failed(e)
+    }
+
+    private fun ready(t: TbTorrent, c: RdCandidate) = fileOf(t.files, c)?.let { RdCheck.Ready("${t.id}", "${it.id}").also { r -> answers[c] = r } }
+
+    /** [c]'s file by name; without one (or no name match when the torrent has one video), the largest. */
+    private fun fileOf(files: List<TbFile>, c: RdCandidate): TbFile? =
+        files.firstOrNull { c.filename != null && it.name.equals(c.filename, true) }
+            ?: files.maxByOrNull { it.size }?.takeIf { c.filename == null || files.count { f -> f.size > it.size / 10 } == 1 }
+
+    /** The account's torrents, kept for [KEEP_MS] (as are the answers) and added to by probes. */
+    private suspend fun torrents(): List<TbTorrent> = listLock.withLock {
+        listed?.takeIf { now() - listedAt < KEEP_MS } ?: call<List<TbTorrent>>(get("torrents/mylist?bypass_cache=true")).also {
+            answers.clear()
+            listed = it
+            listedAt = now()
+        }
+    }
+
+    private fun get(path: String) = Request.Builder().url("$base/$path")
+
+    private suspend inline fun <reified T> call(request: Request.Builder): T {
+        val auth = request.header("Authorization", "Bearer ${token() ?: throw RdError(false, "no_token")}").build()
+        val (code, body, retryAfter) = try {
+            withContext(Dispatchers.IO) {
+                client.newCall(auth).execute().use { Triple(it.code, it.body.string(), it.header("Retry-After")?.toLongOrNull()) }
+            }
+        } catch (e: IOException) {
+            throw RdError(false, "network")
+        }
+        val reply = runCatching { json.decodeFromString<TbEnvelope<T>>(body) }.getOrNull()
+        if (reply == null || code !in 200..299 || !reply.success) fail(code, reply?.error, retryAfter)
+        if (now() >= pausedUntil && !notPremium) _status.value = RdStatus.Ok
+        return reply.data ?: if (T::class == List::class) emptyList<Any>() as T else throw RdError(false, "malformed")
+    }
+
+    private fun fail(code: Int, error: String?, retryAfter: Long?): Nothing {
+        val refusesAdds = { s: RdStatus -> _status.value = s; pausedUntil = now() + (retryAfter ?: 60) * 1000 }
+        when {
+            error == "DOWNLOAD_NOT_CACHED" -> {}
+            code == 401 || error in setOf("NO_AUTH", "BAD_TOKEN", "AUTH_ERROR") -> _status.value = RdStatus.TokenInvalid
+            error == "PLAN_RESTRICTED_FEATURE" -> lapsed()
+            code == 429 || error == "COOLDOWN_LIMIT" -> refusesAdds(RdStatus.RateLimited)
+            error == "ACTIVE_LIMIT" -> refusesAdds(RdStatus.TooManyDownloads)
+            code == 403 || error == "MONTHLY_LIMIT" -> _status.value = RdStatus.Denied
+        }
+        throw RdError(false, error ?: "http_$code")
+    }
+
+    private companion object {
+        const val KEEP_MS = 15 * 60_000L
+        /** Hashes in one cache check (they go in its URL); a ready copy is nearly always among the best ranked. */
+        const val ASK_MAX = 60
+    }
+}

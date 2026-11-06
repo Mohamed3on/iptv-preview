@@ -865,7 +865,7 @@ private fun noticeText(n: Notice) = when (n) {
     is Notice.TrialResult -> NoticeText(if (n.works) "${short(n.copy)} works here" else "${short(n.copy)} didn’t play here · back to the last version")
     is Notice.Subtitles -> NoticeText("${fetchedName(n.language)} subtitles from OpenSubtitles · timing in Options")
     is Notice.SkipIntro -> NoticeText("Intro", "Skip")
-    Notice.PremiumEnded -> NoticeText("Real-Debrid premium has ended — renew at real-debrid.com")
+    Notice.PremiumEnded -> NoticeText("TorBox premium has ended — renew at torbox.app")
 }
 
 private val NOTICE_WIDTH = 420.dp

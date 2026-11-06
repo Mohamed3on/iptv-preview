@@ -18,6 +18,10 @@ import androidx.media3.datasource.HttpDataSource
 import androidx.media3.datasource.TransferListener
 import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
+import androidx.media3.exoplayer.DefaultRenderersFactory
+import androidx.media3.exoplayer.audio.AudioCapabilities
+import androidx.media3.exoplayer.audio.AudioSink
+import androidx.media3.exoplayer.audio.DefaultAudioSink
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.SeekParameters
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
@@ -43,7 +47,7 @@ import java.util.concurrent.atomic.AtomicLong
  * Its owner releases it. [onFileSize] hears the file's full size in bytes, from the first response that says.
  */
 fun moviePlayer(context: Context, http: OkHttpClient, heads: FilmHeads, load: FilmLoad = FilmLoad(), onFileSize: (Long) -> Unit = {}): ExoPlayer =
-    ExoPlayer.Builder(context)
+    ExoPlayer.Builder(context, FixedAudioCapabilities(context))
         .setMediaSourceFactory(DefaultMediaSourceFactory(HeadSource.Factory(OkHttpDataSource.Factory(http).setTransferListener(FileSize(load.bytes, onFileSize)), heads), Dv7AsHevc()))
         .setLoadControl(
             DefaultLoadControl.Builder()
@@ -55,6 +59,23 @@ fun moviePlayer(context: Context, http: OkHttpClient, heads: FilmHeads, load: Fi
         )
         .build()
         .apply { setSeekParameters(SeekParameters.CLOSEST_SYNC) }
+
+/**
+ * Renderers whose audio output keeps the capabilities read as the film opens. Switching the display to the film's
+ * frame rate re-handshakes HDMI, and for about a second the stick reports no Dolby passthrough: Media3 would then move
+ * TrueHD from passthrough to a decoder that fails ("Buffer too small") and the film sits on the spinner for good, though
+ * passthrough is back a second later (Interstellar's TrueHD Atmos remux). Its AudioTrack dies in the switch either way and
+ * is made again, on the same capabilities.
+ */
+private class FixedAudioCapabilities(context: Context) : DefaultRenderersFactory(context) {
+    @Suppress("DEPRECATION") // the context-free builder is the one that takes fixed capabilities
+    override fun buildAudioSink(context: Context, enableFloatOutput: Boolean, enableAudioTrackPlaybackParams: Boolean): AudioSink =
+        DefaultAudioSink.Builder()
+            .setAudioCapabilities(AudioCapabilities.getCapabilities(context))
+            .setEnableFloatOutput(enableFloatOutput)
+            .setEnableAudioTrackPlaybackParams(enableAudioTrackPlaybackParams)
+            .build()
+}
 
 /**
  * Every container Media3 reads, with a Dolby Vision profile 7 track (UHD Blu-ray's dual layer) read as the HEVC

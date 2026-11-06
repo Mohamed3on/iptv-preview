@@ -1,11 +1,11 @@
 {
   "schemaVersion": 2,
-  "generatedAt": "2026-11-05T00:00:00Z",
+  "generatedAt": "2026-11-07T00:00:00Z",
   "title": "Design System: IPTV (Fire TV)",
   "extensions": {
     "colorMeta": {
       "ink": { "role": "neutral", "displayName": "Ink", "canonical": "#0B0E12", "tonalRamp": ["#05070A", "#0B0E12", "#121820", "#1C2430", "#2C3744", "#4A5666", "#8790A0", "#F4F6F8"] },
-      "material": { "role": "neutral", "displayName": "Night Glass", "canonical": "#121820EB", "tonalRamp": ["#0B0E12", "#121820", "#1A222D", "#232D3A", "#2C3744", "#3B4757", "#5A6676", "#8790A0"] },
+      "material": { "role": "neutral", "displayName": "Night Glass", "canonical": "rgba(18,24,32,0.92)", "tonalRamp": ["#0B0E12", "#121820", "#1A222D", "#232D3A", "#2C3744", "#3B4757", "#5A6676", "#8790A0"] },
       "raised": { "role": "neutral", "displayName": "Raised Slate", "canonical": "#2C3744", "tonalRamp": ["#121820", "#1C2430", "#2C3744", "#3B4757", "#4E5B6C", "#6B7787", "#B4BCC6", "#F4F6F8"] },
       "focus-ring-soft": { "role": "neutral", "displayName": "Soft White Ring", "canonical": "rgba(255,255,255,0.65)" },
       "tile": { "role": "neutral", "displayName": "Tile", "canonical": "rgba(255,255,255,0.08)" },
@@ -22,99 +22,118 @@
       "scrim-modal": { "role": "neutral", "displayName": "Modal Scrim", "canonical": "rgba(0,0,0,0.6)" }
     },
     "typographyMeta": {
-      "display-title": { "displayName": "Display Title", "purpose": "The title on Up next and film and show title pages, where the title is the screen's subject. Only there." },
-      "display": { "displayName": "Display", "purpose": "Channel name in the banner; the library hero's focused title." },
-      "title": { "displayName": "Title", "purpose": "Screen and section headings; monograms on art-less posters and stills." },
-      "headline": { "displayName": "Headline", "purpose": "Row names, row titles, button labels, episode titles, season headings." },
+      "display-title": { "displayName": "Display Title", "purpose": "The title on Up next and on film and show title pages, where the title is the screen's subject. Only there." },
+      "display": { "displayName": "Display", "purpose": "The channel name in the banner, the library hero's focused title." },
+      "title": { "displayName": "Title", "purpose": "Screen and section headings (details, search, errors); monograms on posters and stills without art." },
+      "headline": { "displayName": "Headline", "purpose": "Channel row names, row titles, button labels, episode titles, season headings." },
       "body": { "displayName": "Body", "purpose": "Now/next lines, schedule rows, meta lines, plot; text-secondary." },
-      "caption": { "displayName": "Caption", "purpose": "Times, quality badges, key hints, cast and director; text-tertiary." },
+      "caption": { "displayName": "Caption", "purpose": "Times, quality badges, key hints, cast and director lines; text-tertiary." },
       "caption-tabular": { "displayName": "Caption (tabular)", "purpose": "Only for numbers that tick or align: clock times, counts, buffer, bitrate." }
     },
     "shadows": [],
     "scrims": [
-      { "name": "left-scrim", "value": "flat #000000B3 to 91% width, then linear-gradient to #00000059 at the right edge", "purpose": "Behind the channel list over video; flat on purpose for frame time." },
+      { "name": "left-scrim", "value": "flat #000000B3 to 91% width, then linear-gradient(to right, #000000B3, #00000059) to the right edge", "purpose": "Behind the channel list over video; flat on purpose for frame time." },
       { "name": "bottom-scrim", "value": "linear-gradient(to top, #000000EB 0%, #000000B3 60%, transparent 100%)", "purpose": "Behind the banner over video." },
-      { "name": "backdrop-left", "value": "linear-gradient(to right, rgba(11,14,18,0.94) 0%, rgba(11,14,18,0.86) 60%, rgba(11,14,18,0) 88%)", "purpose": "Library backdrop: holds 4.5:1 for plot over a white sky." },
+      { "name": "backdrop-left", "value": "linear-gradient(to right, rgba(11,14,18,0.94) 0%, rgba(11,14,18,0.86) 75%, rgba(11,14,18,0) 95%)", "purpose": "Library backdrop: holds 4.5:1 for body text over a white sky across the text column. Baked into the still once, off the main thread." },
       { "name": "backdrop-bottom", "value": "linear-gradient(to bottom, rgba(11,14,18,0) 40%, rgba(11,14,18,0.96) 100%)", "purpose": "Library backdrop floor." },
       { "name": "backdrop-top", "value": "linear-gradient(to bottom, rgba(11,14,18,0.7), rgba(11,14,18,0)) over 120dp", "purpose": "Keeps Search legible at the top." },
-      { "name": "card-bottom", "value": "linear-gradient(to bottom, transparent 40%, rgba(0,0,0,0.9) 100%)", "purpose": "Under a wide card's name and progress." }
+      { "name": "rows-ground", "value": "backdrop dimmed a further 35%; ink ground rising from the bottom to where the rows start, fading in over 72dp", "purpose": "The rows page behind the hero." },
+      { "name": "card-bottom", "value": "linear-gradient(to bottom, transparent 40%, rgba(0,0,0,0.9) 100%)", "purpose": "Under a wide card's name and progress." },
+      { "name": "edge-fade", "value": "list content fades into its ground over 24dp at the top and 48dp at the bottom (12/24dp inside an episode panel)", "purpose": "Lists meet their edges without a divider." }
     ],
     "focus": [
-      { "name": "focus-lift", "value": "scale 1.03; fill #2C3744; 1.5dp ring rgba(255,255,255,0.65) inset", "purpose": "Rows, panel rows, action buttons, search keys." },
+      { "name": "focus-lift", "value": "scale 1.03; fill #2C3744; 1.5dp ring rgba(255,255,255,0.65) inset by half its stroke", "purpose": "Rows, panel rows, action buttons, search keys." },
       { "name": "focus-artwork", "value": "scale 1.08; 3dp ring #3D9BFF inset by half its stroke", "purpose": "Posters, wide cards; multi-view tiles take an accent border." },
-      { "name": "focus-page-button", "value": "scale 1.06; fill #F4F6F8; text #0B0E12", "purpose": "Title page and Up next buttons." }
+      { "name": "focus-page-button", "value": "scale 1.06; fill #F4F6F8; text #0B0E12; lit edge fades out", "purpose": "Title page and Up next buttons." },
+      { "name": "press", "value": "scale 0.96 on the focus spring", "purpose": "OK press on every button." }
     ],
     "motion": [
-      { "name": "spring-focus", "value": "spring, damping 1.0, response 0.22s", "purpose": "Focus lift and press feedback; lands on the key's beat." },
-      { "name": "spring-panel", "value": "spring, damping 1.0, response 0.35s", "purpose": "Panels and overlays; slide a third of their size from the edge they leave by." },
-      { "name": "spring-zap", "value": "spring 0.3s in, 0.2s fade out", "purpose": "Banner content on a zap, moving in the direction of travel; hero cross-fades." },
-      { "name": "press-scale", "value": "0.96", "purpose": "OK press on buttons." },
+      { "name": "spring-focus", "value": "spring, damping ratio 1 (no overshoot), response 0.22s", "purpose": "Focus lift, press feedback, title page entrance; lands on the key's beat." },
+      { "name": "spring-panel", "value": "spring, damping ratio 1 (no overshoot), response 0.35s", "purpose": "Panels and overlays enter from the edge they leave by, by a third of their size." },
+      { "name": "spring-zap", "value": "spring 0.3s slide (a third of the height) and fade in; 0.2s fade out", "purpose": "Banner content on a zap, moving in the direction of travel." },
       { "name": "stagger", "value": "15% lag", "purpose": "A second column follows the first in and leaves before it." },
-      { "name": "fade-reduced", "value": "160ms tween", "purpose": "Every transition with Remove animations on; no scale." },
-      { "name": "poster-fade", "value": "150ms crossfade", "purpose": "Art loading in." },
-      { "name": "backdrop-fade", "value": "400ms crossfade", "purpose": "Library backdrop change." },
+      { "name": "fade-reduced", "value": "160ms tween crossfade, no scale, no slide", "purpose": "Every transition with Remove animations on." },
+      { "name": "poster-fade", "value": "150ms crossfade", "purpose": "Posters, wide cards and episode stills as art loads in." },
+      { "name": "backdrop-fade", "value": "400ms crossfade on an ink ground", "purpose": "Library backdrop change." },
       { "name": "activity", "value": "1100ms linear loop (1600ms reverse breathe when reduced)", "purpose": "Indeterminate activity line." }
     ],
     "breakpoints": [
-      { "name": "tv-canvas", "value": "960x540dp" }
+      { "name": "tv-canvas", "value": "960x540dp" },
+      { "name": "safe-inset", "value": "48dp x 27dp" }
     ]
   },
   "components": [
     {
-      "name": "Action Button",
-      "kind": "button",
-      "refersTo": "action-button",
-      "description": "The app's general button: a bare label that lifts on focus and presses in on OK.",
-      "html": "<button class=\"ds-action\">Try again</button>",
-      "css": ".ds-action { background: transparent; color: #F4F6F8; font: 500 16px/21px Inter, sans-serif; letter-spacing: -0.006em; padding: 12px 24px; border: none; border-radius: 12px; transition: transform 220ms cubic-bezier(0.22,1,0.36,1), background 220ms; } .ds-action:hover, .ds-action:focus-visible { outline: none; background: #2C3744; box-shadow: inset 0 0 0 1.5px rgba(255,255,255,0.65); transform: scale(1.03); } .ds-action:active { transform: scale(0.96); }"
-    },
-    {
       "name": "Page Button",
       "kind": "button",
       "refersTo": "page-button",
-      "description": "Title page and Up next actions: translucent pill at rest, solid light when focused.",
+      "description": "Title page and Up next actions: a Night Glass pill with a lit edge at rest, solid light with ink text when focused.",
       "html": "<div style=\"background:#0B0E12;padding:16px;display:flex;gap:12px\"><button class=\"ds-page-btn\">Resume S1 E2</button><button class=\"ds-page-btn\">Episodes</button></div>",
-      "css": ".ds-page-btn { background: rgba(18,24,32,0.92); color: #F4F6F8; font: 500 16px/21px Inter, sans-serif; padding: 12px 24px; border: 1px solid rgba(255,255,255,0.12); border-radius: 12px; transition: transform 220ms cubic-bezier(0.22,1,0.36,1), background 220ms, color 220ms; } .ds-page-btn:hover, .ds-page-btn:focus-visible { outline: none; background: #F4F6F8; color: #0B0E12; border-color: transparent; transform: scale(1.06); } .ds-page-btn:active { transform: scale(0.96); }"
+      "css": ".ds-page-btn { background: rgba(18,24,32,0.92); color: #F4F6F8; font: 500 16px/21px Inter, sans-serif; letter-spacing: -0.006em; white-space: nowrap; padding: 12px 24px; border: 1px solid rgba(255,255,255,0.12); border-radius: 12px; transition: transform 220ms cubic-bezier(0.25,1,0.5,1), background-color 220ms cubic-bezier(0.25,1,0.5,1), color 220ms, border-color 220ms; } .ds-page-btn:hover, .ds-page-btn:focus-visible { outline: none; background: #F4F6F8; color: #0B0E12; border-color: transparent; transform: scale(1.06); } .ds-page-btn:active { transform: scale(0.96); } @media (prefers-reduced-motion: reduce) { .ds-page-btn { transition: background-color 160ms, color 160ms, border-color 160ms; } .ds-page-btn:hover, .ds-page-btn:focus-visible, .ds-page-btn:active { transform: none; } }"
     },
     {
-      "name": "Material Panel",
-      "kind": "card",
-      "refersTo": "panel",
-      "description": "Floating chrome over video: translucent night glass with a lit edge.",
-      "html": "<div class=\"ds-panel\"><div class=\"ds-panel-title\">Still watching?</div><div class=\"ds-panel-body\">Playback pauses in 60 s.</div></div>",
-      "css": ".ds-panel { background: rgba(18,24,32,0.92); border: 1px solid rgba(255,255,255,0.12); border-radius: 20px; padding: 32px; max-width: 360px; } .ds-panel-title { color: #F4F6F8; font: 600 22px/28px Inter, sans-serif; letter-spacing: -0.015em; } .ds-panel-body { color: #B4BCC6; font: 400 15px/20px Inter, sans-serif; margin-top: 12px; }"
+      "name": "Action Button",
+      "kind": "button",
+      "refersTo": "action-button",
+      "description": "The app's general button: a bare label that lifts on focus (raised slate, soft white ring, 1.03) and presses in to 0.96 on OK.",
+      "html": "<div style=\"background:rgba(18,24,32,0.92);padding:16px\"><button class=\"ds-action\">Try again</button></div>",
+      "css": ".ds-action { background: transparent; color: #F4F6F8; font: 500 16px/21px Inter, sans-serif; letter-spacing: -0.006em; padding: 12px 24px; border: none; border-radius: 12px; outline: 1.5px solid transparent; outline-offset: -1.5px; transition: transform 220ms cubic-bezier(0.25,1,0.5,1), background-color 220ms, outline-color 220ms; } .ds-action:hover, .ds-action:focus-visible { background: #2C3744; outline-color: rgba(255,255,255,0.65); transform: scale(1.03); } .ds-action:active { transform: scale(0.96); } @media (prefers-reduced-motion: reduce) { .ds-action { transition: background-color 160ms, outline-color 160ms; } .ds-action:hover, .ds-action:focus-visible, .ds-action:active { transform: none; } }"
     },
     {
       "name": "List Row",
       "kind": "custom",
       "refersTo": "list-row",
-      "description": "A channel, schedule or episode row; focus lifts it with raised slate and the soft white ring.",
-      "html": "<div style=\"background:rgba(18,24,32,0.92);padding:12px;width:320px\"><div class=\"ds-row\" tabindex=\"0\"><div class=\"ds-row-name\">Sky Sports Main Event</div><div class=\"ds-row-sub\">Arsenal v Chelsea</div></div></div>",
-      "css": ".ds-row { padding: 8px; border-radius: 12px; transition: transform 220ms cubic-bezier(0.22,1,0.36,1), background 220ms; } .ds-row:hover, .ds-row:focus-visible { outline: none; background: #2C3744; box-shadow: inset 0 0 0 1.5px rgba(255,255,255,0.65); transform: scale(1.03); } .ds-row-name { color: #F4F6F8; font: 500 16px/21px Inter, sans-serif; } .ds-row-sub { color: #B4BCC6; font: 400 15px/20px Inter, sans-serif; }"
+      "description": "A channel, schedule or panel row: headline name over body lines; focus lifts it with raised slate, the soft white ring and 1.03 scale.",
+      "html": "<div style=\"background:rgba(18,24,32,0.92);padding:12px;width:320px\"><div class=\"ds-row\" tabindex=\"0\"><div class=\"ds-row-name\">Sky Sports Main Event</div><div class=\"ds-row-sub\">Arsenal v Chelsea</div></div><div class=\"ds-row\" tabindex=\"0\"><div class=\"ds-row-name\">BBC One</div><div class=\"ds-row-sub\">The News at Six</div></div></div>",
+      "css": ".ds-row { padding: 8px; border-radius: 12px; outline: 1.5px solid transparent; outline-offset: -1.5px; transition: transform 220ms cubic-bezier(0.25,1,0.5,1), background-color 220ms, outline-color 220ms; } .ds-row:hover, .ds-row:focus-visible { background: #2C3744; outline-color: rgba(255,255,255,0.65); transform: scale(1.03); } .ds-row-name { color: #F4F6F8; font: 500 16px/21px Inter, sans-serif; letter-spacing: -0.006em; } .ds-row-sub { color: #B4BCC6; font: 400 15px/20px Inter, sans-serif; margin-top: 4px; } @media (prefers-reduced-motion: reduce) { .ds-row { transition: background-color 160ms, outline-color 160ms; } .ds-row:hover, .ds-row:focus-visible { transform: none; } }"
     },
     {
       "name": "Poster Card",
       "kind": "card",
       "refersTo": "poster-card",
-      "description": "2:3 poster; monogram on raised slate without art; focus scales 1.08 with a 3dp accent ring.",
+      "description": "2:3 poster at 132x198; raised slate with a title-type monogram until art loads (150ms fade); focus scales 1.08 with a 3dp accent ring inset by half its stroke.",
       "html": "<div style=\"background:#0B0E12;padding:24px\"><div class=\"ds-poster\" tabindex=\"0\">DH</div></div>",
-      "css": ".ds-poster { width: 132px; height: 198px; border-radius: 12px; background: #2C3744; color: #B4BCC6; font: 600 22px/28px Inter, sans-serif; display: flex; align-items: center; justify-content: center; transition: transform 220ms cubic-bezier(0.22,1,0.36,1), box-shadow 220ms; } .ds-poster:hover, .ds-poster:focus-visible { outline: none; transform: scale(1.08); box-shadow: inset 0 0 0 3px #3D9BFF; }"
+      "css": ".ds-poster { width: 132px; height: 198px; border-radius: 12px; background: #2C3744; color: #B4BCC6; font: 600 22px/28px Inter, sans-serif; letter-spacing: -0.015em; display: flex; align-items: center; justify-content: center; outline: 3px solid transparent; outline-offset: -3px; transition: transform 220ms cubic-bezier(0.25,1,0.5,1), outline-color 220ms; } .ds-poster:hover, .ds-poster:focus-visible { outline-color: #3D9BFF; transform: scale(1.08); } @media (prefers-reduced-motion: reduce) { .ds-poster { transition: outline-color 160ms; } .ds-poster:hover, .ds-poster:focus-visible { transform: none; } }"
     },
     {
       "name": "Wide Card",
       "kind": "card",
       "refersTo": "wide-card",
-      "description": "16:9 Continue watching card: backdrop, name and where it is, neutral progress.",
-      "html": "<div style=\"background:#0B0E12;padding:24px\"><div class=\"ds-wide\" tabindex=\"0\"><div class=\"ds-wide-meta\"><div class=\"ds-wide-name\">Severance · S1 E2</div><div class=\"ds-progress\"><span style=\"width:60%\"></span></div></div></div></div>",
-      "css": ".ds-wide { position: relative; width: 184px; height: 104px; border-radius: 12px; overflow: hidden; background: linear-gradient(to bottom, transparent 40%, rgba(0,0,0,0.9)), #4E5B6C; transition: transform 220ms cubic-bezier(0.22,1,0.36,1), box-shadow 220ms; } .ds-wide:hover, .ds-wide:focus-visible { outline: none; transform: scale(1.08); box-shadow: inset 0 0 0 3px #3D9BFF; } .ds-wide-meta { position: absolute; left: 8px; right: 8px; bottom: 8px; display: flex; flex-direction: column; gap: 4px; } .ds-wide-name { color: #F4F6F8; font: 500 13px/17px Inter, sans-serif; letter-spacing: 0.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; } .ds-progress { height: 3px; border-radius: 2px; background: rgba(255,255,255,0.2); } .ds-progress span { display: block; height: 100%; border-radius: 2px; background: #B4BCC6; }"
+      "description": "16:9 Up next card at 184x104: backdrop (else poster), bottom gradient to 90% black under a caption name line and a neutral progress line, 8dp inner padding; artwork focus.",
+      "html": "<div style=\"background:#0B0E12;padding:24px\"><div class=\"ds-wide\" tabindex=\"0\"><div class=\"ds-wide-meta\"><div class=\"ds-wide-name\">Severance · S1 E2 · 31 min left</div><div class=\"ds-wide-track\"><span style=\"width:60%\"></span></div></div></div></div>",
+      "css": ".ds-wide { position: relative; width: 184px; height: 104px; border-radius: 12px; overflow: hidden; background: linear-gradient(to bottom, transparent 40%, rgba(0,0,0,0.9) 100%), #2C3744; outline: 3px solid transparent; outline-offset: -3px; transition: transform 220ms cubic-bezier(0.25,1,0.5,1), outline-color 220ms; } .ds-wide:hover, .ds-wide:focus-visible { outline-color: #3D9BFF; transform: scale(1.08); } .ds-wide-meta { position: absolute; left: 8px; right: 8px; bottom: 8px; display: flex; flex-direction: column; gap: 4px; } .ds-wide-name { color: #F4F6F8; font: 500 13px/17px Inter, sans-serif; letter-spacing: 0.01em; white-space: nowrap; overflow: hidden; -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 24px), transparent); mask-image: linear-gradient(to right, #000 calc(100% - 24px), transparent); } .ds-wide-track { height: 3px; border-radius: 1.5px; background: rgba(255,255,255,0.2); } .ds-wide-track span { display: block; height: 100%; border-radius: 1.5px; background: #B4BCC6; } @media (prefers-reduced-motion: reduce) { .ds-wide { transition: outline-color 160ms; } .ds-wide:hover, .ds-wide:focus-visible { transform: none; } }"
+    },
+    {
+      "name": "Episode Still",
+      "kind": "custom",
+      "refersTo": "episode-still",
+      "description": "Episode row: a 128x72 still (else the episode number in title type) with a neutral progress line inside its bottom edge, then 'N. Title', minutes and an accent 'Watched' in caption.",
+      "html": "<div style=\"background:rgba(18,24,32,0.92);padding:12px;width:400px\"><div class=\"ds-ep\" tabindex=\"0\"><div class=\"ds-ep-still\">2<div class=\"ds-ep-track\"><span style=\"width:100%\"></span></div></div><div><div class=\"ds-ep-title\">2. Half Loop</div><div class=\"ds-ep-meta\">56 min · <span class=\"ds-ep-watched\">Watched</span></div></div></div></div>",
+      "css": ".ds-ep { display: flex; gap: 12px; align-items: center; padding: 8px; border-radius: 12px; outline: 1.5px solid transparent; outline-offset: -1.5px; transition: transform 220ms cubic-bezier(0.25,1,0.5,1), background-color 220ms, outline-color 220ms; } .ds-ep:hover, .ds-ep:focus-visible { background: #2C3744; outline-color: rgba(255,255,255,0.65); transform: scale(1.03); } .ds-ep-still { position: relative; flex: none; width: 128px; height: 72px; border-radius: 12px; background: #2C3744; color: #B4BCC6; font: 600 22px/28px Inter, sans-serif; display: flex; align-items: center; justify-content: center; } .ds-ep:hover .ds-ep-still, .ds-ep:focus-visible .ds-ep-still { background: #3B4757; } .ds-ep-track { position: absolute; left: 8px; right: 8px; bottom: 6px; height: 3px; border-radius: 1.5px; background: rgba(255,255,255,0.2); } .ds-ep-track span { display: block; height: 100%; border-radius: 1.5px; background: #B4BCC6; } .ds-ep-title { color: #F4F6F8; font: 500 16px/21px Inter, sans-serif; letter-spacing: -0.006em; } .ds-ep-meta { color: #8790A0; font: 500 13px/17px Inter, sans-serif; letter-spacing: 0.01em; margin-top: 4px; } .ds-ep-watched { color: #3D9BFF; } @media (prefers-reduced-motion: reduce) { .ds-ep { transition: background-color 160ms, outline-color 160ms; } .ds-ep:hover, .ds-ep:focus-visible { transform: none; } }"
     },
     {
       "name": "Live Mark and Badges",
       "kind": "chip",
       "refersTo": "live-mark",
-      "description": "Status word on a 16% tint of its colour; quality badges as one quiet caption line.",
-      "html": "<div style=\"display:flex;gap:12px;align-items:center\"><span class=\"ds-live\">LIVE</span><span class=\"ds-badges\">4K · 50fps · Atmos</span></div>",
-      "css": ".ds-live { color: #FF5147; background: rgba(255,81,71,0.16); border-radius: 6px; padding: 1px 6px; font: 500 13px/17px Inter, sans-serif; letter-spacing: 0.01em; } .ds-badges { color: #8790A0; font: 500 13px/17px Inter, sans-serif; letter-spacing: 0.01em; }"
+      "description": "A status word in its colour on a 16% tint of that colour (6dp radius, 6x1dp padding); quality badges as one quiet caption line.",
+      "html": "<div style=\"background:rgba(18,24,32,0.92);padding:16px;display:flex;gap:12px;align-items:center\"><span class=\"ds-live\">LIVE</span><span class=\"ds-pill ds-pill-good\">Reference</span><span class=\"ds-badges\">4K · 50fps · Atmos</span></div>",
+      "css": ".ds-live, .ds-pill { border-radius: 6px; padding: 1px 6px; font: 500 13px/17px Inter, sans-serif; letter-spacing: 0.01em; } .ds-live { color: #FF5147; background: rgba(255,81,71,0.16); } .ds-pill-good { color: #3DD68C; background: rgba(61,214,140,0.16); } .ds-badges { color: #8790A0; font: 500 13px/17px Inter, sans-serif; letter-spacing: 0.01em; }"
+    },
+    {
+      "name": "Material Panel",
+      "kind": "card",
+      "refersTo": "panel",
+      "description": "Floating chrome over video: Night Glass, 20dp radius, 1dp lit edge, 32dp padding for dialogs; modal panels sit over the modal scrim. Tint, never blur.",
+      "html": "<div style=\"background:rgba(0,0,0,0.6);padding:32px\"><div class=\"ds-panel\"><div class=\"ds-panel-title\">Still watching?</div><div class=\"ds-panel-body\">Playback pauses in 60 s.</div></div></div>",
+      "css": ".ds-panel { background: rgba(18,24,32,0.92); border: 1px solid rgba(255,255,255,0.12); border-radius: 20px; padding: 32px; max-width: 360px; } .ds-panel-title { color: #F4F6F8; font: 600 22px/28px Inter, sans-serif; letter-spacing: -0.015em; } .ds-panel-body { color: #B4BCC6; font: 400 15px/20px Inter, sans-serif; margin-top: 12px; }"
+    },
+    {
+      "name": "Progress Line",
+      "kind": "custom",
+      "refersTo": "progress-line",
+      "description": "A 3dp capsule: neutral text-secondary fill on the track in lists and cards; only the player's seek bar fills in accent.",
+      "html": "<div style=\"background:rgba(18,24,32,0.92);padding:16px;display:flex;flex-direction:column;gap:16px\"><div class=\"ds-progress\"><span style=\"width:40%\"></span></div><div class=\"ds-progress ds-progress-seek\"><span style=\"width:65%\"></span></div></div>",
+      "css": ".ds-progress { width: 200px; height: 3px; border-radius: 1.5px; background: rgba(255,255,255,0.2); } .ds-progress span { display: block; height: 100%; border-radius: 1.5px; background: #B4BCC6; } .ds-progress-seek span { background: #3D9BFF; }"
     }
   ],
   "narrative": {
@@ -125,7 +144,7 @@
       "Depth by tone, lift and scrim; no drop shadows anywhere.",
       "One accent (#3D9BFF), used sparingly; progress in lists is neutral.",
       "Focus springs (0.22s, no overshoot) with scale and ring, read only while drawing.",
-      "One-pass drawing on weak hardware; the backdrop is the only offscreen layer.",
+      "One-pass drawing on weak hardware; no offscreen layers, the backdrop included.",
       "5% overscan-safe inset (48 x 27 dp); chrome never sits closer to the edge."
     ],
     "rules": [
@@ -135,10 +154,10 @@
       { "name": "The Sofa Floor Rule", "body": "Nothing below 13sp; it is read from across a room.", "section": "typography" },
       { "name": "The Tabular Where Needed Rule", "body": "Tabular figures only on numbers that tick or align (clock times, counts, buffer, bitrate). A font feature makes text layout several times slower on the stick, which a list of rows feels.", "section": "typography" },
       { "name": "The No Eyebrow Rule", "body": "No small all-caps line above a heading. Headings stand alone; context goes in a caption line beside or below, in sentence case. All caps is reserved for short status marks (LIVE) and format names (4K, VPN).", "section": "typography" },
-      { "name": "The One Pass Rule", "body": "Every surface draws in one pass: rounded fills instead of clips where possible, alpha applied per draw (ModulateAlpha) rather than through an offscreen copy, animated values read in the draw phase so focus moves repaint two items and recompose nothing. The library backdrop is the only offscreen layer, needed to composite its image crossfade under the ink scrims.", "section": "elevation" },
+      { "name": "The One Pass Rule", "body": "Every surface draws in one pass: rounded fills instead of clips where possible, alpha applied per draw (ModulateAlpha) rather than through an offscreen copy, animated values read in the draw phase so focus moves repaint two items and recompose nothing. The library backdrop bakes its ink scrims into the still once (on the CPU, off the main thread), so its crossfade draws one or two pictures and no layer: the layered version cost the stick ~50 ms a frame.", "section": "elevation" },
       { "name": "The No Stacked Glass Rule", "body": "Never stack one translucent surface on another.", "section": "elevation" },
       { "name": "The Flat Scrim Rule", "body": "Behind full-height chrome over video, prefer a flat tint under the content and a gradient only where content never reaches; a full-screen gradient cost the stick four times the frame time of a flat tint.", "section": "elevation" },
-      { "name": "The Readable Over White Rule", "body": "Every scrim is dense enough where text sits that body text clears 4.5:1 over a white sky: the library backdrop holds 94% to 86% ink across the text column (to 60% width) before falling off by 88%, plus a 70% ink band at the top behind Search.", "section": "elevation" }
+      { "name": "The Readable Over White Rule", "body": "Every scrim is dense enough where text sits that body text clears 4.5:1 over a white sky: the library backdrop holds 94% to 86% ink across the text column (to 75% width) before falling off by 95%, plus a 70% ink band at the top behind Search.", "section": "elevation" }
     ],
     "dos": [
       "Do pick spacing from the step scale (4 to 48dp) and keep chrome inside the 48 x 27dp safe inset.",
@@ -152,7 +171,7 @@
     "donts": [
       "Don't add eyebrow labels (a small all-caps line above a heading).",
       "Don't use drop shadows or blur; depth is tone, lift and scrim.",
-      "Don't stack translucent surfaces, or add offscreen layers beyond the library backdrop.",
+      "Don't stack translucent surfaces, or add offscreen layers.",
       "Don't use the accent for decoration or for list progress.",
       "Don't set text below 13sp, or apply tabular figures to text that does not tick or align.",
       "Don't let motion overshoot or bounce; a remote carries no momentum.",

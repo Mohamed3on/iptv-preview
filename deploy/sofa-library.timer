@@ -1,5 +1,5 @@
 [Unit]
-Description=Nightly iptv-library.service (/api/app/library picks up the new file by itself)
+Description=Nightly sofa-library.service (/api/app/library picks up the new file by itself)
 
 [Timer]
 OnCalendar=*-*-* 04:41:00 UTC

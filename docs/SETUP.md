@@ -39,10 +39,10 @@ On the server, as root:
 ```sh
 apt-get update && apt-get install -y curl unzip rsync
 curl -fsSL https://bun.sh/install | BUN_INSTALL=/usr/local bash   # bun at /usr/local/bin/bun
-useradd --system --home-dir /opt/iptv-preview --shell /usr/sbin/nologin iptv
-mkdir -p /opt/iptv-preview/.cache /opt/iptv-preview/app
-# paste your settings into /opt/iptv-preview/.env, then:
-chmod 600 /opt/iptv-preview/.env
+useradd --system --home-dir /opt/sofa --shell /usr/sbin/nologin sofa
+mkdir -p /opt/sofa/.cache /opt/sofa/app
+# paste your settings into /opt/sofa/.env, then:
+chmod 600 /opt/sofa/.env
 ```
 
 From your computer, in the repo:
@@ -52,25 +52,25 @@ bun install
 SERVER=root@<server-ip> ./deploy/sync.sh
 ```
 
-This builds the web app, copies the server to `/opt/iptv-preview`, installs the systemd units in `deploy/` and starts them. Run the same command again after every change. Check it:
+This builds the web app, copies the server to `/opt/sofa`, installs the systemd units in `deploy/` and starts them. Run the same command again after every change. Check it:
 
 ```sh
 ssh root@<server-ip> 'curl -s "http://127.0.0.1:8790/api/playlist?t=<PLAYLIST_TOKEN>" | head -c 200'
-ssh root@<server-ip> 'journalctl -u iptv-preview -f'
+ssh root@<server-ip> 'journalctl -u sofa -f'
 ```
 
-Two nightly jobs come with it: `iptv-learn.timer` learns which channels show which competitions (the 🏆 groups), and `iptv-library.timer` builds the Movies & Shows library (only with `TMDB_TOKEN`).
+Two nightly jobs come with it: `sofa-learn.timer` learns which channels show which competitions (the 🏆 groups), and `sofa-library.timer` builds the Movies & Shows library (only with `TMDB_TOKEN`).
 
 ## 3. HTTPS
 
-With your domain on Cloudflare: in the dashboard, under Zero Trust → Networks → Tunnels, create a tunnel and give it a public hostname (say `iptv.example.com`) whose service is `http://127.0.0.1:8790`. The dashboard then shows the install command to run on the server; it ends in `cloudflared service install <token>`.
+With your domain on Cloudflare: in the dashboard, under Zero Trust → Networks → Tunnels, create a tunnel and give it a public hostname (say `sofa.example.com`) whose service is `http://127.0.0.1:8790`. The dashboard then shows the install command to run on the server; it ends in `cloudflared service install <token>`.
 
 Turn Bot Fight Mode off for the domain (Security → Bots), or players behind a VPN get challenged.
 
 In TiviMate (or any player), add:
 
-- Playlist: `https://iptv.example.com/api/playlist?t=<PLAYLIST_TOKEN>`
-- EPG: `https://iptv.example.com/api/epg?t=<PLAYLIST_TOKEN>`
+- Playlist: `https://sofa.example.com/api/playlist?t=<PLAYLIST_TOKEN>`
+- EPG: `https://sofa.example.com/api/epg?t=<PLAYLIST_TOKEN>`
 
 ## 4. Feed quality (optional)
 
@@ -87,7 +87,7 @@ It pulls the server's cache, probes for 30 minutes and pushes it back. It uses y
 1. Make a signing key once, and keep a backup: without it, updates need an uninstall.
 
    ```sh
-   keytool -genkeypair -v -keystore ~/iptv-release.jks -alias iptv -keyalg RSA -keysize 4096 -validity 36500
+   keytool -genkeypair -v -keystore ~/sofa-release.jks -alias sofa -keyalg RSA -keysize 4096 -validity 36500
    ```
 
 2. Add to `~/.gradle/gradle.properties`:
@@ -95,10 +95,10 @@ It pulls the server's cache, probes for 30 minutes and pushes it back. It uses y
    ```properties
    IPTV_KEYSTORE_FILE=/Users/you/iptv-release.jks
    IPTV_KEYSTORE_PASSWORD=…
-   IPTV_KEY_ALIAS=iptv
+   IPTV_KEY_ALIAS=sofa
    IPTV_KEY_PASSWORD=…
    IPTV_APP_TOKEN=<one of APP_TOKENS>
-   IPTV_SERVER_URL=https://iptv.example.com
+   IPTV_SERVER_URL=https://sofa.example.com
    ```
 
 3. On the Fire TV, enable Settings → My Fire TV → Developer options → ADB debugging. Then:
@@ -110,7 +110,7 @@ It pulls the server's cache, probes for 30 minutes and pushes it back. It uses y
 
    The first install must be the release build, or the first self-update fails on a signature mismatch.
 
-4. **Updates.** The app updates itself from `/opt/iptv-preview/app/` on the server (`app.apk` plus a `version.json` with its `versionCode`, `versionName` and `sha256`). `.github/workflows/firetv.yml` builds and uploads both on every push that touches `firetv/`. To publish by hand instead, run `./gradlew assembleRelease` and copy `app/build/outputs/apk/release/app-release.apk` there as `app.apk`, with a matching `version.json` (see the workflow's "Copy to the box" step).
+4. **Updates.** The app updates itself from `/opt/sofa/app/` on the server (`app.apk` plus a `version.json` with its `versionCode`, `versionName` and `sha256`). `.github/workflows/firetv.yml` builds and uploads both on every push that touches `firetv/`. To publish by hand instead, run `./gradlew assembleRelease` and copy `app/build/outputs/apk/release/app-release.apk` there as `app.apk`, with a matching `version.json` (see the workflow's "Copy to the box" step).
 
 `firetv/dev.sh` and `firetv/check.sh` install and check builds on the stick at `STICK=<ip>:5555`.
 
@@ -123,13 +123,13 @@ In a fork, `.github/workflows/deploy.yml` deploys the server on every push to `m
 | `SERVER_HOST` | the server's IP or hostname (all workflows) |
 | `HETZNER_SSH_KEY` | a private key for `root@SERVER_HOST` (deploy, probe) |
 | `XTREAM_HOST`, `XTREAM_USER`, `XTREAM_PASS` | the probe |
-| `ANDROID_KEYSTORE_B64` (`base64 -i ~/iptv-release.jks`), `KEYSTORE_PASSWORD`, `KEY_ALIAS`, `KEY_PASSWORD`, `APP_TOKEN`, `APP_SERVER_URL` | the Fire TV build |
-| `APP_DEPLOY_SSH_KEY` | a key for user `iptvapp`, which may only write `/opt/iptv-preview/app/` |
+| `ANDROID_KEYSTORE_B64` (`base64 -i ~/sofa-release.jks`), `KEYSTORE_PASSWORD`, `KEY_ALIAS`, `KEY_PASSWORD`, `APP_TOKEN`, `APP_SERVER_URL` | the Fire TV build |
+| `APP_DEPLOY_SSH_KEY` | a key for user `sofa-app`, which may only write `/opt/sofa/app/` |
 
-The `iptvapp` user, on the server:
+The `sofa-app` user, on the server:
 
 ```sh
-useradd --system --gid iptv --create-home --shell /bin/sh iptvapp
-chmod 2775 /opt/iptv-preview/app   # group-writable, so deploys (which chown everything to iptv) keep it writable
-mkdir -p ~iptvapp/.ssh && echo 'restrict,command="rrsync -wo -no-del /opt/iptv-preview/app" <public key>' > ~iptvapp/.ssh/authorized_keys
+useradd --system --gid sofa --create-home --shell /bin/sh sofa-app
+chmod 2775 /opt/sofa/app   # group-writable, so deploys (which chown everything to sofa) keep it writable
+mkdir -p ~sofa-app/.ssh && echo 'restrict,command="rrsync -wo -no-del /opt/sofa/app" <public key>' > ~sofa-app/.ssh/authorized_keys
 ```

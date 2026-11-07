@@ -1,6 +1,6 @@
 // Builds the Movies & Shows library (api/_library.ts) into .cache/library.json: TMDB's rows, then the
 // provider's 4K and Blu-ray films and its shows, each looked up on TMDB once (a title the last build already
-// knew keeps its details). Run nightly on the box by deploy/iptv-library.timer. Without TMDB_TOKEN, or when
+// knew keeps its details). Run nightly on the box by deploy/sofa-library.timer. Without TMDB_TOKEN, or when
 // every TMDB list fails, nothing is written and the app keeps the last library (or the provider's rows).
 // Every row title, provider title and the owner's Watchlist titles are scored first (api/_scores.ts:
 // MDBList and IMDb's histograms), then each row keeps its 150 most convincing candidates (TMDB's most popular

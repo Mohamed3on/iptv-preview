@@ -76,9 +76,9 @@ jobs:
           fi
           printf '{"versionCode":%s,"versionName":"1.%s","sha256":"%s"%s}\n' \
             "$code" "$code" "$(sha256sum "$apk" | cut -d' ' -f1)" "$dm_field" > "$RUNNER_TEMP/version.json"
-          # The key may only write /opt/iptv-preview/app (rrsync -wo), so paths are relative to it.
+          # The key may only write /opt/sofa/app (rrsync -wo), so paths are relative to it.
           ssh_cmd='ssh -i ~/.ssh/app_deploy -o IdentitiesOnly=yes'
-          rsync -t -e "$ssh_cmd" "$apk" "iptvapp@$HOST:app.apk"
-          if [ -n "$dm_field" ]; then rsync -t -e "$ssh_cmd" "$dm" "iptvapp@$HOST:app.dm"; fi
-          rsync -t -e "$ssh_cmd" "$RUNNER_TEMP/version.json" "iptvapp@$HOST:version.json"
+          rsync -t -e "$ssh_cmd" "$apk" "sofa-app@$HOST:app.apk"
+          if [ -n "$dm_field" ]; then rsync -t -e "$ssh_cmd" "$dm" "sofa-app@$HOST:app.dm"; fi
+          rsync -t -e "$ssh_cmd" "$RUNNER_TEMP/version.json" "sofa-app@$HOST:version.json"
           rm -f ~/.ssh/app_deploy

@@ -1,0 +1,12 @@
+[Unit]
+Description=sofa: build the Movies & Shows library from TMDB and the provider's catalogue
+After=sofa.service
+
+[Service]
+Type=oneshot
+User=sofa
+WorkingDirectory=/opt/sofa
+EnvironmentFile=/opt/sofa/.env
+ExecStart=/usr/local/bin/bun scripts/build-library.ts
+# It reads the ~30MB VOD catalogue; the server keeps its own 2G.
+MemoryMax=1G

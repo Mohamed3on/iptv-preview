@@ -7,7 +7,7 @@
 set -euo pipefail
 
 : "${SERVER:?set SERVER=root@<ip>}"
-CACHE=/opt/iptv-preview/api/quality-cache.ts
+CACHE=/opt/sofa/api/quality-cache.ts
 before=$(mktemp) seed=$(mktemp)
 # The probe works on the box's copy; the repo's seed copy is put back when it's done.
 cp api/quality-cache.ts "$seed"
@@ -20,6 +20,6 @@ if cmp -s "$before" api/quality-cache.ts; then
   echo "No changed readings; the box keeps its cache."
 else
   rsync -a api/quality-cache.ts "$SERVER:$CACHE"
-  ssh "$SERVER" "chown iptv:iptv $CACHE && systemctl restart iptv-preview"
+  ssh "$SERVER" "chown sofa:sofa $CACHE && systemctl restart sofa"
   echo "Pushed the new readings to the box and restarted the server."
 fi

@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test'
 import { createHash } from 'node:crypto'
-import { allowance, detail, filmFile, isFilm, listingRows, readTorrent, searchRows, wanted, type Row } from './_arabp2p'
+import { allowance, detail, filmFile, isFilm, listingRows, pickFilm, readTorrent, searchRows, uploadNames, wanted, type Row } from './_arabp2p'
 
 test('a search row is the film only by its whole name, without a sequel number, in its year', () => {
   const toyStory = ['حكاية لعبة', 'Toy Story']
@@ -66,4 +66,17 @@ test('a .torrent gives the info hash and the film file; a pack gives none', () =
   expect(filmFile(t!.files)).toEqual({ file: 0, filename: 'Coco.2017.1080p.mkv', size: 9000 })
   expect(filmFile([{ name: 'a.mkv', size: 9000 }, { name: 'b.mkv', size: 8000 }])).toBeNull()
   expect(readTorrent(Buffer.from('<html>تجاوزت الحد المسموح</html>'))).toBeNull()
+})
+
+test('a dubbed upload is matched to its TMDB film by its names and year, or to none', () => {
+  expect(uploadNames('حكاية لعبة ٥ [2026][مدبلج فصحى+مصرية+سعودية][DSNP][1080p] | Toy Story 5')).toEqual({ names: ['Toy Story 5', 'حكاية لعبة 5'], year: '2026' })
+  expect(uploadNames('خلطة بيطة بالصلصة — راتاتوي (2007) — BluRay 1080p مدبلج بالعامية المصرية + الإنجليزية Ratatouille')).toEqual({ names: ['خلطة بيطة بالصلصة', 'راتاتوي'], year: '2007' })
+  expect(uploadNames('Finding Nemo 2003 2160p DSNP WEB DL DDP5 1 Atmos DV H 265').names).toEqual(['Finding Nemo'])
+  const film = (id: number, title: string, year: string, animated = true) => ({ id, title, release_date: `${year}-06-01`, genre_ids: animated ? [16] : [18] })
+  // The exact title wins over TMDB's first answer; a one-word name takes nothing less.
+  expect(pickFilm([film(1, "WALL·E's Treasures & Trinkets", '2008'), film(2, 'WALL·E', '2008')], 'WALL E', '2008')).toBe(2)
+  expect(pickFilm([film(3, 'Sword Art Online: Aria of a Starless Night', '2021')], 'Night', '2021')).toBe(0)
+  // A translated name takes the first animated film of its year; live action and other years never.
+  expect(pickFilm([film(4, 'Ice Age: Collision Course', '2016')], 'العصر الجليدي', '2016')).toBe(4)
+  expect(pickFilm([film(5, 'Night', '2024'), film(6, 'Night', '2021', false)], 'Night', '2021')).toBe(0)
 })

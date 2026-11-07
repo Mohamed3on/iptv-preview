@@ -43,11 +43,19 @@ interface Store {
   downloads: number[]
   /** The tracker said the allowance is spent: no downloads before this. */
   fullUntil?: number
+  /** The dubbed-films category as crawled: torrent id → the TMDB film it is (0: none found), and when it was last crawled. */
+  dubs?: Record<string, number>
+  crawled?: number
+  /** When TorBox last said it holds a hash. */
+  tb?: Record<string, number>
+  /** Torrents whose detail page shows no magnet: only their .torrent gives the hash. */
+  bare?: Record<string, 1>
 }
 const storeFile = () => process.env.ARABP2P_CACHE_FILE ?? fileURLToPath(new URL('../.cache/arabp2p.json', import.meta.url))
-// One copy in memory (only this process writes the file), saved whole after each change.
+// One copy in memory (only the server writes the file; the library build only reads it), saved whole after each change.
 let held: Promise<Store> | null = null
-const db = () => (held ??= readFile(storeFile(), 'utf8').then((s) => JSON.parse(s) as Store, () => ({ films: {}, torrents: {}, downloads: [] })))
+const db = () => (held ??= readStore())
+const readStore = (file = storeFile()) => readFile(file, 'utf8').then((s) => JSON.parse(s) as Store, (): Store => ({ films: {}, torrents: {}, downloads: [] }))
 const save = async () => writeAtomic(storeFile(), await db())
 
 const UNIT: Record<string, number> = { KB: 2 ** 10, MB: 2 ** 20, GB: 2 ** 30, TB: 2 ** 40 }
@@ -257,14 +265,17 @@ export function allowance(s: Pick<Store, 'downloads' | 'fullUntil'>, dub: boolea
   return Math.max(0, daily - used - (dub ? 0 : DUB_RESERVE))
 }
 
-/** A torrent's hash and film file: the detail page's magnet if it shows one, else its .torrent (when the allowance has room). */
-async function resolve(row: Row, dub: boolean): Promise<void> {
+/** A torrent's hash and film file: the detail page's magnet if it shows one, else its .torrent (when the allowance has room beyond [keep]). */
+async function resolve(row: Row, dub: boolean, keep = 0): Promise<void> {
   const s = await db()
-  const d = bare.has(row.id) ? { files: [] } : detail(await page(`index.php?page=torrent-details&id=${row.id}`))
+  const d = s.bare?.[row.id] ? { files: [] } : detail(await page(`index.php?page=torrent-details&id=${row.id}`))
   let held: { hash: string; files: { name: string; size: number }[] } | null = d.hash ? { hash: d.hash, files: d.files } : null
   if (!held) {
-    bare.add(row.id)
-    if (allowance(s, dub) <= 0) return
+    if (!s.bare?.[row.id]) {
+      ;(s.bare ??= {})[row.id] = 1
+      await save()
+    }
+    if (allowance(s, dub) <= keep) return
     const r = await request(row.link, { headers: { referer: `${BASE}index.php?page=torrent-details&id=${row.id}` } })
     const buf = new Uint8Array(await r.arrayBuffer())
     held = readTorrent(buf)
@@ -284,20 +295,24 @@ async function resolve(row: Row, dub: boolean): Promise<void> {
   await save()
 }
 
-/** A film's rows: by TMDB id in the Arabic-film listing, or by its names among the dubs. */
+/**
+ * A film's rows: an Arabic film's by its TMDB id in the Arabic-film listing, else (its page there has no TMDB
+ * id, or it's a dub) by its names, Arabic first, among all uploads (a dub: among the dubbed ones).
+ */
 async function search(tmdb: string, t: TmdbTitle, arabic: boolean, ar: string): Promise<Row[]> {
   if (arabic) {
     const found = await page(`index.php?page=movies-listing&search=${tmdb}&search_radio=TMDB_id`)
     const pages = [...new Set([...found.matchAll(/page=movies-listing&(?:amp;)?A=(\d+)/g)].map((m) => m[1]))].slice(0, 2)
     const rows: Row[] = []
     for (const a of pages) rows.push(...listingRows(await page(`index.php?page=movies-listing&A=${a}`)))
-    return rows
+    if (rows.length) return rows
   }
-  const names = [...new Set([ar, t.name, t.originalTitle].filter(Boolean))]
+  // An Arabic film's own title is Arabic; a dub's Arabic title is TMDB's translation.
+  const names = [...new Set([arabic ? t.originalTitle : ar, t.name, t.originalTitle].filter(Boolean))]
   const rows = new Map<string, Row>()
   for (const q of names.slice(0, 2)) {
     const html = await page(`index.php?page=torrents&search=${encodeURIComponent(q)}&category=0&active=0&internel=0&order=3&by=2`)
-    for (const r of searchRows(html)) if (r.dub && isFilm(r.title, names, t.year)) rows.set(r.id, r)
+    for (const r of searchRows(html)) if ((arabic || r.dub) && isFilm(r.title, names, t.year)) rows.set(r.id, r)
   }
   return [...rows.values()]
 }
@@ -311,12 +326,10 @@ export function wanted(rows: Row[], torrents: Store['torrents'] = {}): Row[] {
     .slice(0, PER_FILM)
 }
 
-/** Torrents whose detail page shows no magnet: only their .torrent gives the hash. */
-const bare = new Set<string>()
 const stale = (f: Store['films'][string] | undefined) => !f || Date.now() - f.at > (f.rows.length ? SEARCH_MS : EMPTY_MS)
 /** Whether a lookup would do anything: a search due, or a wanted torrent whose hash could be had now. */
 const due = (s: Store, tmdb: string, dub: boolean) =>
-  stale(s.films[tmdb]) || wanted(s.films[tmdb].rows, s.torrents).some((r) => !s.torrents[r.id] && (!bare.has(r.id) || allowance(s, dub) > 0))
+  stale(s.films[tmdb]) || wanted(s.films[tmdb].rows, s.torrents).some((r) => !s.torrents[r.id] && (!s.bare?.[r.id] || allowance(s, dub) > 0))
 
 const jobs = new Map<string, Promise<void>>()
 /** Brings a film's rows and hashes up to date, in the background; one job per film. */
@@ -329,7 +342,9 @@ function refresh(tmdb: string, t: TmdbTitle, arabic: boolean): Promise<void> {
       let f = s.films[tmdb]
       if (stale(f)) {
         const ar = f?.ar || (arabic ? '' : await tmdbGet<{ title?: string }>(`movie/${tmdb}?language=ar`).then((r) => r.title ?? '', () => ''))
-        f = s.films[tmdb] = { at: Date.now(), ar, rows: await search(tmdb, t, arabic, ar) }
+        // Rows the dub crawl added are kept alongside what the search finds.
+        const found = await search(tmdb, t, arabic, ar)
+        f = s.films[tmdb] = { at: Date.now(), ar, rows: [...found, ...(f?.rows ?? []).filter((r) => !found.some((x) => x.id === r.id))] }
         await save()
       }
       // A pack found on the way drops out, so the next row gets its turn.
@@ -346,19 +361,129 @@ function refresh(tmdb: string, t: TmdbTitle, arabic: boolean): Promise<void> {
 }
 
 const tbSeen = new Map<string, { at: number; held: boolean }>()
-/** Which of [hashes] TorBox holds, each answer kept 2 h; all of them when there's no TorBox key, none when TorBox fails. */
-async function onTorBox(hashes: string[]): Promise<Set<string>> {
+/**
+ * Which of [hashes] TorBox holds, each answer kept 2 h (and a held one noted in [s] for the library's row); all
+ * of them when there's no TorBox key, none when TorBox fails.
+ */
+async function onTorBox(hashes: string[], s: Store): Promise<Set<string>> {
   const key = process.env.TORBOX_TOKEN
   if (!key) return new Set(hashes)
   const ask = hashes.filter((h) => !(Date.now() - (tbSeen.get(h)?.at ?? 0) < TORBOX_MS))
-  if (ask.length) {
-    const r = await getJson<{ data?: { hash: string }[] }>(`https://api.torbox.app/v1/api/torrents/checkcached?hash=${ask.join(',')}&format=list&list_files=false`, { headers: { Authorization: `Bearer ${key}` }, timeoutMs: 3000, retries: 0 }).catch(() => null)
-    if (r) {
-      const held = new Set((r.data ?? []).map((d) => d.hash.toLowerCase()))
-      for (const h of ask) tbSeen.set(h, { at: Date.now(), held: held.has(h) })
+  for (let i = 0; i < ask.length; i += 50) {
+    const batch = ask.slice(i, i + 50)
+    const r = await getJson<{ data?: { hash: string }[] }>(`https://api.torbox.app/v1/api/torrents/checkcached?hash=${batch.join(',')}&format=list&list_files=false`, { headers: { Authorization: `Bearer ${key}` }, timeoutMs: 3000, retries: 0 }).catch(() => null)
+    if (!r) continue
+    const held = new Set((r.data ?? []).map((d) => d.hash.toLowerCase()))
+    for (const h of batch) {
+      tbSeen.set(h, { at: Date.now(), held: held.has(h) })
+      if (held.has(h)) (s.tb ??= {})[h] = Date.now()
     }
   }
   return new Set(hashes.filter((h) => tbSeen.get(h)?.held))
+}
+
+// --- The dubbed films, crawled daily -----------------------------------------------------------------------
+
+/** The tracker's category of Arabic-dubbed animated films (under "انمي مدبلج عربي"), newest first, 30 a page. */
+const DUBBED_FILMS = 98
+const FIRST_PAGES = 20
+const DAILY_PAGES = 2
+/** Downloads the crawl leaves for films asked for. */
+const KEEP_FOR_ASKED = 2
+const NOT_NAME = /^(?:فيلم|مدبلج\S*|دبلج\S*|دبلجتين|نسخة|نسخه|صوت|ترجمة|مترجم|عربي|عربية|بالعامية|العامية|المصرية|مصري|مصرية|فصحى|بالفصحى|الإنجليزية|انجليزي|و|\+)$/
+const TAG = /(?<![\p{L}\d])(?:2160p|1440p|1080p|720p|576p|480p|4k|2k|hd|fhd|uhd|blu-?ray|bd|web|web-?dl|webrip|dsnp|nf|amzn|osn|shahid|hdtv|dvd|dual|x26[45]|h ?26[45]|hevc|ddp?5|atmos|dv|mkv|remux)(?![\p{L}\d])/iu
+
+/**
+ * What to ask TMDB for an upload's film: its year, and its names from the part before the first tag or year,
+ * brackets dropped: the English ones first, then the Arabic ones, filler words ("مدبلج", "فيلم") left out.
+ */
+export function uploadNames(title: string): { names: string[]; year: string } {
+  const t = digits(decode(title))
+  const year = t.match(/(?<!\d)(19\d\d|20\d\d)(?!\d)/)?.[1] ?? ''
+  const plain = t.replace(/\[[^\]]*\]|\([^)]*\)/g, ' ')
+  const head = plain.slice(0, Math.min(...[plain.search(TAG), plain.search(/(?<!\d)(?:19|20)\d\d(?!\d)/)].map((i) => (i < 0 ? plain.length : i))))
+  const parts = head.split(/\s[—–|-]\s|[—–|]/).map((p) => p.trim()).filter(Boolean)
+  const latin = parts.flatMap((p) => p.match(/[A-Za-z][\w'’&:!.,-]*(?:\s+[\w'’&:!.,-]+)*/g) ?? []).map((s) => s.replace(/\bAKA\b.*$/i, '').trim())
+  const arabic = parts.map((p) => p.replace(/[A-Za-z][\w'’&:!.,-]*/g, ' ').split(/\s+/).filter((w) => w && !NOT_NAME.test(w)).join(' '))
+  const names = [...latin.filter((s) => s.length > 1).sort((a, b) => b.length - a.length), ...arabic.filter((s) => /\p{Script=Arabic}/u.test(s))]
+  return { names: [...new Set(names)], year }
+}
+
+/** Of TMDB's answers for [q], the animated film released within a year of [year]: the one titled [q] exactly, else (for a name of two words or more) the first. */
+export function pickFilm(results: { id: number; title?: string; original_title?: string; release_date?: string; genre_ids?: number[] }[], q: string, year: string): number {
+  const fits = results.filter((x) => x.genre_ids?.includes(16) && (!year || Math.abs(Number(x.release_date?.slice(0, 4)) - Number(year)) <= 1))
+  return (fits.find((x) => [x.title, x.original_title].some((n) => n && norm(n) === norm(q))) ?? (norm(q).includes(' ') ? fits[0] : undefined))?.id ?? 0
+}
+
+/** The TMDB animated film an upload is: the first of its names TMDB finds one for; 0 none. */
+async function tmdbFilm(title: string): Promise<number> {
+  const { names, year } = uploadNames(title)
+  for (const q of names.slice(0, 3)) {
+    const r = await tmdbGet<{ results: Parameters<typeof pickFilm>[0] }>(`search/movie?query=${encodeURIComponent(q)}${year ? `&year=${year}` : ''}`).catch(() => null)
+    const id = r ? pickFilm(r.results, q, year) : 0
+    if (id) return id
+  }
+  return 0
+}
+
+let crawling: Promise<void> | null = null
+/**
+ * Reads the dubbed-films category (FIRST_PAGES the first time, then the newest pages until a known upload),
+ * files each new upload under its TMDB film, gives each dubbed film's best copy a hash (Egyptian dubs and newest
+ * first, leaving KEEP_FOR_ASKED downloads), then notes which of their hashes TorBox holds.
+ */
+function crawl(): Promise<void> {
+  crawling ??= (async () => {
+    const s = await db()
+    const dubs = (s.dubs ??= {})
+    const fresh: Row[] = []
+    for (let n = 1; n <= (s.crawled ? DAILY_PAGES : FIRST_PAGES); n++) {
+      const rows = searchRows(await page(`index.php?page=torrents&category=${DUBBED_FILMS}&active=0&internel=0&order=3&by=2&pages=${n}`))
+      const unseen = rows.filter((r) => dubs[r.id] === undefined && !fresh.some((x) => x.id === r.id))
+      fresh.push(...unseen)
+      if (!unseen.length) break
+    }
+    for (const r of fresh) {
+      const tmdb = PACK.test(r.title) ? 0 : await tmdbFilm(r.title)
+      dubs[r.id] = tmdb
+      if (!tmdb) continue
+      const f = (s.films[tmdb] ??= { at: 0, ar: '', rows: [] })
+      if (!f.rows.some((x) => x.id === r.id)) f.rows.push({ ...r, dub: true })
+    }
+    s.crawled = Date.now()
+    await save()
+    const films = [...new Set(Object.values(dubs).filter(Boolean).map(String))]
+    const best = films.flatMap((id) => wanted(s.films[id]?.rows ?? [], s.torrents).slice(0, 1)).filter((r) => !s.torrents[r.id])
+      .sort((a, b) => Number(b.egyptian) - Number(a.egyptian) || Number(b.id) - Number(a.id))
+    for (const r of best) if (!s.bare?.[r.id] || allowance(s, true) > KEEP_FOR_ASKED) await resolve(r, true, KEEP_FOR_ASKED)
+    await onTorBox(dubHashes(s), s)
+    await save()
+  })()
+    .catch((e) => void (e instanceof Paused || console.warn(`arabp2p: crawl failed (${e instanceof Error ? e.message : e})`)))
+    .finally(() => (crawling = null))
+  return crawling
+}
+
+/** The hashes of every dubbed copy known. */
+const dubHashes = (s: Store) => Object.values(s.films).flatMap((f) => f.rows.filter((r) => r.dub).flatMap((r) => {
+  const h = s.torrents[r.id]
+  return h && 'hash' in h ? [h.hash] : []
+}))
+
+/**
+ * The library's "Dubbed in Arabic" row: films (title ids) with a dubbed copy TorBox held in the last 3 days, the
+ * newest upload first. Read from the store file, so the library build (another process) can call it.
+ */
+export async function dubbedFilms(file = storeFile()): Promise<string[]> {
+  const s = await readStore(file)
+  const recent = (h: string) => Date.now() - (s.tb?.[h] ?? 0) < 3 * DAY_MS
+  return Object.entries(s.films).flatMap(([id, f]) => {
+    const newest = Math.max(0, ...f.rows.filter((r) => {
+      const h = s.torrents[r.id]
+      return r.dub && h && 'hash' in h && recent(h.hash)
+    }).map((r) => Number(r.id)))
+    return newest ? [{ id: `movie:${id}`, newest }] : []
+  }).sort((a, b) => b.newest - a.newest).map((x) => x.id)
 }
 
 /**
@@ -368,14 +493,17 @@ async function onTorBox(hashes: string[]): Promise<Set<string>> {
  */
 export async function arabp2pCopies(tmdb: string, t: TmdbTitle): Promise<{ copies: Omit<RdCopy, 'kbps'>[]; pending: boolean }> {
   const arabic = t.originalLanguage === 'ar'
-  if (!process.env.ARABP2P_USER || !process.env.ARABP2P_PASS || (!arabic && !t.genres.includes('Animation'))) return { copies: [], pending: false }
+  if (!process.env.ARABP2P_USER || !process.env.ARABP2P_PASS) return { copies: [], pending: false }
   const s = await db()
+  // Any film asked for starts the day's crawl of the dubbed films, in the background.
+  if (Date.now() >= pausedUntil && Date.now() - (s.crawled ?? 0) > DAY_MS) crawl()
+  if (!arabic && !t.genres.includes('Animation')) return { copies: [], pending: false }
   if (Date.now() >= pausedUntil && due(s, tmdb, !arabic)) refresh(tmdb, t, arabic)
   const known = (s.films[tmdb]?.rows ?? []).flatMap((row) => {
     const h = s.torrents[row.id]
     return h && 'hash' in h ? [{ row, h }] : []
   })
-  const held = await onTorBox([...new Set(known.map((k) => k.h.hash))])
+  const held = await onTorBox([...new Set(known.map((k) => k.h.hash))], s)
   const copies = known.filter((k) => held.has(k.h.hash)).map(({ row, h }) => {
     const a = parseRelease(`${row.title}\n${h.filename}`)
     return {

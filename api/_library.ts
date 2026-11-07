@@ -118,6 +118,8 @@ export function rowDefs(today = new Date()): RowDef[] {
     // IMDb's Top 250 and Most Popular TV shows by TrueScore's net score on IMDb's histogram: filled and ordered by scripts/build-library.ts.
     { id: 'ts-shows', n: 'TrueScore · shows', q: [] },
     { id: 'trending', n: 'Trending', q: [['movie', 'trending/movie/week'], ['tv', 'trending/tv/week']] },
+    // Animated films with an Arabic dub TorBox holds (api/_arabp2p.ts): filled by scripts/build-library.ts.
+    { id: 'ar-dub', n: 'Dubbed in Arabic', q: [] },
     // Films out on digital or disc in the last 60 days; shows with an episode out in them.
     { id: 'new', n: 'New releases', q: [films(`with_release_type=4%7C5&release_date.gte=${day(60)}&release_date.lte=${day(0)}&vote_count.gte=20`), shows(`air_date.gte=${day(60)}&air_date.lte=${day(0)}&vote_count.gte=100`)] },
     ...GENRES.map(([id, n, film, show]): RowDef => ({

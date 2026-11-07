@@ -8,8 +8,10 @@
 // recent-adjusted and by its all-time score (each only by that number), looked up on TMDB where new, then IMDb's Top 250 and Most Popular TV shows by TrueScore's net score on IMDb's histogram. Titles on show carry their runtime (TMDB's kept details, looked up where none are kept). Each key is optional: without one its source is skipped, and rows keep their order.
 // First it reads the owner's Trakt and Letterboxd history into .cache/history.json (api/_history.ts), with the
 // Watchlist's runtimes (it is shown shortest first).
+// The "Dubbed in Arabic" row is the films api/_arabp2p.ts found an Arabic dub of that TorBox holds.
 // Usage: bun scripts/build-library.ts   (XTREAM_*, TMDB_TOKEN, TRAKT_CLIENT_ID, MDBLIST_KEY from env / .env.local)
 import { readFile } from 'node:fs/promises'
+import { dubbedFilms } from '../api/_arabp2p.js'
 import { configFromEnv } from '../api/_provider.js'
 import { assemble, fromTmdb, LIBRARY_FILE, LIBRARY_FULL_FILE, providerTitles, rowDefs, saveLibrary, withProviderCopies, type Library, type LibTitle, type TmdbItem } from '../api/_library.js'
 import { imdbTopShows, loadScores, onScreen, ranked, refreshScores, saveScores, scoreTitles, trueScoreRows, trueScoreShows, unscored } from '../api/_scores.js'
@@ -96,6 +98,10 @@ for (const [row, ids] of trueScoreRows(history)) {
   await lookUp(ids)
   seeds[defs.findIndex((d) => d.id === row)] = ids.flatMap((id) => (known.get(id)?.p ? [known.get(id)!] : []))
 }
+// The films ArabP2P has an Arabic dub of that TorBox holds (the server's crawl keeps the list).
+const dubbed = await dubbedFilms()
+await lookUp(dubbed)
+seeds[defs.findIndex((d) => d.id === 'ar-dub')] = dubbed.flatMap((id) => (known.get(id)?.p ? [known.get(id)!] : []))
 const showIds = trueScoreShows(topShows, scored, history)
 await lookUp(showIds)
 seeds[defs.findIndex((d) => d.id === 'ts-shows')] = showIds.flatMap((id) => (known.get(id)?.p ? [known.get(id)!] : []))

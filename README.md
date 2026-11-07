@@ -6,7 +6,7 @@ Turns an Xtream Codes IPTV subscription into a trimmed sports playlist and guide
 - **Fire TV app** (`firetv/`): a native player for the same channels, with multi-view and a Movies & Shows library (TMDB, IMDb and Letterboxd scores, Trakt, Real-Debrid and TorBox). It installs once over adb and updates itself from the server.
 - **Web viewer** at `/` for any M3U playlist and XMLTV guide (`bun install && bun dev`).
 
-**To run your own, follow [docs/SETUP.md](docs/SETUP.md).** Every setting is listed in [.env.example](.env.example). The rest of this README covers how the original deployment runs.
+**To run your own, follow [docs/SETUP.md](docs/SETUP.md).** Every setting is listed in [.env.example](.env.example). The channel choices built in here are personal (which sports, regions, languages and leagues), so choose your own: the guide shows where. The rest of this README covers how the original deployment runs.
 
 ## Hosting
 

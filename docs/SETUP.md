@@ -14,7 +14,17 @@ What you get: a small server that turns an Xtream Codes subscription into a trim
 
 Copy [`.env.example`](../.env.example) to `.env` and fill in the required block: `XTREAM_HOST/USER/PASS`, a random `PLAYLIST_TOKEN` and, for the app, a different random `APP_TOKENS` (`openssl rand -hex 24` for each). Everything else is optional and documented there.
 
-**Channels.** The category ids in `api/_lib.ts` (`KEEP`) are one provider's, and they only apply when the server recognises that provider. On any other provider, categories are picked by name: UK, ES, DE, IT, FR and AR football, tennis, UFC and general sport categories, as long as the names start with a region prefix like `UK|`, `UK |` or `UK:`. List anything else with `EXTRA_CATEGORIES`, a regex over category names. To see your provider's category names:
+**Channels: choose your own.** The channel choices built into this repo are one person's tastes: football, tennis and UFC; UK, Spanish, German, Italian, French and Arabic sport; English feeds first, then Arabic; kids channels in a few languages; Russian TV; the leagues they follow. Treat them as an example, not a default to keep. They all live in `api/_lib.ts`:
+
+| What | Where |
+| --- | --- |
+| Which categories are listed | `KEEP` (one provider's category ids, which only apply on that provider), `AUTO_REGION` and `AUTO_TOPIC` (picked by name on any provider), or `EXTRA_CATEGORIES` in `.env` |
+| The groups, their names and order | `B` (a list of all the groups), `CAT_BUCKET`, `bucketForCategory` |
+| Which language's feed comes first | `languageRank`, `regionPref` |
+| The 🏆 league and cup groups | `COMPS` |
+| Which films are listed | `MOVIE_4K` (4K categories), `ufcReplays` |
+
+Out of the box, on any provider other than the original, the server lists UK, ES, DE, IT, FR and AR football, tennis, UFC and general sport categories, as long as their names start with a region prefix like `UK|`, `UK |` or `UK:`. For anything else, either set `EXTRA_CATEGORIES` (a regex over category names; each match becomes its own group) or edit the rules above. To see your provider's category names:
 
 ```sh
 curl -s "$XTREAM_HOST/player_api.php?username=$XTREAM_USER&password=$XTREAM_PASS&action=get_live_categories" | jq -r '.[].category_name'

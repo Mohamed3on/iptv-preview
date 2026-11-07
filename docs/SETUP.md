@@ -1,6 +1,6 @@
 # Setting up your own
 
-What you get: a small server that turns an Xtream Codes subscription into a trimmed, quality-sorted sports playlist and guide (for TiviMate or any IPTV player), and optionally the Fire TV app in `firetv/`, which reads the same server and adds a Movies & Shows library.
+Sofa has two parts. The server (steps 1–4) turns an Xtream Codes subscription into a trimmed, quality-sorted playlist and guide that works in TiviMate or any IPTV player. The Fire TV app in `firetv/` (step 5, optional) plays from that same server and adds a Movies & Shows library.
 
 ## What you need
 

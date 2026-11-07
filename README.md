@@ -1,10 +1,10 @@
 # Sofa
 
-Your Xtream Codes IPTV subscription, cut down to what you actually watch: a clean playlist and guide for any IPTV player, and Sofa, a Fire TV app built around live sport and films.
+Sofa cuts your Xtream Codes IPTV subscription down to what you actually watch. It has two parts: a small server you host, which does the trimming, ranking and guide work, and a Fire TV app that plays the result. The server's playlist also works on its own in any IPTV player, so the app is optional.
 
 ## What you get
 
-**In any IPTV player** (TiviMate, VLC, …)
+**In any IPTV player** (TiviMate, VLC, …), from the server alone
 
 - Only the channels you choose, in groups you name, instead of the provider's thousands.
 - A 🏆 group per league and cup (Premier League, Champions League, …), learned each day from the guide: every channel showing that competition, from any country.
@@ -12,7 +12,7 @@ Your Xtream Codes IPTV subscription, cut down to what you actually watch: a clea
 - A fuller guide: copies of a channel share its programmes, and match slots show the match on them.
 - 4K films and UFC replays as on-demand entries.
 
-**In Sofa, the Fire TV app** (Fire OS 8 or later, remote only)
+**In the Fire TV app** (Fire OS 8 or later, remote only), everything above plus
 
 - Live now: the matches on right now, one press away.
 - Channel groups, favourites, recent channels, and multi-view of up to 3 channels.
@@ -21,7 +21,7 @@ Your Xtream Codes IPTV subscription, cut down to what you actually watch: a clea
 - Asks "Still watching?" after a while, so a forgotten TV doesn't hold your account's connection.
 - Installs once over adb, then updates itself.
 
-**Movies & Shows in Sofa** (needs `TMDB_TOKEN`; without it, only the provider's own groups)
+**Movies & Shows in the app** (needs `TMDB_TOKEN`; without it, only the provider's own groups)
 
 - Rows for your Watchlist, trending, new releases, genres and languages; title pages with plot, cast, trailer and episodes; voice search.
 - IMDb and Letterboxd scores (needs `MDBLIST_KEY`).

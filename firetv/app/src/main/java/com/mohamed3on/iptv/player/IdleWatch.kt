@@ -18,15 +18,23 @@ enum class Idle {
 /**
  * The idle stop (R24): after [IDLE_MS] without a remote press the app asks "Still watching?",
  * and if nobody answers within [ANSWER_MS] it calls [stopAll]. A forgotten TV then doesn't hold
- * the account's one connection all night. Call from the main thread; [scope] runs the timers.
+ * the account's one connection all night. Playback outside the live screen (a film) joins with
+ * [alsoStop]. Call from the main thread; [scope] runs the timers.
  */
 class IdleWatch(private val scope: CoroutineScope, private val stopAll: () -> Unit) {
     private val _state = MutableStateFlow(Idle.Watching)
     val state: StateFlow<Idle> = _state
     private var timer: Job? = null
+    private val stops = mutableListOf<() -> Unit>()
 
     init {
         watch()
+    }
+
+    /** [stop] runs too when the idle stop fires, until the returned function is called. */
+    fun alsoStop(stop: () -> Unit): () -> Unit {
+        stops += stop
+        return { stops -= stop }
     }
 
     /** Any key event: restarts the 4h timer and answers the prompt. Ignored once timed out. */
@@ -45,10 +53,11 @@ class IdleWatch(private val scope: CoroutineScope, private val stopAll: () -> Un
             delay(ANSWER_MS)
             _state.value = Idle.TimedOut
             stopAll()
+            stops.toList().forEach { it() }
         }
     }
 
-    private companion object {
+    companion object {
         const val IDLE_MS = 4 * 60 * 60_000L
         const val ANSWER_MS = 60_000L
     }

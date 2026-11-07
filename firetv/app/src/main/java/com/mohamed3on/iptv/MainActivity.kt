@@ -33,6 +33,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -74,6 +75,7 @@ import com.mohamed3on.iptv.player.IdleWatch
 import com.mohamed3on.iptv.player.Phase
 import com.mohamed3on.iptv.player.PlayerPool
 import com.mohamed3on.iptv.player.StreamSession
+import com.mohamed3on.iptv.ui.LocalIdleWatch
 import com.mohamed3on.iptv.ui.MultiView
 import com.mohamed3on.iptv.ui.PlayerScreen
 import com.mohamed3on.iptv.ui.theme.IptvTheme
@@ -119,12 +121,15 @@ class MainActivity : ComponentActivity() {
             val state by sync.state.collectAsState()
             val playing by session.collectAsState()
             val tracks by audio.collectAsState()
-            val idleState = idle.collectAsState().value?.state?.collectAsState()?.value
+            val idleWatch by idle.collectAsState()
+            val idleState = idleWatch?.state?.collectAsState()?.value
             val liveQuality by live.collectAsState()
             val streamHealth by health.collectAsState()
             val shape by aspect.collectAsState()
             IptvTheme(reducedMotion = Motion.reducedMotion(this)) {
-                Root(state, playing, tracks, surface, shape, tiles, liveQuality, streamHealth, idleState, onRetry = { graph.scope.launch { sync.retry() } })
+                CompositionLocalProvider(LocalIdleWatch provides idleWatch) {
+                    Root(state, playing, tracks, surface, shape, tiles, liveQuality, streamHealth, idleState, onRetry = { graph.scope.launch { sync.retry() } })
+                }
             }
         }
         // While visible: on resume refresh anything older than 1h, then channels every 30 min, guide every 3h.

@@ -44,6 +44,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -119,6 +120,7 @@ import com.mohamed3on.iptv.player.ExoFilmPlayer
 import com.mohamed3on.iptv.player.FilmPhase
 import com.mohamed3on.iptv.player.FilmSession
 import com.mohamed3on.iptv.player.FilmState
+import com.mohamed3on.iptv.player.IdleWatch
 import com.mohamed3on.iptv.player.Notice
 import com.mohamed3on.iptv.player.OfferKind
 import com.mohamed3on.iptv.player.Place
@@ -163,6 +165,9 @@ private class MovieState {
     /** Whether it ever played: only then is its place worth saving. */
     var started = false
 }
+
+/** The app's idle stop (R24), while the player is up; a film joins it as live TV does. */
+internal val LocalIdleWatch = compositionLocalOf<IdleWatch?> { null }
 
 /**
  * A movie full screen (v2): [title] from [from] (ms), on the best copy a [FilmSession] finds (the
@@ -315,6 +320,16 @@ internal fun MoviePlayback(
         save()
         session.stop()
         close()
+    }
+    // The idle stop (4 hours without a key) stops a film the same way, so a forgotten TV lets the stream go.
+    val idle = LocalIdleWatch.current
+    DisposableEffect(idle) {
+        val leave = idle?.alsoStop {
+            save()
+            session.stop()
+            close()
+        }
+        onDispose { leave?.invoke() }
     }
     LaunchedEffect(ui.started) {
         if (!ui.started || !films) return@LaunchedEffect

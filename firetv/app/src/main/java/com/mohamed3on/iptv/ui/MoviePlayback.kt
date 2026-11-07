@@ -386,7 +386,7 @@ internal fun MoviePlayback(
             val audioState by audio.state.collectAsState()
             val subtitleState by subtitles.state.collectAsState()
             val filmState by session.state.collectAsState()
-            val prepared by remember(title) { graph.films.state(title) }.collectAsState()
+            val prepared by opened.plan.state.collectAsState()
             MoviePanel(
                 audioState,
                 subtitleState,
@@ -411,15 +411,12 @@ internal fun MoviePlayback(
                 modifier = Modifier.slideFade({ shown.value }, Edge.Right, reduced),
             ) { first ->
                 Versions(
-                    title, VersionsData(filmState.ranking, filmState.rd, prepared.answer, filmState.copy?.id), first,
+                    title, VersionsData(prepared, filmState.copy?.id), first,
                     onChoose = {
                         panel = false
                         session.choose(it.id)
                     },
-                    onChanged = {
-                        session.rerank()
-                        graph.films.rerank(title)
-                    },
+                    onChanged = opened.plan::rerank,
                     modifier = Modifier.weight(1f),
                 )
             }

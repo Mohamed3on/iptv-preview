@@ -57,7 +57,7 @@ import com.mohamed3on.iptv.player.Ranking
 import com.mohamed3on.iptv.player.Support
 import com.mohamed3on.iptv.player.TitleAnswer
 import com.mohamed3on.iptv.player.DAY
-import com.mohamed3on.iptv.player.playable
+import com.mohamed3on.iptv.player.Prepared
 import java.time.Instant
 import com.mohamed3on.iptv.ui.theme.ActivityLine
 import com.mohamed3on.iptv.ui.theme.Palette
@@ -67,7 +67,13 @@ import com.mohamed3on.iptv.ui.theme.Type
 import kotlin.math.roundToInt
 
 /** What Versions lists: a title's ranking, Real-Debrid's answers, the box's answer (sizes, names) and the copy playing, if any. */
-class VersionsData(val ranking: Ranking?, val rd: Map<String, RdCheck>, val answer: TitleAnswer?, val playing: String? = null, val failed: Boolean = false)
+/** A title's [Prepared] copy plan for Versions, and the copy [playing] in the player. */
+class VersionsData(val prepared: Prepared, val playing: String? = null) {
+    val ranking get() = prepared.ranking
+    val rd get() = prepared.rd
+    val answer get() = prepared.answer
+    val failed get() = prepared.failed
+}
 
 /** How a copy stands here, in the order Versions groups them (R11). */
 private enum class Standing(private val label: String) {
@@ -78,7 +84,7 @@ private enum class Standing(private val label: String) {
 /** A cached Real-Debrid copy not checked yet stands with the copies that play: it likely does. */
 private fun standing(r: Ranked, data: VersionsData) = when {
     r.support == Support.Wont -> Standing.Wont
-    !data.answer?.copies.playable(r.copy, data.rd) -> Standing.NotReady
+    !data.prepared.playable(r.copy) -> Standing.NotReady
     r.support == Support.Unsure -> Standing.Untested
     else -> Standing.Plays
 }
@@ -115,7 +121,7 @@ internal fun Versions(title: String, data: VersionsData, first: FocusRequester, 
     // A spread first: each group's best copy of each kind (so 1080p and SDR show beside the 4K remuxes); "Show all" has the rest.
     val spread = remember(rows) { rows.distinctBy { (r, s) -> s to kind(r.copy) }.mapTo(HashSet()) { it.first.copy.id } }
     // Reasons are worded against the copy Play opens, as the Plays line names it: the best one that can play.
-    val plays = ranking?.copies?.firstOrNull { (it.support != Support.Wont || it.pinned) && data.answer?.copies.playable(it.copy, data.rd) }?.copy?.id
+    val plays = data.prepared.pick()?.copy?.id
     val state = rememberLazyListState()
     val shown = if (all) rows else rows.filter { it.first.copy.id in spread }
     val firstMore = if (all) shown.firstOrNull { it.first.copy.id !in spread }?.first?.copy?.id else null
@@ -242,7 +248,7 @@ internal fun VersionsPanel(title: String, onPlay: () -> Unit, onClose: () -> Uni
     ) {
         Text("Versions", style = Type.title, modifier = Modifier.padding(start = Space.l, bottom = Space.l))
         Versions(
-            title, VersionsData(p.ranking, p.rd, p.answer, failed = p.failed), first,
+            title, VersionsData(p), first,
             onChoose = {
                 graph.copyChoices.pin(title, it.id)
                 onClose()

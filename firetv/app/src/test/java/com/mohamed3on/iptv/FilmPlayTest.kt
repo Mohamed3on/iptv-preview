@@ -7,6 +7,8 @@ import com.mohamed3on.iptv.data.WatchedStore
 import com.mohamed3on.iptv.player.Capacity.Source.Iptv
 import com.mohamed3on.iptv.player.Copy
 import com.mohamed3on.iptv.player.CopyChoices
+import com.mohamed3on.iptv.player.CopyPlan
+import com.mohamed3on.iptv.player.TitleAnswer
 import com.mohamed3on.iptv.player.FilmPlay
 import com.mohamed3on.iptv.player.FilmSession
 import com.mohamed3on.iptv.player.Hdr
@@ -16,7 +18,6 @@ import com.mohamed3on.iptv.player.PlayStores
 import com.mohamed3on.iptv.player.SetupProfile
 import com.mohamed3on.iptv.player.TitleCopies
 import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
@@ -39,10 +40,10 @@ class FilmPlayTest {
 
     private fun TestScope.rig(of: PlayOf): Rig {
         val player = FakeFilm(backgroundScope) { testScheduler.currentTime }
-        val session = FilmSession(
-            of.id, "en", player, CopyChoices(MapStore()) { testScheduler.currentTime }, { tv }, FakeBandwidth(), FakeDebrid(),
-            { "http://iptv.test/${it.id}" }, backgroundScope, { testScheduler.currentTime },
-        )
+        val choices = CopyChoices(MapStore()) { testScheduler.currentTime }
+        val plan = CopyPlan(of.id, FakeDebrid(), choices, { tv }, { null }, backgroundScope, { testScheduler.currentTime })
+        plan.answered(TitleAnswer(TitleCopies(listOf(Copy("iptv:1", Iptv, 1080)), originalLanguage = "en")))
+        val session = FilmSession(of.id, plan, player, choices, { tv }, FakeBandwidth(), { "http://iptv.test/${it.id}" }, backgroundScope, { testScheduler.currentTime })
         val store = MapStore()
         val trakt = mutableListOf<String>()
         val events = mutableListOf<String>()
@@ -51,7 +52,7 @@ class FilmPlayTest {
             ResumeStore(store, "followed"), { trakt += it }, { testScheduler.currentTime },
         )
         val play = FilmPlay(of, player, session, stores, backgroundScope, { events += "ended" }, { events += "closed" })
-        play.start(Place(0, audio = "en"), { TitleCopies(listOf(Copy("iptv:1", Iptv, 1080))) }, null, emptyFlow())
+        play.start(Place(0, audio = "en"), null)
         runCurrent()
         return Rig(play, player, stores, trakt, events)
     }

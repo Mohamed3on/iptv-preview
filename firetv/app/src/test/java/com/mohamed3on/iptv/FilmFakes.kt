@@ -68,12 +68,17 @@ internal class FakeFilm(private val scope: CoroutineScope, private val clock: ()
 }
 
 /** Every Real-Debrid copy in the tests is in the account; links count up so a fresh one is visible. */
-internal class FakeDebrid : Debrid {
+/** The debrid has the torrents [ready] names (every one by default); links count up so a fresh one is visible. */
+internal class FakeDebrid(private val ready: (String) -> Boolean = { true }) : Debrid {
     override val status = MutableStateFlow(RdStatus.Ok)
     var links = 0
-    override suspend fun inAccount(candidates: List<RdCandidate>) = candidates.associateWith { RdCheck.Ready(it.hash, "hoster/${it.hash}") as RdCheck }
+    var checks = 0
+    override suspend fun inAccount(candidates: List<RdCandidate>) = check(candidates)
     override suspend fun probe(c: RdCandidate, wait: Boolean): RdCheck? = null
-    override suspend fun check(candidates: List<RdCandidate>) = inAccount(candidates)
+    override suspend fun check(candidates: List<RdCandidate>): Map<RdCandidate, RdCheck> {
+        checks++
+        return candidates.associateWith { if (ready(it.hash)) RdCheck.Ready(it.hash, "hoster/${it.hash}") else RdCheck.NotCached }
+    }
     override suspend fun link(ready: RdCheck.Ready) = "https://rd.test/${ready.torrentId}/${++links}"
 }
 

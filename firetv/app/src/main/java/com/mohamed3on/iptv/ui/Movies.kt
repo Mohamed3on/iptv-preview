@@ -1938,7 +1938,7 @@ private fun PlaysLine(title: TitleId, fallback: List<String>?, modifier: Modifie
         delay(FilmSession.WAIT_MS)
         late = true
     }
-    val copy = p.plays ?: p.ranking?.takeIf { late }?.copies?.firstOrNull { it.copy.source == Capacity.Source.Iptv && (it.support != Support.Wont || it.pinned) }?.copy
+    val copy = p.plays ?: p.takeIf { late }?.pickWithoutWaiting()?.copy
     val text = when {
         copy != null -> copyLine(copy, p.answer)
         p.failed || (late && p.ranking == null) -> fallback?.joinToString(" · ")

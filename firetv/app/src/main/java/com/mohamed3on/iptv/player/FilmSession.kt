@@ -14,9 +14,8 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
@@ -97,28 +96,23 @@ data class FilmState(
 
 /**
  * One film play from first copy to end (U9, KTD11): failover at start, step-down after stalls, the
- * offers, trials and fresh Real-Debrid links. Copies come from [load] within [WAIT_MS], else [play]'s
- * fallback IPTV copy starts; copies arriving later feed failover, Versions and offers (KTD13). The first copy opens
- * as soon as a ranking exists; Real-Debrid's check runs alongside, and the next copy's link is fetched
- * while this one plays, so failover rarely waits. One session per play; call from the main thread, with
- * [scope] there too. Only permanent faults, and trials (a failure in one too), write marks (KTD7, R28).
+ * offers, trials and fresh debrid links. What plays and what comes next on failure are the title's [plan]'s
+ * answers (#14), the same the Plays line and Versions show: its copies within [WAIT_MS], else [play]'s
+ * fallback IPTV copy starts; copies arriving later feed failover, Versions and offers (KTD13). The plan checks
+ * the debrid copies and fetches links ahead, so failover rarely waits. One session per play; call from the main
+ * thread, with [scope] there too. Only permanent faults, and trials (a failure in one too), write marks (KTD7, R28).
  */
 class FilmSession(
     private val titleId: String,
-    /** The title's original language until copies name it (R2). */
-    private var originalLanguage: String?,
+    private val plan: CopyPlan,
     private val player: FilmPlayer,
     private val choices: CopyChoices,
     private val setup: () -> SetupProfile,
     private val bandwidth: Bandwidth,
-    private val debrid: Debrid,
     private val iptvUrl: (Copy) -> String,
     scope: CoroutineScope,
-    /** Wall-clock ms: hour bands of typical bandwidth key on it. */
     private val now: () -> Long,
     private val report: (FilmEvent) -> Unit = {},
-    /** A Real-Debrid copy's link fetched before Play (the title page's, [FilmCopies.link]), else null. */
-    private val ahead: suspend (Copy) -> String? = { null },
 ) {
     private val _state = MutableStateFlow(FilmState())
     val state: StateFlow<FilmState> = _state
@@ -129,13 +123,8 @@ class FilmSession(
     private var work: Job? = null
 
     private var phase = FilmPhase.Stopped
-    private var copies = emptyList<Copy>()
-    private var torrents = emptyMap<String, RdCandidate>()
-    private var ranking: Ranking? = null
-    private val rd = mutableMapOf<String, RdCheck>()
-    private var checking: Deferred<Unit>? = null
-    /** Links fetched ahead for the copies a failover or step-down would open. */
-    private val links = mutableMapOf<String, Pair<Long, Deferred<String?>>>()
+    /** Copies already marked for a permanent debrid refusal. */
+    private val faulted = mutableSetOf<String>()
 
     private var current: Copy? = null
     /** Whether the open copy's player events still count. */
@@ -187,10 +176,10 @@ class FilmSession(
     }
 
     /**
-     * Plays the title from [from]: the best copy [load] ranks, or [fallback] (its IPTV copy from the cached library) if
-     * copies take longer than [WAIT_MS]; with no fallback it waits for them. [later] answers join the ranking as they come.
+     * Plays the title from [from]: the best copy the plan ranks, or [fallback] (its IPTV copy from the cached library) if
+     * copies take longer than [WAIT_MS]; with no fallback it waits for them. Copies arriving later join as they come.
      */
-    fun play(from: Place, load: suspend () -> TitleCopies, fallback: Copy? = null, later: Flow<TitleCopies> = emptyFlow()) {
+    fun play(from: Place, fallback: Copy? = null) {
         phase = FilmPhase.Loading
         startBy = now() + WAIT_MS
         publish()
@@ -200,19 +189,19 @@ class FilmSession(
                 tick()
             }
         }
-        val loading = jobs.async {
-            try {
-                load()
-            } catch (e: Exception) {
-                if (e is CancellationException) throw e
-                null
+        // Versions follows the plan; a play's next link is fetched ahead as its answers change.
+        jobs.launch {
+            plan.state.collect {
+                it.answer?.copies?.intro?.let { w -> intro = w }
+                faults(it)
+                publish()
+                prepare()
             }
         }
+        plan.fallback(fallback)
         work = jobs.launch {
-            val got = if (fallback == null) loading.await() else withTimeoutOrNull(WAIT_MS) { loading.await() }
-            arrived(got ?: TitleCopies(emptyList()), fallback)
-            if (got == null) jobs.launch { loading.await()?.let { arrived(it, fallback) } }
-            jobs.launch { later.collect { arrived(it, fallback) } }
+            val loaded = suspend { plan.state.first { it.failed || it.asked || it.answer?.copies?.copies?.isNotEmpty() == true } }
+            if (fallback == null) loaded() else withTimeoutOrNull(WAIT_MS) { loaded() }
             next(from)
         }
     }
@@ -255,7 +244,7 @@ class FilmSession(
     fun choose(copyId: String) {
         choices.pin(titleId, copyId)
         rerank()
-        val to = copies.firstOrNull { it.id == copyId } ?: return
+        val to = plan.state.value.ranking?.copies?.firstOrNull { it.copy.id == copyId }?.copy ?: return
         if (to.id != current?.id || phase != FilmPhase.Playing) switch(to, back = current.takeIf { phase == FilmPhase.Playing }, trial = false)
     }
 
@@ -275,7 +264,6 @@ class FilmSession(
 
     /** The network or VPN changed: a Real-Debrid link is tied to the old IP, so it is fetched afresh (KTD2). */
     fun ipChanged() {
-        links.clear()
         val copy = current ?: return
         if (copy.source != Source.RealDebrid || phase != FilmPhase.Playing) return
         if (pausedAt != null) stale = true else reopen(copy, player.place)
@@ -289,11 +277,8 @@ class FilmSession(
         panel = open
     }
 
-    /** Re-ranks after a mark, correction or setup change made outside the session (Versions). */
-    fun rerank() {
-        ranking = choices.rank(titleId, copies, originalLanguage, setup(), ::typical)
-        publish()
-    }
+    /** Re-ranks after a mark, pin or trial: the plan's ranking, so the title page follows. */
+    private fun rerank() = plan.rerank()
 
     fun stop() {
         jobs.cancel()
@@ -303,15 +288,6 @@ class FilmSession(
         publish()
     }
 
-    private fun arrived(t: TitleCopies, fallback: Copy?) {
-        copies = t.copies + listOfNotNull(fallback?.takeIf { f -> t.copies.none { it.id == f.id } })
-        torrents = t.rd
-        t.originalLanguage?.let { originalLanguage = it }
-        t.intro?.let { intro = it }
-        rerank()
-        check()
-    }
-
     /** Opens the best copy not yet tried at [place]; Unavailable when none is left. */
     private suspend fun next(place: Place) {
         while (true) {
@@ -319,8 +295,9 @@ class FilmSession(
             tried += r.copy.id
             val url = url(r.copy) ?: continue
             // R28: every original is untested, so the best of them plays as a trial with the working dub to go back to.
+            val ranking = plan.state.value.ranking
             val dub = ranking?.fallback?.copy
-            if (current == null && r === ranking?.pick && r.support == Support.Unsure && dub != null) {
+            if (current == null && r.copy.id == ranking?.pick?.copy?.id && r.support == Support.Unsure && dub != null) {
                 trial = true
                 back = dub
                 trialFrom = place.position
@@ -329,88 +306,47 @@ class FilmSession(
         }
     }
 
-    private fun candidate(): Ranked? {
-        val pin = choices.pin(titleId)
-        return ranking?.copies?.firstOrNull { r ->
-            val c = r.copy
-            c.id !in tried && (r.support != Support.Wont || c.id == pin) &&
-                if (c.source == Source.Iptv) !iptvBusy
-                else debrid.status.value != RdStatus.NotPremium && c.id in torrents && rd[c.id].let { it == null || it is RdCheck.Ready }
-        }
-    }
+    /** The plan's next copy: the best not yet tried that can play (no IPTV while the provider's connection is taken). */
+    private fun candidate(): Ranked? = plan.state.value.pick(tried, iptvBusy)
 
-    /** [copy]'s URL: IPTV's at once; Real-Debrid's once ready, from a link fetched ahead or a fresh one. Null when it can't play. */
+    /** [copy]'s URL: IPTV's at once; a debrid copy's once ready, from a link fetched ahead or a fresh one. Null when it can't play. */
     private suspend fun url(copy: Copy): String? {
         if (copy.source == Source.Iptv) return iptvUrl(copy)
-        val ready = ready(copy) ?: return null
-        links.remove(copy.id)?.takeIf { now() - it.first < LINK_MS }?.second?.await()?.let { return it }
-        if (current == null) ahead(copy)?.let { return it } // a retry gets a fresh one
-        repeat(2) {
-            try {
-                return debrid.link(ready)
-            } catch (e: RdError) {
-                if (e.permanent) return null.also { fault(copy) }
-            }
+        ready(copy) ?: return null
+        return try {
+            plan.link(copy)
+        } catch (e: RdError) {
+            null.also { fault(copy) }
         }
-        return null
     }
 
     private suspend fun ready(copy: Copy): RdCheck.Ready? {
-        if (copy.id !in rd) {
-            // While an IPTV copy could play instead, Real-Debrid gets no longer than copies do, and at the start only
+        if (copy.id !in plan.state.value.rd) {
+            // While an IPTV copy could play instead, the debrid gets no longer than copies do, and at the start only
             // what is left of Play's wait (KTD13).
-            val other = !iptvBusy && copies.any { it.source == Source.Iptv && it.id !in tried }
-            if (other) withTimeoutOrNull(if (current == null) startBy - now() else WAIT_MS) { checked(copy) } else checked(copy)
+            val other = !iptvBusy && plan.state.value.ranking?.copies.orEmpty().any { it.copy.source == Source.Iptv && it.copy.id !in tried }
+            if (other) withTimeoutOrNull(if (current == null) startBy - now() else WAIT_MS) { plan.check(copy) } else plan.check(copy)
         }
-        return rd[copy.id] as? RdCheck.Ready
+        faults(plan.state.value)
+        return plan.state.value.rd[copy.id] as? RdCheck.Ready
     }
 
-    private suspend fun checked(copy: Copy) {
-        checking?.await()
-        if (copy.id in rd) return
-        check()
-        checking?.await()
-        rd.getOrPut(copy.id) { RdCheck.NotCached } // first in the batch and still unanswered: the account refuses
-    }
-
-    /** Checks the unchecked Real-Debrid copies in rank order (the order of checks is [Debrid.check]'s). */
-    private fun check() {
-        if (checking?.isActive == true) return
-        val pin = choices.pin(titleId)
-        val list = ranking?.copies.orEmpty()
-            .filter { it.copy.id in torrents && it.copy.id !in rd && (it.support != Support.Wont || it.copy.id == pin) }.map { it.copy }
-        if (list.isEmpty()) return
-        checking = jobs.async {
-            val answers = try {
-                debrid.check(list.map { torrents.getValue(it.id) })
-            } catch (e: RdError) {
-                emptyMap()
-            }
-            for (c in list) answers[torrents.getValue(c.id)]?.let { rd[c.id] = it }
-            for (c in list) if ((rd[c.id] as? RdCheck.Failed)?.error?.permanent == true) fault(c)
-            publish()
-            prepare()
+    /** Copies the debrid refused for good, the title page's check included: marked once (KTD7), a pin on one cleared. */
+    private fun faults(p: Prepared) {
+        for (r in p.ranking?.copies.orEmpty()) {
+            if ((p.rd[r.copy.id] as? RdCheck.Failed)?.error?.permanent == true && faulted.add(r.copy.id)) fault(r.copy)
         }
     }
 
     /** Fetches links ahead for the copies a failover or a step-down would open next. */
     private fun prepare() {
         val copy = current?.takeIf { phase == FilmPhase.Playing } ?: return
-        for (r in listOfNotNull(candidate(), usable().lighter(copy))) {
-            val ready = rd[r.copy.id] as? RdCheck.Ready ?: continue
-            if (links[r.copy.id]?.let { now() - it.first < LINK_MS } == true) continue
-            links[r.copy.id] = now() to jobs.async {
-                try {
-                    debrid.link(ready)
-                } catch (e: RdError) {
-                    null
-                }
-            }
-        }
+        plan.prefetch(listOfNotNull(candidate()?.copy, usable().lighter(copy)?.copy))
     }
 
     private fun open(copy: Copy, url: String, at: Place) {
         // No language chosen yet: the film's own (R2), not the dub a multi-language file flags as default.
+        val originalLanguage = plan.state.value.answer?.copies?.originalLanguage
         val place = if (at.audio == null && originalLanguage != null) at.copy(audio = originalLanguage) else at
         current = copy
         openPlace = place
@@ -469,7 +405,7 @@ class FilmSession(
     private fun reopen(copy: Copy, place: Place) {
         back = null
         trial = false
-        links.remove(copy.id)
+        plan.forget(copy) // a retry gets a fresh link
         restart { url(copy)?.let { open(copy, it, place) } ?: next(place) }
     }
 
@@ -612,13 +548,12 @@ class FilmSession(
 
     private fun here() = if (phase == FilmPhase.Playing) player.place else openPlace
 
-    private fun typical(source: Source) = bandwidth.typicalMbps(source, now())
-
-    /** The copies that can play now: IPTV's, and Real-Debrid's that are ready (R1). */
-    private fun usable() = choices.rank(titleId, copies.filter { it.source == Source.Iptv || rd[it.id] is RdCheck.Ready }, originalLanguage, setup(), ::typical)
+    /** The copies that can play now: IPTV's, and the debrid's that are ready (R1). */
+    private fun usable() = plan.usable()
 
     private fun publish() {
-        _state.value = FilmState(phase, current, ranking, rd.toMap(), trial, notices.firstOrNull())
+        val p = plan.state.value
+        _state.value = FilmState(phase, current, p.ranking, p.rd, trial, notices.firstOrNull())
     }
 
     companion object {
@@ -638,7 +573,5 @@ class FilmSession(
         private const val SETTLE_MS = 10_000L
         private const val TRIAL_MS = 30_000L
         private const val PAUSE_MS = 10 * 60_000L
-        /** A link fetched ahead is used within this long, the same as a pause that forces a fresh one. */
-        private const val LINK_MS = PAUSE_MS
     }
 }

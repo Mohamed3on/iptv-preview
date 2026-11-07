@@ -22,16 +22,6 @@ import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
-/** Real-Debrid has the torrents named in [ready]; the rest aren't cached. */
-private class ReadyDebrid(private val ready: Set<String>) : Debrid {
-    override val status = MutableStateFlow(RdStatus.Ok)
-    override suspend fun inAccount(candidates: List<RdCandidate>) = emptyMap<RdCandidate, RdCheck>()
-    override suspend fun probe(c: RdCandidate, wait: Boolean): RdCheck? = null
-    override suspend fun check(candidates: List<RdCandidate>) =
-        candidates.associateWith { if (it.hash in ready) RdCheck.Ready(it.hash, "hoster/${it.hash}") else RdCheck.NotCached }
-    override suspend fun link(ready: RdCheck.Ready) = ready.link
-}
-
 @OptIn(ExperimentalCoroutinesApi::class)
 class FilmCopiesTest {
     private val tv = SetupProfile("TV", setOf(Hdr.Hdr10), setOf(5, 8), setOf("video/hevc", "video/avc"), setOf(Passthrough.Ac3, Passthrough.EAc3), 8)
@@ -60,7 +50,7 @@ class FilmCopiesTest {
                 asks++
                 Result.success(CopiesAnswer("movie:1", "en", sources = CopySources(rd = if (asks == 1) "pending" else "ok"), copies = if (asks == 1) listOf(iptv) else listOf(iptv, rd4k)))
             },
-            debrid = ReadyDebrid(ready), choices = CopyChoices(MapStore()), capacity = Capacity(MapStore()), setup = { tv }, scope = backgroundScope,
+            debrid = FakeDebrid { it in ready }, choices = CopyChoices(MapStore()), capacity = Capacity(MapStore()), setup = { tv }, scope = backgroundScope,
         )
         val ready = copies(setOf("aa")).state("movie:1")
         runCurrent()

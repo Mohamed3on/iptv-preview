@@ -80,8 +80,8 @@ class FilmPlay(
     private var saved = -1L
     private var closed = false
 
-    /** Plays from [from], the session's copies as [FilmSession.play] takes them. */
-    fun start(from: Place, load: suspend () -> TitleCopies, fallback: Copy?, later: Flow<TitleCopies>) {
+    /** Plays from [from]; [fallback] is the library's IPTV copy, for when the box can't say what else there is. */
+    fun start(from: Place, fallback: Copy?) {
         jobs.launch { ipChanges.collect { session.ipChanged() } }
         jobs.launch { premiumEnded.collect { session.inform(Notice.PremiumEnded) } }
         jobs.launch {
@@ -106,7 +106,7 @@ class FilmPlay(
                 if (player.place.position != saved) save()
             }
         }
-        session.play(from, load, fallback, later)
+        session.play(from, fallback)
     }
 
     /** Keeps the place, if it ever played. */
@@ -176,7 +176,7 @@ class FilmPlay(
 }
 
 /** A play on the stick's ExoPlayer: [play] and the decoder-bound parts the player screen draws. */
-class ExoFilmPlay(val exo: ExoPlayer, val play: FilmPlay, val audio: AudioTracks, val subtitles: SubtitleTracks, val fetched: SubtitleFetch, private val begin: () -> Unit) {
+class ExoFilmPlay(val exo: ExoPlayer, val play: FilmPlay, val plan: CopyPlan, val audio: AudioTracks, val subtitles: SubtitleTracks, val fetched: SubtitleFetch, private val begin: () -> Unit) {
     /** Starts the play, once the screen listens. */
     fun start() = begin()
 }
@@ -198,10 +198,9 @@ fun openFilmPlay(
     val exo = moviePlayer(context, graph.http, graph.filmHeads, load) { fileBytes.compareAndSet(0, it) }
     val film = ExoFilmPlayer(exo)
     val setup = graph.setup
-    val session = FilmSession(title, null, film, graph.copyChoices, { setup.profile.value }, meter, graph.debrid, iptvUrl, scope, System::currentTimeMillis, graph.telemetry::film) {
-        graph.films.link(title, it.id)
-    }
-    val fetched = SubtitleFetch(exo, graph.http, graph.sync, scope, { graph.films.state(title).value.answer?.copies?.originalLanguage }) {
+    val plan = graph.films.plan(title)
+    val session = FilmSession(title, plan, film, graph.copyChoices, { setup.profile.value }, meter, iptvUrl, scope, System::currentTimeMillis, graph.telemetry::film)
+    val fetched = SubtitleFetch(exo, graph.http, graph.sync, scope, { plan.state.value.answer?.copies?.originalLanguage }) {
         session.inform(Notice.Subtitles(it.lang))
     }
     val audio = AudioTracks(exo)
@@ -221,7 +220,7 @@ fun openFilmPlay(
             val copy = session.state.value.copy ?: return
             val url = mediaItem?.localConfiguration?.uri?.toString() ?: return
             if (!play.started) Check.log("film_open", "src" to copy.source)
-            fetched.find(title, copy.id, url, graph.films.state(title).value.answer?.name(copy.id).orEmpty())
+            fetched.find(title, copy.id, url, plan.state.value.answer?.name(copy.id).orEmpty())
         }
     }
     exo.addListener(listener)
@@ -251,8 +250,6 @@ fun openFilmPlay(
         },
         release = {
             parts.cancel()
-            // Marks, pins and trials made while it played: the title page's Plays line follows them.
-            graph.films.rerank(title)
             audio.release()
             subtitles.release()
             fetched.release()
@@ -262,8 +259,8 @@ fun openFilmPlay(
             meter.finish().forEach { (bucket, mbps) -> Log.i("IptvCapacity", "${bucket.first} ${bucket.second}: $mbps Mbps") }
         },
     )
-    return ExoFilmPlay(exo, play, audio, subtitles, fetched) {
-        play.start(Place(from), load = { graph.films.load(title) }, fallback = fallback, later = graph.films.answers(title))
+    return ExoFilmPlay(exo, play, plan, audio, subtitles, fetched) {
+        play.start(Place(from), fallback)
     }
 }
 

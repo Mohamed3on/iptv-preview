@@ -8,6 +8,8 @@ import com.mohamed3on.iptv.player.Capacity.Source.Iptv
 import com.mohamed3on.iptv.player.Capacity.Source.RealDebrid
 import com.mohamed3on.iptv.player.Copy
 import com.mohamed3on.iptv.player.CopyChoices
+import com.mohamed3on.iptv.player.CopyPlan
+import com.mohamed3on.iptv.player.TitleAnswer
 import com.mohamed3on.iptv.player.FilmPhase
 import com.mohamed3on.iptv.player.FilmSession
 import com.mohamed3on.iptv.player.Hdr
@@ -49,28 +51,32 @@ class FilmSessionTest {
     private val dv = Copy("rd:dv", RealDebrid, 2160, listOf("DV"), codec = "hevc", audio = "eac3", channels = 6, mbps = 40f)
     private val iptvHdr = Copy("iptv:hdr", Iptv, 2160, listOf("HDR10"), codec = "hevc", audio = "eac3", channels = 6, mbps = 20f)
 
-    private class Rig(val session: FilmSession, val player: FakeFilm, val debrid: FakeDebrid, val choices: CopyChoices, val net: FakeBandwidth) {
+    private class Rig(val session: FilmSession, val plan: CopyPlan, val player: FakeFilm, val debrid: FakeDebrid, val choices: CopyChoices, val net: FakeBandwidth) {
         val state get() = session.state.value
         val urls get() = player.opens.map { it.first }
     }
 
-    private fun TestScope.rig(setup: SetupProfile = tv): Rig {
+    private fun TestScope.rig(setup: SetupProfile = tv, debrid: FakeDebrid = FakeDebrid()): Rig {
         val player = FakeFilm(backgroundScope) { testScheduler.currentTime }
-        val debrid = FakeDebrid()
         val choices = CopyChoices(MapStore()) { testScheduler.currentTime }
         val net = FakeBandwidth()
+        val plan = CopyPlan("movie:1", debrid, choices, { setup }, { null }, backgroundScope, { testScheduler.currentTime })
         val session = FilmSession(
-            "movie:1", "en", player, choices, { setup }, net, debrid, { "http://iptv.test/${it.id}" }, backgroundScope,
+            "movie:1", plan, player, choices, { setup }, net, { "http://iptv.test/${it.id}" }, backgroundScope,
             { testScheduler.currentTime },
         )
-        return Rig(session, player, debrid, choices, net)
+        return Rig(session, plan, player, debrid, choices, net)
     }
 
     private fun titleCopies(vararg copies: Copy) =
-        TitleCopies(copies.toList(), copies.filter { it.source == RealDebrid }.associate { it.id to RdCandidate(it.id, null) })
+        TitleCopies(copies.toList(), copies.filter { it.source == RealDebrid }.associate { it.id to RdCandidate(it.id, null) }, originalLanguage = "en")
+
+    /** The box answers with [copies]. */
+    private fun answer(r: Rig, vararg copies: Copy) = r.plan.answered(TitleAnswer(titleCopies(*copies)))
 
     private fun TestScope.play(r: Rig, vararg copies: Copy, from: Long = 0) {
-        r.session.play(Place(from, audio = "en"), { titleCopies(*copies) })
+        answer(r, *copies)
+        r.session.play(Place(from, audio = "en"))
         runCurrent()
     }
 
@@ -118,7 +124,8 @@ class FilmSessionTest {
     // R2: a multi-language file's default track is often a dub; a first play asks for the film's own language.
     @Test fun aFirstPlayAsksForTheOriginalLanguage() = runTest {
         val r = rig()
-        r.session.play(Place(0), { titleCopies(rd4k) })
+        answer(r, rd4k)
+        r.session.play(Place(0))
         runCurrent()
         assertEquals("en", r.player.opens.last().second.audio)
     }
@@ -241,10 +248,11 @@ class FilmSessionTest {
 
     @Test fun slowCopiesStartTheLibrarysIptvCopyAndLaterOnesDoNotSwitch() = runTest {
         val r = rig()
-        r.session.play(Place(0), {
+        backgroundScope.launch {
             delay(6_000)
-            titleCopies(rd4k, iptv1080)
-        }, fallback = iptv1080)
+            answer(r, rd4k, iptv1080)
+        }
+        r.session.play(Place(0), fallback = iptv1080)
         advance(FilmSession.WAIT_MS)
         assertEquals(listOf("http://iptv.test/iptv:1"), r.urls)
         advance(3_000)
@@ -256,14 +264,33 @@ class FilmSessionTest {
     // KTD13: Real-Debrid's copies, still pending when Play started, join the play when the box has them.
     @Test fun copiesArrivingAfterPlayJoinIt() = runTest {
         val r = rig()
-        r.session.play(Place(0), { titleCopies(iptv1080) }, later = flow {
+        answer(r, iptv1080)
+        r.session.play(Place(0))
+        backgroundScope.launch {
             delay(3_000)
-            emit(titleCopies(iptv1080, rd4k))
-        })
+            answer(r, iptv1080, rd4k)
+        }
         runCurrent()
         assertEquals(iptv1080, r.state.copy)
         advance(3_000)
         assertEquals(listOf(rd4k, iptv1080), r.state.ranking?.copies?.map { it.copy })
         assertTrue(r.state.rd[rd4k.id] is RdCheck.Ready)
+    }
+
+    // #14: the title page's Plays line, Versions and Play read one plan: what it names is what opens, after one debrid check.
+    @Test fun thePlaysLineNamesWhatPlayOpens() = runTest {
+        val r = rig(debrid = FakeDebrid(ready = { it != "rd:gone" }))
+        val gone = rd4k.copy(id = "rd:gone") // flagged cached, but the debrid no longer has it
+        val rd1080 = Copy("rd:b", RealDebrid, 1080, codec = "hevc", audio = "eac3", channels = 6, mbps = 8f)
+        val torrents = mapOf(gone.id to RdCandidate(gone.id, null, cached = true), rd1080.id to RdCandidate(rd1080.id, null))
+        r.plan.answered(TitleAnswer(TitleCopies(listOf(gone, rd1080, iptv1080), torrents, originalLanguage = "en")))
+        runCurrent()
+        val plays = r.plan.state.value.plays
+        assertEquals(rd1080, plays)
+        r.session.play(Place(0))
+        runCurrent()
+        assertEquals(plays, r.state.copy)
+        assertEquals(FilmPhase.Playing, r.state.phase)
+        assertEquals(1, r.debrid.checks)
     }
 }

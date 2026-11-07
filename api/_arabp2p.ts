@@ -427,6 +427,8 @@ async function tmdbFilm(title: string): Promise<number> {
 }
 
 let crawling: Promise<void> | null = null
+// Extra crawls (for the allowance) are 30 min apart at least, so a failing download can't repeat on every ask.
+let crawlStarted = 0
 /**
  * Reads the dubbed-films category (FIRST_PAGES the first time, then the newest pages until a known upload),
  * files each new upload under its TMDB film, gives each dubbed film's best copy a hash (Egyptian dubs and newest
@@ -434,6 +436,7 @@ let crawling: Promise<void> | null = null
  */
 function crawl(): Promise<void> {
   crawling ??= (async () => {
+    crawlStarted = Date.now()
     const s = await db()
     const dubs = (s.dubs ??= {})
     const fresh: Row[] = []
@@ -452,10 +455,7 @@ function crawl(): Promise<void> {
     }
     s.crawled = Date.now()
     await save()
-    const films = [...new Set(Object.values(dubs).filter(Boolean).map(String))]
-    const best = films.flatMap((id) => wanted(s.films[id]?.rows ?? [], s.torrents).slice(0, 1)).filter((r) => !s.torrents[r.id])
-      .sort((a, b) => Number(b.egyptian) - Number(a.egyptian) || Number(b.id) - Number(a.id))
-    for (const r of best) if (!s.bare?.[r.id] || allowance(s, true) > KEEP_FOR_ASKED) await resolve(r, true, KEEP_FOR_ASKED)
+    for (const r of unhashed(s)) if (!s.bare?.[r.id] || allowance(s, true) > KEEP_FOR_ASKED) await resolve(r, true, KEEP_FOR_ASKED)
     await onTorBox(dubHashes(s), s)
     await save()
   })()
@@ -463,6 +463,11 @@ function crawl(): Promise<void> {
     .finally(() => (crawling = null))
   return crawling
 }
+
+/** Each crawled dubbed film's best copy still without a hash: Egyptian dubs, then the newest, first. */
+const unhashed = (s: Store) => [...new Set(Object.values(s.dubs ?? {}).filter(Boolean).map(String))]
+  .flatMap((id) => wanted(s.films[id]?.rows ?? [], s.torrents).slice(0, 1)).filter((r) => !s.torrents[r.id])
+  .sort((a, b) => Number(b.egyptian) - Number(a.egyptian) || Number(b.id) - Number(a.id))
 
 /** The hashes of every dubbed copy known. */
 const dubHashes = (s: Store) => Object.values(s.films).flatMap((f) => f.rows.filter((r) => r.dub).flatMap((r) => {
@@ -495,8 +500,9 @@ export async function arabp2pCopies(tmdb: string, t: TmdbTitle): Promise<{ copie
   const arabic = t.originalLanguage === 'ar'
   if (!process.env.ARABP2P_USER || !process.env.ARABP2P_PASS) return { copies: [], pending: false }
   const s = await db()
-  // Any film asked for starts the day's crawl of the dubbed films, in the background.
-  if (Date.now() >= pausedUntil && Date.now() - (s.crawled ?? 0) > DAY_MS) crawl()
+  // Any film asked for starts the day's crawl of the dubbed films, in the background, and another (one page)
+  // whenever the allowance has room again while dubbed films wait for a hash.
+  if (Date.now() >= pausedUntil && (Date.now() - (s.crawled ?? 0) > DAY_MS || (Date.now() - crawlStarted > 30 * 60_000 && allowance(s, true) > KEEP_FOR_ASKED && unhashed(s).length))) crawl()
   if (!arabic && !t.genres.includes('Animation')) return { copies: [], pending: false }
   if (Date.now() >= pausedUntil && due(s, tmdb, !arabic)) refresh(tmdb, t, arabic)
   const known = (s.films[tmdb]?.rows ?? []).flatMap((row) => {

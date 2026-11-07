@@ -26,6 +26,7 @@ import com.mohamed3on.iptv.player.CopyChoices
 import com.mohamed3on.iptv.player.FilmCopies
 import com.mohamed3on.iptv.player.FilmHeads
 import com.mohamed3on.iptv.player.Telemetry
+import com.mohamed3on.iptv.data.Debrids
 import com.mohamed3on.iptv.data.RealDebrid
 import com.mohamed3on.iptv.data.TorBox
 import com.mohamed3on.iptv.player.Setup
@@ -117,11 +118,17 @@ class AppGraph(context: Context) {
     /** Trakt through the box: the Options sign-in and finished plays, queued until logged. */
     val trakt by lazy { TraktSync(http, BuildConfig.SERVER_URL, BuildConfig.APP_TOKEN, prefs, scope) }
     /**
-     * TorBox from the stick's own IP; one instance, so its account list and answers are shared. Real-Debrid's client
-     * ([RealDebrid], with `onInfringing = ::refused`) is the drop-in to go back to.
+     * TorBox and Real-Debrid, whichever has the copy ([Debrids]), each from the stick's own IP; one instance, so
+     * account lists and answers are shared.
      */
-    val debrid by lazy { TorBox(http, { sync.torboxToken }).also { scope.launch { it.readAccount() } } }
-    /** "TorBox premium has ended" shows once an app session. */
+    val debrid by lazy {
+        Debrids(
+            TorBox(http, { sync.torboxToken }).also { scope.launch { it.readAccount() } },
+            RealDebrid(http, { sync.realDebridToken }, onInfringing = ::refused).also { scope.launch { it.readAccount() } },
+            scope,
+        )
+    }
+    /** "TorBox premium has ended" shows once an app session, once both debrids are down. */
     val premiumEndedShown = java.util.concurrent.atomic.AtomicBoolean()
     /** Each title's copies, ranked and checked ahead of Play. Touch [setup] on the main thread first. */
     val films by lazy { FilmCopies(sync::copies, debrid, copyChoices, capacity, { setup.profile.value }, scope, ip = { vpnActive.value }, linked = filmHeads::fetch) }

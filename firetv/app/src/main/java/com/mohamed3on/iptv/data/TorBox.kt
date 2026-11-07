@@ -31,7 +31,7 @@ import java.util.concurrent.ConcurrentHashMap
 private val json = Json { ignoreUnknownKeys = true }
 
 /**
- * TorBox from the stick's own IP, in Real-Debrid's place behind [Debrid] (copies keep their "rd:" ids, so marks
+ * TorBox from the stick's own IP, beside Real-Debrid in [Debrids] (copies keep their "rd:" ids, so marks
  * carry over). A check asks TorBox which torrents it holds (checkcached), then adds the best of them with
  * `add_only_if_cached`, which never leaves an uncached download in the account; it needs no Torrentio flag, so
  * TorrentsDB's copies are checked too. [RdCheck.Ready.link] holds the TorBox file id. TorBox's file ids don't follow
@@ -43,6 +43,7 @@ class TorBox(
     private val base: String = "https://api.torbox.app/v1/api",
     private val now: () -> Long = System::currentTimeMillis,
 ) : Debrid {
+    override val name get() = "TorBox"
     private val _status = MutableStateFlow(RdStatus.Ok)
     override val status: StateFlow<RdStatus> = _status
 

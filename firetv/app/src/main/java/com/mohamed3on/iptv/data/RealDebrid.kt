@@ -39,6 +39,8 @@ sealed interface RdCheck {
 
 /** What the film session needs from Real-Debrid; faked in its tests. */
 interface Debrid {
+    /** The service's name, for labels. */
+    val name: String get() = "Real-Debrid"
     val status: StateFlow<RdStatus>
     /** Candidates already downloaded in the account: no adds, so cheap and safe. */
     suspend fun inAccount(candidates: List<RdCandidate>): Map<RdCandidate, RdCheck>

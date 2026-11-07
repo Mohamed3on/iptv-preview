@@ -1,6 +1,7 @@
 package com.mohamed3on.iptv.player
 
 import com.mohamed3on.iptv.data.KeyValueStore
+import com.mohamed3on.iptv.data.debridName
 import com.mohamed3on.iptv.player.Capacity.Source
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.decodeFromString
@@ -278,7 +279,7 @@ private fun difference(k: Int, r: Ranked, p: Ranked): String = when (k) {
     4 -> if (r.tier != p.tier) "${tierName(r.tier)} picture vs ${tierName(p.tier)} (${rate(r, p)})" else rate(r, p)
     5 -> if (r.sound == 0) r.why else "${SOUNDS[r.sound]} vs ${SOUNDS[p.sound]}"
     6 -> if (r.subs) "English subtitles, the pick has none" else "no English subtitles"
-    7 -> if (r.copy.source == Source.Iptv) "same, on IPTV" else "same, on TorBox"
+    7 -> if (r.copy.source == Source.Iptv) "same, on IPTV" else "same, on $debridName"
     8 -> "same, ${r.copy.seeds} vs ${p.copy.seeds} seeders"
     else -> ""
 }

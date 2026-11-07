@@ -17,7 +17,9 @@ import {
   withCompetitionGroups,
   type Channel,
 } from './_lib.js'
-import { LEARNED } from './competition-cache.js'
+
+// Learned competitions come from a fixture, never the learner's live output.
+process.env.COMPETITIONS_FILE = `${import.meta.dir}/fixtures/competitions.json`
 
 describe('sports playlist curation', () => {
   test('does not reintroduce expired 2026 tournament packages', () => {
@@ -282,7 +284,7 @@ describe('competition groups', () => {
   })
 
   test('an overflow channel (Sky Sports Golf) joins a competition only around its match', () => {
-    const [tvgId, { pl: seen }] = Object.entries(LEARNED).find(([, comps]) => comps.pl)!
+    const [tvgId, seen] = ['SkySportsGolf.uk', '2026-10-20']
     const at = (days: number) => Date.parse(seen) + days * 864e5
     const plNames = (name: string, now: number) =>
       withCompetitionGroups([{ streamId: 1, name, logo: '', tvgId, group: '🏴 Sky Sports & UK Sports', isEventSlot: false, q: 4 }], now)

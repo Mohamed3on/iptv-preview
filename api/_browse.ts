@@ -3,7 +3,7 @@
 // search over titles and category words, and a person's titles. Every title comes in the library's shape
 // (_library.ts LibTitle) with the tier and score the library knows for it.
 import { readFile } from 'node:fs/promises'
-import type { XtreamConfig } from './_lib.js'
+import type { XtreamConfig } from './_provider.js'
 import { fromTmdb, LIBRARY_FILE, LIBRARY_FULL_FILE, type LibTitle, type Library, type TmdbItem } from './_library.js'
 import { due, histogramShare, loadScores, scoreNow, scoreOf, scoreTitles, type Score, type ScoreCache } from './_scores.js'
 import { showList } from './_shows.js'

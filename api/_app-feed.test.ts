@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, setSystemTime, spyOn, test } from 'bun:test'
 import { buildAppFeed, buildAppGuide } from './_app-feed.js'
-import { BACKUP_ID, buildM3U, VPN_HOST, withBackupFeeds, withCompetitionGroups, type Channel } from './_lib.js'
+import { buildM3U, withBackupFeeds, withCompetitionGroups, type Channel } from './_lib.js'
+import { BACKUP_ID, VPN_HOST } from './_provider.js'
 import { Database } from 'bun:sqlite'
 import { rm } from 'node:fs/promises'
 import { channels as channelsRoute, guide as guideRoute } from './app.js'

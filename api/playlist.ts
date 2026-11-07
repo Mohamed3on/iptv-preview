@@ -3,17 +3,8 @@
 // Add &vpn=1 for a copy whose streams use the provider's VPN-only front, for watching with
 // a VPN on (the normal fronts block VPN IPs, and the VPN front blocks everyone else).
 // With a backup provider configured (XTREAM2_*), its feeds follow provider A's as spares.
-import {
-  backupConfigFromEnv,
-  buildM3U,
-  configFromEnv,
-  fetchCuratedChannels,
-  providerEpgUrl,
-  tokenOk,
-  VPN_HOST,
-  withBackupFeeds,
-  withCompetitionGroups,
-} from './_lib.js'
+import { buildM3U, fetchCuratedChannels, tokenOk, withBackupFeeds, withCompetitionGroups } from './_lib.js'
+import { backupConfigFromEnv, configFromEnv, guideUrl, VPN_HOST } from './_provider.js'
 
 export default async function handler(req: Request): Promise<Response> {
   if (!tokenOk(req.url)) return new Response('Forbidden', { status: 403 })
@@ -27,7 +18,7 @@ export default async function handler(req: Request): Promise<Response> {
     const ownEpg = `${proto}://${host}/api/epg?t=${process.env.PLAYLIST_TOKEN}`
     // EPG_URLS: comma-separated preferred EPG sources (e.g. myepg.top links);
     // falls back to the provider's xmltv. Own PPV epg is always appended.
-    const preferred = (process.env.EPG_URLS ?? providerEpgUrl(cfg)).split(',').filter(Boolean)
+    const preferred = (process.env.EPG_URLS ?? guideUrl(cfg)).split(',').filter(Boolean)
     const vpn = new URL(req.url).searchParams.get('vpn') === '1'
     const m3u = vpn
       ? buildM3U({ ...cfg, host: VPN_HOST }, channels, [...preferred, ownEpg], backup && { ...backup, host: backup.vpnHost })

@@ -10,7 +10,7 @@
 // Watchlist's runtimes (it is shown shortest first).
 // Usage: bun scripts/build-library.ts   (XTREAM_*, TMDB_TOKEN, TRAKT_CLIENT_ID, MDBLIST_KEY from env / .env.local)
 import { readFile } from 'node:fs/promises'
-import { configFromEnv } from '../api/_lib.js'
+import { configFromEnv } from '../api/_provider.js'
 import { assemble, fromTmdb, LIBRARY_FILE, LIBRARY_FULL_FILE, providerTitles, rowDefs, saveLibrary, withProviderCopies, type Library, type LibTitle, type TmdbItem } from '../api/_library.js'
 import { imdbTopShows, loadScores, onScreen, ranked, refreshScores, saveScores, scoreTitles, trueScoreRows, trueScoreShows, unscored } from '../api/_scores.js'
 import { parseTitleId, runtimeOf, tmdbGet, type Kind } from '../api/_tmdb.js'

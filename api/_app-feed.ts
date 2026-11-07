@@ -1,9 +1,9 @@
 // Builders for the Fire TV app's own feeds (/api/app/*). They read the same curated
 // channels and guide as the TiviMate feeds, so both apps always show the same thing.
 import { Database } from 'bun:sqlite'
-import { chanKey, COMPS, couldBeLiveMatch, learnedCompetitions, replayAirings, teamWords, saneFps, unxml, VPN_HOST, type BackupConfig, type Channel, type XtreamConfig } from './_lib.js'
-import { medianMbps } from './_quality.js'
-import { QUALITY } from './quality-cache.js'
+import { chanKey, COMPS, couldBeLiveMatch, learnedCompetitions, replayAirings, teamWords, saneFps, unxml, type Channel } from './_lib.js'
+import { VPN_HOST, type BackupConfig, type XtreamConfig } from './_provider.js'
+import { medianMbps, qualityOf } from './_quality.js'
 
 export interface AppChannel {
   id: number
@@ -46,7 +46,7 @@ export interface AppFeed {
 const isComp = (group: string) => group.startsWith('🏆')
 
 function badges(streamId: number): string[] {
-  const m = QUALITY[String(streamId)]
+  const m = qualityOf(streamId)
   if (!m) return []
   const out: string[] = []
   if (m.h >= 2160) out.push('4K')
@@ -89,11 +89,11 @@ export function buildAppFeed(cfg: XtreamConfig, channels: Channel[], backup?: Ba
         home: home.get(c.streamId),
         family,
         rank: members.get(family)!.indexOf(c.streamId),
-        h: QUALITY[String(c.streamId)]?.h ?? null,
+        h: qualityOf(c.streamId)?.h ?? null,
         q: c.q ?? 2,
         ...(c.isEventSlot && couldBeLiveMatch(c.name) ? { fixture: true as const } : {}),
         badges: badges(c.streamId),
-        mbps: medianMbps(QUALITY[String(c.streamId)]),
+        mbps: medianMbps(qualityOf(c.streamId)),
       }
     }),
   }

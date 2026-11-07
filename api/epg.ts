@@ -3,7 +3,6 @@
 // for our regular channels (scoped by exact id, so the payload stays small).
 import {
   buildEventEpg,
-  configFromEnv,
   fetchCuratedChannels,
   fetchMyepgGuide,
   fetchProviderEpg,
@@ -12,6 +11,7 @@ import {
   type Channel,
   type MyepgGuide,
 } from './_lib.js'
+import { configFromEnv } from './_provider.js'
 
 // The guide downloads (~47MB of myepg + the ~70MB provider guide) change slowly, and a
 // burst of them gets the myepg account blocked, so they are reused for 6h. The response

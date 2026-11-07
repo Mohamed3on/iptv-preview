@@ -7,7 +7,8 @@
 import { readFile, stat } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import { writeAtomic } from './_fs.js'
-import { savedVodChannels, MOVIE_4K, type XtreamConfig } from './_lib.js'
+import { vodChannels } from './_lib.js'
+import { claims4K, type XtreamConfig } from './_provider.js'
 import { measuredStream, pictureTier, probedPicture, type Tier } from './_quality-labels.js'
 import { measuredFilms, showList } from './_shows.js'
 import { filmTitle, showTitle, type Kind } from './_tmdb.js'
@@ -178,7 +179,7 @@ export function assemble(defs: RowDef[], seeds: LibTitle[][], provider: Provider
 /** The provider's 4K and Blu-ray films (tier measured on play, else the category's claim) and its shows. */
 export async function providerTitles(cfg: XtreamConfig): Promise<ProviderTitle[]> {
   const [vod, titleOf, bluray, shows, measured] = await Promise.all([
-    savedVodChannels(cfg), filmTitleOf(cfg), blurayMovies(cfg).catch(() => []), showList(cfg).catch(() => null), measuredFilms(),
+    vodChannels(cfg).catch(() => []), filmTitleOf(cfg), blurayMovies(cfg).catch(() => []), showList(cfg).catch(() => null), measuredFilms(),
   ])
   const film = (vodId: number, id: string, n: string, poster: string, group: string, claim: Tier): ProviderTitle => {
     const m = measured[String(vodId)]
@@ -186,7 +187,7 @@ export async function providerTitles(cfg: XtreamConfig): Promise<ProviderTitle[]
     return { t: { id, k: 'm', n, ...(poster && { p: image(poster) }), ...(t ? { t } : { t: claim, e: 1 as const }) }, group }
   }
   return [
-    ...vod.filter((c) => MOVIE_4K.test(c.group)).map((c) => film(c.streamId, titleOf(c.streamId), c.name, c.logo, c.group, 'Reference')),
+    ...vod.filter((c) => claims4K(c.group)).map((c) => film(c.streamId, titleOf(c.streamId), c.name, c.logo, c.group, 'Reference')),
     ...bluray.map((m) => film(m.id, m.titleId, m.name, m.poster, m.group, 'Great')),
     ...(shows?.movies ?? []).map((s) => ({ t: { id: s.titleId, k: 't' as const, n: s.name, ...(s.poster && { p: image(s.poster) }) }, group: s.group })),
   ]

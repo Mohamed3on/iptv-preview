@@ -1,8 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { rm } from 'node:fs/promises'
-import { addBitrate, medianMbps, mergeAppReading } from './_quality.js'
+import { addBitrate, allReadings, medianMbps, mergeAppReading, qualityOf, recordBitrate, recordProbed, recordReading } from './_quality.js'
 import { bitrate as bitrateRoute, events as eventsRoute, quality as qualityRoute } from './app.js'
-import { QUALITY } from './quality-cache.js'
 
 const today = '2026-11-01'
 const fresh = { w: 1920, h: 1080, fps: 25, codec: 'h264', name: 'A', at: '2026-10-30' }
@@ -55,18 +54,49 @@ describe('feed bitrates are the median of recent viewing', () => {
   })
 })
 
+describe('the store', () => {
+  const env = { ...process.env }
+  const dir = `${import.meta.dir}/../.cache/test-quality-store`
+  beforeEach(async () => {
+    process.env.QUALITY_FILE = `${dir}/quality.json`
+    await rm(dir, { recursive: true, force: true })
+  })
+  afterEach(async () => {
+    process.env = { ...env }
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  test('a reading the app records while the probe runs is still there after its merge', async () => {
+    await recordReading(1, reading({ fps: 25 }), '2026-10-01')
+    await recordReading(2, reading(), '2026-10-01')
+    const copy = allReadings() // the probe starts on a copy
+    await recordReading(1, reading({ w: 3840, h: 2160 }), today) // the stick, mid-run
+    await recordBitrate(2, 6.2)
+    const probed = { 1: { ...copy[1]!, fps: 50, at: today }, 2: { ...reading({ fps: 25 }), at: today }, 3: { ...reading(), at: today } }
+    expect(await recordProbed(probed, today)).toBe(2)
+    expect(qualityOf(1)).toMatchObject({ h: 2160, at: today })
+    expect(qualityOf(2)).toMatchObject({ fps: 25, mbps: [6.2] })
+    expect(qualityOf(3)).toMatchObject({ h: 1080 })
+  })
+  test('picks up a write by another process without a restart', async () => {
+    expect(qualityOf(4)).toBeUndefined()
+    await Bun.write(`${dir}/quality.json`, JSON.stringify({ 4: { ...reading(), at: today } }))
+    await Bun.sleep(1100)
+    expect(qualityOf(4)).toMatchObject({ h: 1080 })
+  })
+})
+
 describe('/api/app/quality', () => {
   const env = { ...process.env }
   const dir = `${import.meta.dir}/../.cache/test-quality`
   const post = (body: unknown, t = 'app') =>
     qualityRoute(new Request(`http://localhost/api/app/quality?t=${t}`, { method: 'POST', body: JSON.stringify(body) }))
   beforeEach(async () => {
-    Object.assign(process.env, { APP_TOKENS: 'app', QUALITY_CACHE_FILE: `${dir}/quality-cache.ts` })
+    Object.assign(process.env, { APP_TOKENS: 'app', QUALITY_FILE: `${dir}/quality.json` })
     await rm(dir, { recursive: true, force: true })
   })
   afterEach(async () => {
     process.env = { ...env }
-    delete QUALITY['990001']
     await rm(dir, { recursive: true, force: true })
   })
 
@@ -77,13 +107,11 @@ describe('/api/app/quality', () => {
     for (const bad of [{ id: 'x', ...reading() }, { id: 990001, ...reading({ h: 99999 }) }, { id: 990001, ...reading({ codec: '<b>' }) }])
       expect((await post(bad)).status).toBe(400)
   })
-  test('stores a new reading in memory and in the cache file', async () => {
+  test('stores a new reading in the store', async () => {
     const res = await post({ id: 990001, ...reading() })
     expect(await res.json()).toEqual({ stored: true })
-    expect(QUALITY['990001']).toMatchObject({ h: 1080, fps: 50 })
-    const file = await Bun.file(`${dir}/quality-cache.ts`).text()
-    expect(file).toStartWith('// Auto-generated')
-    expect(file).toContain('"990001":{"w":1920,"h":1080,"fps":50')
+    expect(qualityOf(990001)).toMatchObject({ h: 1080, fps: 50 })
+    expect((await Bun.file(`${dir}/quality.json`).json())['990001']).toMatchObject({ w: 1920, h: 1080, fps: 50 })
     expect(await (await post({ id: 990001, ...reading({ w: 3840, h: 2160, fps: 25 }) })).json()).toEqual({ stored: true })
     expect(await (await post({ id: 990001, ...reading({ w: 3840, h: 2160, fps: 25 }) })).json()).toEqual({ stored: false })
   })
@@ -95,22 +123,21 @@ describe('/api/app/bitrate', () => {
   const post = (body: unknown) =>
     bitrateRoute(new Request('http://localhost/api/app/bitrate?t=app', { method: 'POST', body: JSON.stringify(body) }))
   beforeEach(async () => {
-    Object.assign(process.env, { APP_TOKENS: 'app', QUALITY_CACHE_FILE: `${dir}/quality-cache.ts` })
+    Object.assign(process.env, { APP_TOKENS: 'app', QUALITY_FILE: `${dir}/quality.json` })
     await rm(dir, { recursive: true, force: true })
   })
   afterEach(async () => {
     process.env = { ...env }
-    delete QUALITY['990002']
     await rm(dir, { recursive: true, force: true })
   })
 
   test('adds a measured bitrate to the feed and refuses nonsense', async () => {
-    QUALITY['990002'] = fresh
+    await recordReading(990002, reading(), today)
     for (const bad of [{ id: 990002, mbps: 0.04 }, { id: 990002, mbps: 'x' }, { id: 990002, mbps: 999 }])
       expect((await post(bad)).status).toBe(400)
     expect(await (await post({ id: 990002, mbps: 6.2 })).json()).toEqual({ stored: true })
-    expect(QUALITY['990002']?.mbps).toEqual([6.2])
-    expect(await Bun.file(`${dir}/quality-cache.ts`).text()).toContain('"mbps":[6.2]')
+    expect(qualityOf(990002)?.mbps).toEqual([6.2])
+    expect((await Bun.file(`${dir}/quality.json`).json())['990002'].mbps).toEqual([6.2])
   })
 })
 

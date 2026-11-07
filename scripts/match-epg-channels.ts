@@ -1,13 +1,15 @@
 // Match myepg guide channels to ours where fetchMyepgGuide's name rules find nothing, with Jev,
-// into api/epg-matches.ts. A channel is unmatched when our /api/epg has only its name-as-title
+// into .cache/epg-matches.json, which the server reads again on its own. A channel is unmatched when our /api/epg has only its name-as-title
 // filler. Candidates are guide channels with programmes that carry the same channel number and
 // a similar name (or list ours as an alias); Jev must pick one (≥0.8) AND confirm it in a
 // separate yes/no (≥0.8), since a wrong guide is worse than none. Verdicts are cached in
 // .cache/jev-epg.json, so a re-run only asks about channels it hasn't judged yet.
 // Run it rarely (after the channel list changes): each run downloads both full guides, and a
 // burst of downloads gets the myepg account blocked for ~30 min — production's guide included.
-// Usage: bun scripts/match-epg-channels.ts   (PLAYLIST_TOKEN, EPG_URLS, TYPESAFE_API_KEY from .env.local)
-import { chanKey } from '../api/_lib.js'
+// Run it on the box, as the server's user, so the server sees the result:
+//   cd /opt/sofa && runuser -u sofa -- /usr/local/bin/bun scripts/match-epg-channels.ts
+// (PLAYLIST_TOKEN, TYPESAFE_API_KEY from .env; API_BASE overrides the local server)
+import { chanKey, epgMatchesFile } from '../api/_lib.js'
 import { askJev, jevTokens, type JevQuestion } from '../api/_jev.js'
 
 const api = process.env.API_BASE ?? 'http://127.0.0.1:8790/api'
@@ -100,10 +102,7 @@ await Bun.write(cache, JSON.stringify(verdicts))
 const matches: Record<string, string[]> = {}
 for (const [id, { guide }] of Object.entries(verdicts)) if (guide && ours.has(id)) (matches[guide] ??= []).push(id)
 const sorted = Object.fromEntries(Object.keys(matches).sort().map((g) => [g, matches[g].sort()]))
-const file = new URL('../api/epg-matches.ts', import.meta.url)
-const header = await Bun.file(file).text()
-await Bun.write(file, header.slice(0, header.indexOf('export const EPG_MATCHES')) +
-  `export const EPG_MATCHES: Record<string, string[]> = ${JSON.stringify(sorted, null, 1)}\n`)
+await epgMatchesFile.write(sorted)
 for (const [g, ids] of Object.entries(sorted)) for (const id of ids) console.log(`${ours.get(id)!.name}  →  ${g}`)
 console.log(`${unmatched.length} unmatched channels; asked Jev about ${todo.length}; ${Object.values(sorted).flat().length} matched`)
 console.log(`Jev: ${jevTokens()} input tokens ($${(jevTokens() * 0.042e-6).toFixed(4)})`)

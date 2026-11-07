@@ -2,6 +2,7 @@
 // "Atmos", "E-AC3 5.1"), best first, unknowns left out. Episodes carry the provider's probe of the
 // stream (get_series_info); films carry only a bitrate, so theirs come from the category's own tags
 // ("NETFLIX MOVIES ⁴ᴷ ³⁸⁴⁰ᴾ ᴰᵒˡᵇʸ ⱽᶦˢᶦᵒⁿ", "TOP MOVIES BLURAY").
+import { claims4K } from './_provider.js'
 
 /** The provider's ffprobe-style stream description, as far as labels need it. */
 export interface ProbedStream {
@@ -64,7 +65,7 @@ export function streamLabels(s: ProbedStream | undefined): string[] {
 export function categoryLabels(category: string, kbps?: number | string): string[] {
   const c = category.normalize('NFKC').replace(/ɪ/g, 'i')
   const out: (string | null)[] = []
-  out.push(/\b4K\b|3840|2160|\bUHD\b|فائقة الوضوح/i.test(c) ? '4K' : /blu-?ray/i.test(c) ? '1080p' : null)
+  out.push(claims4K(c) ? '4K' : /blu-?ray/i.test(c) ? '1080p' : null)
   out.push(/dolby\s*vis|\bDV\b/i.test(c) ? 'Dolby Vision' : /\bHDR/i.test(c) ? 'HDR' : null)
   out.push(bitrateLabel(kbps))
   if (/dolby\s*audio/i.test(c)) out.push('Dolby Audio')
@@ -105,9 +106,8 @@ export function probedPicture(s: ProbedStream | undefined): Picture | null {
 
 /** What a film's category claims its picture is (no codec or frame rate): the estimate until it is measured. */
 export function claimedPicture(category: string, kbps?: number | string): Picture | null {
-  const c = category.normalize('NFKC')
-  if (/\b4K\b|3840|2160|\bUHD\b|فائقة الوضوح/i.test(c)) return { width: 3840, height: 2160, kbps }
-  if (/blu-?ray/i.test(c)) return { width: 1920, height: 1080, kbps }
+  if (claims4K(category)) return { width: 3840, height: 2160, kbps }
+  if (/blu-?ray/i.test(category)) return { width: 1920, height: 1080, kbps }
   return null
 }
 

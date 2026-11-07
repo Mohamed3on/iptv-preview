@@ -1,27 +1,14 @@
 // The Fire TV app's shows (series). Every show in a category of the user's languages (English,
 // Arabic, German, Spanish, Italian), once per language: a show filed in several of a language's
-// categories keeps the 4K one's copy. A category's 4K and plain versions are one group. The
-// provider's series list is ~72MB, so it is pulled at most once a day and the trimmed list kept
-// on disk (the old copy is served if a pull fails); a show's episodes are fetched when it's opened.
-import { readFile, stat } from 'node:fs/promises'
+// categories keeps the 4K one's copy. A category's 4K and plain versions are one group. Built from
+// the provider's daily series snapshot (seriesCatalogue in _provider.ts); a show's episodes are
+// fetched when it's opened.
+import { readFile } from 'node:fs/promises'
 import { writeAtomic } from './_fs.js'
-import { apiGet, plainCategory, type XtreamConfig } from './_lib.js'
+import { apiGet, claims4K, plainCategory, readName, seriesCatalogue, type SeriesCatalogue, type SeriesEntry, type XtreamConfig } from './_provider.js'
 import { categoryLabels, claimedPicture, measuredStream, pictureTier, probedPicture, streamLabels, type Measured, type ProbedStream } from './_quality-labels.js'
 import { episodeTitle, filmTitle, showTitle, tmdbTitle } from './_tmdb.js'
 import { filmEntries, filmTitleOf, vodCategoryName } from './_vod.js'
-
-interface Category {
-  category_id: string
-  category_name: string
-}
-
-interface Series {
-  series_id: number
-  name: string
-  cover?: string
-  category_id: string
-  tmdb?: string
-}
 
 /** The same shape as /api/app/movies, so the app reads both with one parser. */
 export interface ShowList {
@@ -44,15 +31,10 @@ export interface Episode {
   quality: string[]
 }
 
-const FILE = new URL('../.cache/shows.json', import.meta.url)
-const MAX_AGE_MS = 24 * 3600_000
-const K4 = /⁴ᴷ|³⁸⁴⁰|\b4K\b|3840|\bUHD\b|2160|فائقة? الوضوح/i
 const SKIP = /PODCAST|بودكاست|\(TR\)/i
 const ENGLISH = /^(NETFLIX|DISNEY\+|APPLE\+|AMAZON|HBO MAX|OSN\+|PARAMOUNT\+|PEACOCK|SHOWTIME|SKY$|MARVEL|ENGLISH|NICKELODEON|DISCOVERY\+|FIFA\+|CRUNCHYROLL)/
 /** The big services' main rows lead each language; the rest follow in the provider's order. */
 const FIRST = ['NETFLIX SERIES', 'HBO MAX SERIES', 'APPLE+ SERIES', 'DISNEY+ SERIES', 'AMAZON SERIES', 'PARAMOUNT+', 'ENGLISH SERIES']
-/** The provider's tag before a title: "EN - ", "4K-AR - ", "D+ - ", "AR-SUBS - ". */
-const NAME_PREFIX = /^(?:4K-)?[A-Z0-9+]{1,6}(?:-SUBS)?\s+-\s+/
 /** Language order: English, Arabic, then German, Spanish, Italian. */
 const LANGS = ['en', 'ar', 'de', 'es', 'it'] as const
 
@@ -67,52 +49,38 @@ export function language(cat: string): (typeof LANGS)[number] | null {
   return null
 }
 
-export function buildShowList(cats: Category[], series: Series[]): ShowList {
-  const catOrder = new Map(cats.map((c, i) => [c.category_id, i]))
-  const catName = new Map(cats.map((c) => [c.category_id, c.category_name]))
-  type Pick = { s: Series; cat: string; lang: number; k4: boolean }
+export function buildShowList({ cats, series }: SeriesCatalogue): ShowList {
+  const catOrder = new Map(cats.map((c, i) => [c.id, i]))
+  const catName = new Map(cats.map((c) => [c.id, c.name]))
+  type Pick = { s: SeriesEntry; cat: string; lang: number; k4: boolean }
   const rank = (p: Pick) => {
     const i = FIRST.indexOf(plainCategory(p.cat))
     return i < 0 ? FIRST.length : i
   }
   const best = new Map<string, Pick>()
   for (const s of series) {
-    const cat = catName.get(String(s.category_id))
+    const cat = catName.get(s.cat)
     const lang = cat ? language(cat) : null
-    if (!cat || !lang || !String(s.name ?? '').trim()) continue
-    const key = `${lang}|${s.tmdb && s.tmdb !== '0' ? s.tmdb : String(s.name).trim().toLowerCase()}`
-    const k4 = K4.test(cat)
+    if (!cat || !lang) continue
+    const key = `${lang}|${s.tmdb || s.name.toLowerCase()}`
+    const k4 = claims4K(cat)
     if (!best.has(key) || (k4 && !best.get(key)!.k4)) best.set(key, { s, cat, lang: LANGS.indexOf(lang), k4 })
   }
   const picks = [...best.values()].sort(
-    (a, b) => a.lang - b.lang || rank(a) - rank(b) || catOrder.get(String(a.s.category_id))! - catOrder.get(String(b.s.category_id))!,
+    (a, b) => a.lang - b.lang || rank(a) - rank(b) || catOrder.get(a.s.cat)! - catOrder.get(b.s.cat)!,
   )
-  const movies = picks.map(({ s, cat }) => ({ id: s.series_id, titleId: showTitle(s.tmdb, s.series_id), name: String(s.name).trim().replace(NAME_PREFIX, ''), poster: s.cover ?? '', group: plainCategory(cat) }))
+  const movies = picks.map(({ s, cat }) => ({ id: s.id, titleId: showTitle(s.tmdb, s.id), name: readName(s.name).title, poster: s.cover, group: plainCategory(cat) }))
   return { groups: [...new Set(movies.map((m) => m.group))], movies }
 }
 
-let pulling: Promise<ShowList> | null = null
+const built = new WeakMap<SeriesCatalogue, ShowList>()
 
-/** The show list, pulled again once the saved copy is a day old. */
+/** The show list, from the daily series snapshot. */
 export async function showList(cfg: XtreamConfig): Promise<ShowList> {
-  const saved = await readFile(FILE, 'utf8').then((t) => JSON.parse(t) as ShowList).catch(() => null)
-  const age = Date.now() - ((await stat(FILE).catch(() => null))?.mtimeMs ?? 0)
-  // A list saved before title ids existed is pulled again (and still served if that pull fails).
-  if (saved && age < MAX_AGE_MS && saved.movies[0]?.titleId) return saved
-  pulling ??= (async () => {
-    const [cats, series] = await Promise.all([
-      apiGet<Category[]>(cfg, 'get_series_categories'),
-      apiGet<Series[]>(cfg, 'get_series'),
-    ])
-    const list = buildShowList(cats, series)
-    if (!list.movies.length) throw new Error('no shows')
-    await writeAtomic(FILE, list)
-    return list
-  })().finally(() => (pulling = null))
-  return pulling.catch((e) => {
-    if (saved) return saved // the provider sometimes answers empty for hours; keep the last good list
-    throw e
-  })
+  const c = await seriesCatalogue(cfg)
+  let list = built.get(c)
+  if (!list) built.set(c, (list = buildShowList(c)))
+  return list
 }
 
 interface SeriesInfo {
@@ -263,7 +231,7 @@ async function filmText(cfg: XtreamConfig, vodId: number, titleId: string, info:
     }
   }
   const entries = await filmEntries(cfg, titleId).catch(() => [])
-  const english = (e: { category: string }) => /^EN\b/.test(e.category)
+  const english = (e: { category: string }) => readName('', e.category).lang === 'EN'
   const en = !entries.some((e) => e.id === vodId && english(e)) && entries.find(english)
   const other = en ? (await apiGet<VodInfo>(cfg, `get_vod_info&vod_id=${en.id}`).catch(() => null))?.info : null
   return other ? textOf(other) : own

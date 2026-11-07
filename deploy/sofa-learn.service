@@ -9,7 +9,5 @@ User=sofa
 WorkingDirectory=/opt/sofa
 EnvironmentFile=/opt/sofa/.env
 Environment=EPG_ENDPOINT=http://127.0.0.1:8790/api/epg
-ExecStartPre=/bin/cp api/competition-cache.ts /tmp/sofa-competition-cache.ts
+# Writes .cache/competitions.json, which the server reads again on its own.
 ExecStart=/usr/local/bin/bun scripts/learn-competitions.ts
-# The server reads the cache at startup, so restart it when the learner changed it.
-ExecStartPost=+/bin/sh -c 'cmp -s /tmp/sofa-competition-cache.ts /opt/sofa/api/competition-cache.ts || systemctl restart sofa'

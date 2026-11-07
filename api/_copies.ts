@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url'
 import { writeAtomic } from './_fs.js'
 import { getJson } from './_http.js'
 import { introFor, type Intro } from './_intros.js'
-import type { XtreamConfig } from './_lib.js'
+import { languageClaim, readName, type XtreamConfig } from './_provider.js'
 import { claimedPicture, measuredStream, streamLabels, type Measured, type ProbedStream } from './_quality-labels.js'
 import { flagLanguages, parseRelease, type Attrs } from './_release-name.js'
 import { episodeEntries, measuredFilms } from './_shows.js'
@@ -57,24 +57,16 @@ export interface Copies {
   copies: (IptvCopy | RdCopy)[]
 }
 
-// The provider's language tag ("4K-DE - …", "AR-SUBS - …", category "ES - PELÍCULAS"). Dubbing markets
-// name the audio; subtitling markets keep the original audio and add their subtitles; English copies
-// keep the original and claim nothing.
-const DUBBED: Record<string, string> = { DE: 'de', ES: 'es', FR: 'fr', IT: 'it', PL: 'pl', RU: 'ru', TR: 'tr', IN: 'hi', PT: 'pt' }
-const SUBBED: Record<string, string> = { AR: 'ar', GR: 'el', NL: 'nl', SE: 'sv', IS: 'is', BG: 'bg', AL: 'sq', EX: 'hr', IR: 'fa', KU: 'ku' }
-
+// The provider's language tag ("4K-DE - …", "AR-SUBS - …", category "ES - PELÍCULAS") adds the audio
+// or subtitles it claims (see languageClaim).
 function withTag(a: Attrs, tag: string): Attrs {
-  const t = tag.toUpperCase()
-  if (DUBBED[t]) return { ...a, langs: [...new Set([DUBBED[t], ...a.langs])] }
-  if (SUBBED[t]) return { ...a, subs: [...new Set([SUBBED[t], ...(a.subs ?? [])])] }
+  const { dubbed, subbed } = languageClaim(tag)
+  if (dubbed) return { ...a, langs: [...new Set([dubbed, ...a.langs])] }
+  if (subbed) return { ...a, subs: [...new Set([subbed, ...(a.subs ?? [])])] }
   return a
 }
 
-/** The first language tag of a name ("4K-EN - …", "DE-DO - …") or its category ("ES - …"); '' for none. */
-function tagOf(name: string, category: string): string {
-  const tags = [...(name.match(/^([A-Z0-9+-]{2,12})\s+-\s/)?.[1].split('-') ?? []), category.match(/^([A-Z]{2})\s*-/)?.[1] ?? '']
-  return tags.find((t) => t === 'EN' || DUBBED[t] || SUBBED[t]) ?? ''
-}
+const tagOf = (name: string, category: string) => readName(name, category).lang
 
 /** A probed stream's attributes, read through its labels ("4K", "Dolby Vision", "HEVC", "Atmos", "E-AC3 5.1"), with the probe's Dolby Vision profile. */
 function probed(s: ProbedStream): Attrs {

@@ -24,11 +24,11 @@ import { appendFile, mkdir, rename, stat } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import { buildAppFeed, buildAppGuide } from './_app-feed.js'
 import { iptvCopies, markInfringing, titleCopies } from './_copies.js'
-import { appTokenOk, backupConfigFromEnv, configFromEnv, fetchCuratedChannels, saneFps, savedVodChannels, withBackupFeeds, withCompetitionGroups } from './_lib.js'
+import { appTokenOk, fetchCuratedChannels, saneFps, vodChannels, withBackupFeeds, withCompetitionGroups } from './_lib.js'
+import { backupConfigFromEnv, configFromEnv } from './_provider.js'
 import { currentHistory, historyAnswer, loadHistory, saveHistory, watchlistOf, withMark } from './_history.js'
 import { providerLibrary, servedLibrary } from './_library.js'
-import { addBitrate, mergeAppReading, saveQuality, type Meta } from './_quality.js'
-import { QUALITY } from './quality-cache.js'
+import { recordBitrate, recordReading, type Meta } from './_quality.js'
 import { curatedGuide } from './epg.js'
 import { movieInfo, saveMeasuredFilm, showEpisodes, showList, titleIds as mapTitleIds } from './_shows.js'
 import { subtitleFile, subtitlesFor } from './_subtitles.js'
@@ -105,13 +105,8 @@ export async function quality(req: Request): Promise<Response> {
     ...(r.atmos === true && { atmos: true as const }),
     ...(r.surround === true && { surround: true as const }),
   }
-  const id = String(r.id)
-  const merged = mergeAppReading(QUALITY[id], reading, new Date().toISOString().slice(0, 10))
-  if (merged) {
-    QUALITY[id] = merged
-    await saveQuality()
-  }
-  return Response.json({ stored: !!merged }, { headers: { 'Cache-Control': 'no-store' } })
+  const stored = await recordReading(r.id as number, reading, new Date().toISOString().slice(0, 10))
+  return Response.json({ stored }, { headers: { 'Cache-Control': 'no-store' } })
 }
 
 // POST /api/app/film-quality?t=TOKEN — what a film really is, measured by the app's player on its first
@@ -148,12 +143,8 @@ export async function bitrate(req: Request): Promise<Response> {
   if (!r || !Number.isInteger(id) || !((id as number) > 0 && (id as number) <= 2e9) || typeof r.mbps !== 'number' || !(r.mbps >= 0.1 && r.mbps <= 200)) {
     return new Response('Bad reading', { status: 400 })
   }
-  const merged = addBitrate(QUALITY[String(id)], r.mbps)
-  if (merged) {
-    QUALITY[String(id)] = merged
-    await saveQuality()
-  }
-  return Response.json({ stored: !!merged }, { headers: { 'Cache-Control': 'no-store' } })
+  const stored = await recordBitrate(id as number, r.mbps)
+  return Response.json({ stored }, { headers: { 'Cache-Control': 'no-store' } })
 }
 
 // POST /api/app/events?t=TOKEN — a batch of what happened while watching (tunes and their time to
@@ -177,12 +168,12 @@ export async function events(req: Request): Promise<Response> {
 }
 
 // GET /api/app/movies?t=TOKEN — the on-demand library (4K movies, UFC replays, then Blu-ray films) in playlist order,
-// from the copy the playlist build saves, so the app never adds a pull of the 74MB catalogue.
+// from the saved VOD catalogue (refreshed daily), so the app never adds a pull of the 74MB catalogue.
 export async function movies(req: Request): Promise<Response> {
   if (!appTokenOk(req.url)) return forbidden()
   try {
     const cfg = configFromEnv()
-    const [vod, titleOf] = await Promise.all([savedVodChannels(cfg), filmTitleOf(cfg).catch(() => null)])
+    const [vod, titleOf] = await Promise.all([vodChannels(cfg).catch(() => []), filmTitleOf(cfg).catch(() => null)])
     // The 1080p Blu-ray row follows the 4K groups: films with no 4K copy.
     const movies = [...vod.map((m) => ({ id: m.streamId, titleId: titleOf?.(m.streamId) ?? `iptv:${m.streamId}`, name: m.name, poster: m.logo, group: m.group, ext: m.vodExt ?? 'mp4' })), ...(await blurayMovies(cfg).catch(() => []))]
     return Response.json(

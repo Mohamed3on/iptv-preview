@@ -8,9 +8,10 @@
 // subscription's currently-free slots; exceeding that limit makes every stream
 // return HTTP 458 and can interrupt normal viewing.
 //
-// RESUMABLE + PROGRESSIVE: loads the existing cache and skips anything already
-// probed, and flushes the cache to disk atomically every ~2s (and at the end), so
-// killing it mid-run never costs more than a couple seconds of work.
+// WORKS ON A COPY: it reads the readings from QUALITY_FILE (deploy/probe-quality.sh points
+// it at a copy of the box's store) and writes only the entries it changed to PROBED_FILE,
+// atomically every ~2s and at the end. The box merges those into its live store
+// (scripts/merge-quality.ts), so readings the app records meanwhile are kept.
 //
 // REFRESH MODE (`refresh` arg): re-probe ONLY feeds not yet confirmed at their marker
 // tier — those missing a reading (dead ones weekly), or cached BELOW their stated quality
@@ -42,29 +43,22 @@
 // run takes a predictable bite and the monotonic cache keeps the progress.
 //
 // Usage: bun scripts/probe-quality.ts [concurrency] [refresh] [mins=N]  (creds from env/.env.local)
-import { configFromEnv, EVENT_ONLY, fetchCuratedChannels, saneFps, withCompetitionGroups } from '../api/_lib.js'
-import { rename } from 'node:fs/promises'
+import { EVENT_ONLY, fetchCuratedChannels, saneFps, withCompetitionGroups } from '../api/_lib.js'
+import { configFromEnv, connectionSlots as slotsOf, streamUrl } from '../api/_provider.js'
+import { writeAtomic } from '../api/_fs.ts'
 // better() keeps the cache monotonic in refresh mode; the app's readings (/api/app/quality) share these rules.
-import { better, keepMbps, QUALITY_HEAD, STALE_DAYS, type Meta } from '../api/_quality.ts'
+import { allReadings, better, keepMbps, STALE_DAYS, type Meta, type Readings } from '../api/_quality.ts'
 
 const cfg = configFromEnv()
 const requestedConcurrency = Number(Bun.argv[2]) || 1
 const REFRESH = Bun.argv.includes('refresh')
 const BUDGET_MIN = Number(Bun.argv.find((a) => a.startsWith('mins='))?.slice(5)) || 30
-const CACHE = 'api/quality-cache.ts'
+const PROBED = process.env.PROBED_FILE ?? '.cache/quality-probed.json'
 const today = new Date().toISOString().slice(0, 10)
 const staleBefore = new Date(Date.now() - STALE_DAYS * 864e5).toISOString().slice(0, 10)
 const isStale = (m: Meta | null | undefined): boolean => !!m && !(m.at && m.at >= staleBefore)
 
-async function connectionSlots(): Promise<{ max: number; active: number }> {
-  const url = new URL('player_api.php', cfg.host + '/')
-  url.searchParams.set('username', cfg.user)
-  url.searchParams.set('password', cfg.pass)
-  const resp = await fetch(url, { headers: { 'User-Agent': 'VLC/3.0.18' } })
-  if (!resp.ok) throw new Error(`Account status -> HTTP ${resp.status}`)
-  const info = (await resp.json())?.user_info
-  return { max: Math.max(1, Number(info?.max_connections) || 1), active: Math.max(0, Number(info?.active_cons) || 0) }
-}
+const connectionSlots = () => slotsOf(cfg)
 
 async function freeConnectionSlots(): Promise<number> {
   const { max, active } = await connectionSlots()
@@ -79,9 +73,8 @@ async function freeConnectionSlots(): Promise<number> {
 const CONC = Math.max(1, Math.min(requestedConcurrency, await freeConnectionSlots()))
 
 
-// Resume: pick up whatever a prior (possibly killed) run already saved.
-let cache: Record<string, Meta | null> = {}
-try { cache = { ...(await import('../api/quality-cache.ts')).QUALITY } } catch { /* fresh run */ }
+const cache = allReadings()
+const probed: Readings = {} // what this run changed, for the box to merge
 
 const channels = await fetchCuratedChannels(cfg, false) // live feeds only; VOD is never probed
 // A feed "matches its marker" when its real height reaches the tier's nominal resolution.
@@ -116,21 +109,17 @@ const targets = [...stale, ...gaps]
 const byId = new Map(targets.map((c) => [c.streamId, c.name]))
 const ids = [...byId.keys()]
 
-// Progressive save: one debounced writer flushes the whole map atomically
-// (temp file + rename, so a crash can't leave a half-written cache).
+// Progressive save: one debounced writer flushes this run's changes atomically.
 let dirty = false
-let writing = false
 async function flush() {
-  if (!dirty || writing) return
-  writing = true; dirty = false
-  await Bun.write(CACHE + '.tmp', QUALITY_HEAD + JSON.stringify(cache) + '\n')
-  await rename(CACHE + '.tmp', CACHE)
-  writing = false
+  if (!dirty) return
+  dirty = false
+  await writeAtomic(PROBED, probed)
 }
 const timer = setInterval(flush, 2000)
 
 async function probe(id: number): Promise<Meta | null> {
-  const url = `${cfg.host}/live/${cfg.user}/${cfg.pass}/${id}.ts`
+  const url = streamUrl(cfg, 'live', id)
   const p = Bun.spawn(
     ['ffprobe', '-v', 'error', '-user_agent', 'VLC/3.0.18',
      // rw_timeout fails a stalled/dead stream at the network layer fast (the old
@@ -218,6 +207,7 @@ const worker = async () => {
     else if (reverify) cache[id] = m ? { ...m, at: today, ...keepMbps(old) } : { ...old!, tried: today }
     else if (better(m, old)) cache[id] = { ...m!, at: today, ...keepMbps(old) }
     else continue
+    probed[id] = cache[id]
     dirty = true
   }
 }
@@ -230,7 +220,7 @@ if (busy) {
   console.log(`Budget of ${BUDGET_MIN}min reached — ${ids.length - done} feeds left for the next run.`)
 }
 // Not one picture means the provider refused this machine (GitHub runners can get HTTP 511,
-// like the box), not that every feed died: fail loudly so deploy/probe-quality.sh pushes nothing.
+// like the box), not that every feed died: fail loudly so deploy/probe-quality.sh merges nothing.
 if (done > 0 && ok === 0 && !busy) {
   console.error(`No feed returned a picture (${done} tried) — the provider is refusing this machine, so this run is discarded.`)
   process.exit(1)
@@ -241,4 +231,4 @@ dirty = true; await flush()
 // a budgeted run stops early, and reporting the backlog as "probed" overstates it.
 const attempted = ids.slice(0, done)
 const total = Object.keys(cache).length
-console.log(`${REFRESH ? 'Refreshed' : 'Probed'} ${attempted.length}/${ids.length} feeds in ${((Date.now() - t0) / 1000).toFixed(1)}s @ conc=${CONC} — ${ok} have signal (cache now ${total})`)
+console.log(`${REFRESH ? 'Refreshed' : 'Probed'} ${attempted.length}/${ids.length} feeds in ${((Date.now() - t0) / 1000).toFixed(1)}s @ conc=${CONC} — ${ok} have signal, ${Object.keys(probed).length} changed (store has ${total})`)

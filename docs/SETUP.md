@@ -74,13 +74,13 @@ In TiviMate (or any player), add:
 
 ## 4. Feed quality (optional)
 
-Channels sort by the resolution and frame rate each feed really delivers, from `api/quality-cache.ts`. Until it has readings, they sort by what the provider's names claim. To measure, run this from any machine whose IP your provider streams to (many providers refuse datacenter IPs), with `.env.local` filled in:
+Channels sort by the resolution and frame rate each feed really delivers, from `.cache/quality.json` on the server. Until it has readings, they sort by what the provider's names claim. To measure, run this from any machine whose IP your provider streams to (many providers refuse datacenter IPs), with `.env.local` filled in:
 
 ```sh
 SERVER=root@<server-ip> ./deploy/probe-quality.sh 30
 ```
 
-It pulls the server's cache, probes for 30 minutes and pushes it back. It uses your account's stream connection, so run it when nobody is watching. The Fire TV app also reports what it measures as you watch.
+It copies the server's readings, probes for 30 minutes and has the server merge what changed. It uses your account's stream connection, so run it when nobody is watching. The Fire TV app also reports what it measures as you watch.
 
 ## 5. The Fire TV app (optional)
 

@@ -38,12 +38,13 @@ Sofa cuts your Xtream Codes IPTV subscription down to what you actually watch. I
 
 The app and its API — the trimmed playlist (`/api/playlist?t=…`) and EPG (`/api/epg?t=…`) for TiviMate — run on a Hetzner box shared with another app (`root@<server-ip>`; GitHub secret `SERVER_HOST`). `server.ts` runs under systemd (`deploy/sofa.service`, `127.0.0.1:8790`), and the Cloudflare Tunnel `sofa` (`cloudflared.service`) routes the hostname to it. Secrets live in `/opt/sofa/.env` (`XTREAM_HOST/USER/PASS`, `PLAYLIST_TOKEN`, `EPG_URLS`, `TYPESAFE_API_KEY`).
 
-The box owns the two generated caches, and the server restarts when one changes:
+The box owns its data in `/opt/sofa/.cache/` (JSON, written atomically); the server reads a file again when it changes, so nothing needs a restart:
 
-- `sofa-learn.timer` relearns `api/competition-cache.ts` from the EPG daily at 05:23 UTC.
-- Feed quality (`api/quality-cache.ts`) is probed nightly at 02:23 UTC by GitHub Actions (`.github/workflows/probe-quality.yml`, secrets `XTREAM_HOST/USER/PASS` + `HETZNER_SSH_KEY` + `SERVER_HOST`; run it by hand from the Actions tab), because the provider refuses streams from the box's IP. It runs `SERVER=root@<server-ip> ./deploy/probe-quality.sh 30`, which pulls the box's cache, re-probes for 30 minutes and pushes it back (the same command works from a Mac with `.env.local`). Each run first re-checks readings older than 14 days, then chases feeds below their label. It holds the account's one connection slot, so it won't start while someone is watching and stops as soon as someone starts.
+- `sofa-learn.timer` relearns `.cache/competitions.json` from the EPG daily at 05:23 UTC.
+- `scripts/match-epg-channels.ts`, run by hand on the box after the channel list changes, writes `.cache/epg-matches.json`.
+- Feed quality (`.cache/quality.json`) is probed nightly at 02:23 UTC by GitHub Actions (`.github/workflows/probe-quality.yml`, secrets `XTREAM_HOST/USER/PASS` + `HETZNER_SSH_KEY` + `SERVER_HOST`; run it by hand from the Actions tab), because the provider refuses streams from the box's IP. It runs `SERVER=root@<server-ip> ./deploy/probe-quality.sh 30`, which copies the box's readings, re-probes for 30 minutes and has the box merge what changed, keeping readings the Fire TV app recorded meanwhile (the same command works from a Mac with `.env.local`). Each run first re-checks readings older than 14 days, then chases feeds below their label. It holds the account's one connection slot, so it won't start while someone is watching and stops as soon as someone starts.
 
-The repo's copies of those two files only seed a fresh box; a deploy never overwrites the box's. Every push to `master` deploys (`.github/workflows/deploy.yml`, needs the `HETZNER_SSH_KEY` and `SERVER_HOST` secrets), except pushes that only touch Markdown or `firetv/**`; by hand: `SERVER=root@<server-ip> ./deploy/sync.sh`. Logs: `ssh root@<server-ip> 'journalctl -u sofa -f'` (or `-u sofa-learn`).
+A deploy never touches `.cache/`. Every push to `master` deploys (`.github/workflows/deploy.yml`, needs the `HETZNER_SSH_KEY` and `SERVER_HOST` secrets), except pushes that only touch Markdown or `firetv/**`; by hand: `SERVER=root@<server-ip> ./deploy/sync.sh`. Logs: `ssh root@<server-ip> 'journalctl -u sofa -f'` (or `-u sofa-learn`).
 
 ## Fire TV app
 

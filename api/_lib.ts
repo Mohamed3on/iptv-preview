@@ -14,15 +14,24 @@
 // ACTUAL resolution×fps instead of the provider's unreliable "UHD"/"RAW" markers
 // (many "UHD 3840P" feeds are really 1080p30 or 720p). Refreshed offline by
 // scripts/probe-quality.ts; a missing entry just falls back to the name marker.
-import { QUALITY } from './quality-cache.js'
-import { audioRank } from './_quality.js'
-// Channels seen airing live matches of each competition in the EPG (tvg-id ->
-// competition -> last-seen date), learned daily by scripts/learn-competitions.ts.
-import { LEARNED } from './competition-cache.js'
-// Guide channels Jev matched offline to ours (scripts/match-epg-channels.ts).
-import { EPG_MATCHES } from './epg-matches.js'
+import { audioRank, qualityOf } from './_quality.js'
+import { jsonFile } from './_fs.js'
 import { askJev, type JevQuestion } from './_jev.js'
-import { readFile, stat, writeFile } from 'node:fs/promises'
+import { readFile, writeFile } from 'node:fs/promises'
+import { fileURLToPath } from 'node:url'
+import { apiGet, BACKUP_ID, backupConfigFromEnv, claims4K, guideUrl, plainCategory, readName, streamUrl, vodCatalogue, type VodFilm, type XtreamConfig } from './_provider.js'
+
+const cachePath = (name: string) => fileURLToPath(new URL(`../.cache/${name}`, import.meta.url))
+/**
+ * Channels seen airing live matches of each competition in the EPG (tvg-id -> competition ->
+ * last-seen date), learned daily by scripts/learn-competitions.ts; read again when it changes.
+ */
+export const learnedFile = jsonFile<Record<string, Record<string, string>>>(() => process.env.COMPETITIONS_FILE ?? cachePath('competitions.json'), () => ({}))
+/**
+ * Guide channels Jev matched to ours where the name rules find nothing (myepg channel id -> our
+ * tvg-ids), written by scripts/match-epg-channels.ts; read again when it changes.
+ */
+export const epgMatchesFile = jsonFile<Record<string, string[]>>(() => process.env.EPG_MATCHES_FILE ?? cachePath('epg-matches.json'), () => ({}))
 
 // Provider category_ids to keep. KEEP, CAT_BUCKET, CAT_ONLY and RU_KIDS's category are this
 // repo's provider's ids (recognised by HOME_CATEGORIES); on any other provider the same ids
@@ -327,7 +336,7 @@ export const saneFps = (fps: number): number =>
 const MOBILE = /\(MOBILE?\)|720P/i
 function realRes(streamId: number, markerQ: number, trustMarker: boolean, name: string): { h: number; fps: number } {
   const nominal = markerQ >= 5 ? 2160 : markerQ === 4 ? 1080 : markerQ === 3 ? 720 : markerQ === 2 ? 540 : 360
-  const m = QUALITY[String(streamId)]
+  const m = qualityOf(streamId)
   if (!m) return { h: trustMarker ? nominal : Math.min(nominal, 1080), fps: 0 }
   if (trustMarker && m.h < nominal) return { h: nominal, fps: 0 }
   const r = { h: m.h, fps: saneFps(m.fps) }
@@ -336,40 +345,7 @@ function realRes(streamId: number, markerQ: number, trustMarker: boolean, name: 
 
 // Atmos over 5.1 over stereo — breaks ties between equal-res/fps feeds (a centre channel
 // carries the commentary, so a soundbar can lift it over the crowd).
-const audio = (streamId: number): number => audioRank(QUALITY[String(streamId)])
-
-export interface XtreamConfig {
-  host: string
-  user: string
-  pass: string
-}
-
-/** The provider's VPN-only front: the normal fronts block VPN IPs, and this one blocks everyone else. */
-export const VPN_HOST = 'http://apps.g1ming-hub.sbs'
-
-export function configFromEnv(): XtreamConfig {
-  const { XTREAM_HOST, XTREAM_USER, XTREAM_PASS } = process.env
-  if (!XTREAM_HOST || !XTREAM_USER || !XTREAM_PASS) {
-    throw new Error('Missing XTREAM_HOST/XTREAM_USER/XTREAM_PASS env vars')
-  }
-  return { host: XTREAM_HOST.replace(/\/$/, ''), user: XTREAM_USER, pass: XTREAM_PASS }
-}
-
-/** A backup subscription (provider B): its plain front, its VPN front (the plain one unless it has its own) and account. */
-export interface BackupConfig extends XtreamConfig {
-  vpnHost: string
-}
-
-/** Provider B from XTREAM2_HOST/USER/PASS (+ optional XTREAM2_VPN_HOST); undefined until they are set. */
-export function backupConfigFromEnv(): BackupConfig | undefined {
-  const { XTREAM2_HOST, XTREAM2_USER, XTREAM2_PASS, XTREAM2_VPN_HOST } = process.env
-  if (!XTREAM2_HOST || !XTREAM2_USER || !XTREAM2_PASS) return undefined
-  const host = XTREAM2_HOST.replace(/\/$/, '')
-  return { host, vpnHost: XTREAM2_VPN_HOST?.replace(/\/$/, '') || host, user: XTREAM2_USER, pass: XTREAM2_PASS }
-}
-
-/** Provider B's stream ids are offset by this, so they never collide with A's (quality cache, app ids). */
-export const BACKUP_ID = 1_000_000_000
+const audio = (streamId: number): number => audioRank(qualityOf(streamId))
 
 interface Category {
   category_id: string
@@ -382,17 +358,6 @@ interface Stream {
   stream_icon?: string
   epg_channel_id?: string | null
   category_id: string
-}
-
-interface VodStream {
-  stream_id: number
-  name: string
-  stream_icon?: string
-  category_id: string
-  container_extension?: string
-  added?: string
-  tmdb?: string | number
-  is_adult?: string | number
 }
 
 export interface Channel {
@@ -496,7 +461,7 @@ const nameKey = (s: string): string =>
 // "🏆 <competition>" groups gather every channel carrying a competition across
 // regions. A channel qualifies by NAME ("SKY SPORT BUNDESLIGA 1"), by provider
 // CATEGORY (the per-league PPV packages), or — for 24/7 channels — by having aired
-// a live match of it recently per the EPG (learned into competition-cache.ts by
+// a live match of it recently per the EPG (learned into .cache/competitions.json by
 // scripts/learn-competitions.ts: the guides only reach ~36h ahead, far too short
 // to see a cup round or a UEFA week directly). Vetoes keep out other sports and
 // women's/second-tier competitions that reuse the names (volleyball "Serie A",
@@ -689,13 +654,6 @@ export async function jevCompetitions(titles: string[]): Promise<Map<string, str
   }))
 }
 
-export async function apiGet<T>(cfg: XtreamConfig, action: string): Promise<T> {
-  const url = `${cfg.host}/player_api.php?username=${cfg.user}&password=${cfg.pass}&action=${action}`
-  const resp = await fetch(url, { headers: { 'User-Agent': 'VLC/3.0.18' } })
-  if (!resp.ok) throw new Error(`${action} -> HTTP ${resp.status}`)
-  return resp.json() as Promise<T>
-}
-
 // UFC PPV / Fight-Night replays live in the VOD catalog — the live PPV slots go
 // black once the event window passes. The provider files them under many
 // language prefixes ("EN -", "ES -", "SOC -") and sometimes mis-categorizes them
@@ -704,25 +662,25 @@ export async function apiGet<T>(cfg: XtreamConfig, action: string): Promise<T> {
 // first, newest upload), and serve them on-demand. The number identifies the card.
 const UFC_VOD_EVENT = /\bUFC\s+(FREEDOM\s+|FIGHT\s*NIGHT\s+|ON\s+\w+\s+)?(\d{1,3})\b/i
 
-function ufcReplays(vod: VodStream[]): Channel[] {
+function ufcReplays(vod: VodFilm[]): Channel[] {
   type V = { c: Channel; key: string; lang: number; added: number }
   const items: V[] = []
   for (const s of vod) {
-    const name = String(s.name ?? '').trim()
+    const name = s.name
     const m = name.match(UFC_VOD_EVENT)
     if (!m) continue
     items.push({
       key: (m[1] ?? '').toLowerCase().replace(/\s+/g, '') + m[2],
       lang: languageRank(name),
-      added: Number(s.added ?? 0),
+      added: s.added,
       c: {
-        streamId: s.stream_id,
+        streamId: s.id,
         name,
-        logo: String(s.stream_icon ?? ''),
+        logo: s.icon,
         tvgId: '',
         group: B.ufcVod,
         isEventSlot: false,
-        vodExt: s.container_extension || 'mp4',
+        vodExt: s.ext,
       },
     })
   }
@@ -738,112 +696,41 @@ function ufcReplays(vod: VodStream[]): Channel[] {
 }
 
 // --- 4K/UHD movies (VOD) ---------------------------------------------------
-// The provider marks movie quality on the CATEGORY name, not per title, using
-// superscript tags (⁴ᴷ ³⁸⁴⁰ᴾ), plain 4K/3840/UHD, or Arabic فائقة الوضوح
-// ("ultra-HD"). We pull every such category — all languages — as on-demand VOD
-// so the playlist gains a clean, browsable 4K film library beside the sports.
-export const MOVIE_4K = /⁴ᴷ|³⁸⁴⁰|\b4K\b|3840|\bUHD\b|2160|فائقة الوضوح/i
-
-// Decorative Unicode the provider uses for those tags (superscript digits +
-// modifier letters: ⁴ᴷ ³⁸⁴⁰ᴾ ᴰᴼᴸᴮʸ ᴬᵁᴰᴵᴼ ⱽᴵˢᴵᴼᴺ ᴴᴰᴿ) — stripped for clean names.
-const SUPER = /[²³¹⁰-₟ᴬ-ᵪʰ-˿ᶜ-ᶿⱽ]+/g
-
-// Category name without its quality tags, e.g.
-// "NETFLIX MOVIES ⁴ᴷ ³⁸⁴⁰ᴾ ᴰᵒˡᵇʸ ⱽᶦˢᶦᵒⁿ" -> "NETFLIX MOVIES".
-export function plainCategory(cat: string): string {
-  return cat
-    .replace(SUPER, ' ')
-    .replace(/\b(3840p?|dolby|audio|visi[oó]n|hdr|multi(?:-subs)?)\b/gi, ' ')
-    .replace(/فائقة? الوضوح/g, ' ')
-    .replace(/(?<=^|\s)[A-ZÀ-Þ](?=\s|$)/g, ' ') // stray leftover capital (e.g. Ó from VISIÓN)
-    .replace(/\(\s*\)/g, ' ')
-    .replace(/\b4k\b/gi, ' ')
-    .replace(/[-–]\s*$/, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-}
+// The provider marks movie quality on the CATEGORY name, not per title (see claims4K). We take
+// every such category — all languages — as on-demand VOD so the playlist gains a clean,
+// browsable 4K film library beside the sports.
 
 // "NETFLIX MOVIES ⁴ᴷ ³⁸⁴⁰ᴾ ᴰᵒˡᵇʸ ⱽᶦˢᶦᵒⁿ" -> "🎬 NETFLIX MOVIES 4K".
 export function movieGroup(cat: string): string {
   return `🎬 ${plainCategory(cat)} 4K`
 }
 
-// Strip the provider's "4K-EN - " / "4K-D+ - " title prefix for clean, sortable names.
-export const MOVIE_PREFIX = /^4K-[A-Z0-9+]{1,5}\s*-\s*/i
-
 // Every movie in a 4K-marked category, as on-demand VOD (served from /movie/).
 // No tvg-id, so buildEventEpg gives them no (bogus) EPG row.
-function movie4kChannels(vod: VodStream[], catName: Map<number, string>): Channel[] {
+function movie4kChannels(vod: VodFilm[], cats: Record<string, string>): Channel[] {
   const out: Channel[] = []
   for (const s of vod) {
-    const cat = catName.get(Number(s.category_id))
-    if (!cat || !MOVIE_4K.test(cat)) continue
-    const name = String(s.name ?? '').replace(MOVIE_PREFIX, '').trim()
+    const cat = cats[s.cat]
+    if (!cat || !claims4K(cat)) continue
+    const name = readName(s.name).title
     if (!name || SEPARATOR.test(name)) continue
     out.push({
-      streamId: s.stream_id,
+      streamId: s.id,
       name,
-      logo: String(s.stream_icon ?? ''),
+      logo: s.icon,
       tvgId: '',
       group: movieGroup(cat),
       isEventSlot: false,
-      vodExt: s.container_extension || 'mp4',
+      vodExt: s.ext,
     })
   }
   return out
 }
 
-// The provider sometimes answers the VOD calls with an empty list — for the whole account,
-// for hours (2026-10-13, after repeated pulls of the 74MB catalogue) — and the movie groups
-// would vanish from TiviMate. So the last good VOD entries are kept on disk and served
-// until the catalogue comes back.
-const LAST_GOOD_VOD = new URL('../.cache/vod-last-good.json', import.meta.url)
-
-/** The whole VOD catalogue, trimmed (adult titles left out), as the last good pull saw it: the app's
- *  Blu-ray row and its search over every film read this, never the 74MB pull itself. */
-export interface VodCatalogue {
-  /** Category id to name. */
-  cats: Record<string, string>
-  /** [stream id, name, icon, category id, container extension, added (epoch s), tmdb id or ""] */
-  vod: [number, string, string, number, string, number, string][]
-}
-const VOD_CATALOGUE = new URL('../.cache/vod-catalogue.json', import.meta.url)
-
-function saveCatalogue(vod: VodStream[], cats: Category[]): Promise<void> {
-  const catalogue: VodCatalogue = {
-    cats: Object.fromEntries(cats.map((c) => [String(c.category_id), c.category_name])),
-    vod: vod
-      .filter((s) => String(s.is_adult ?? '0') !== '1' && String(s.name ?? '').trim())
-      .map((s) => [s.stream_id, String(s.name).trim(), String(s.stream_icon ?? ''), Number(s.category_id), s.container_extension || 'mp4', Number(s.added ?? 0), String(s.tmdb ?? '').replace(/^0$/, '')]),
-  }
-  return writeFile(VOD_CATALOGUE, JSON.stringify(catalogue)).catch(() => {})
-}
-
-/** The saved catalogue file, pulling it first only when none exists yet. */
-export async function vodCatalogueFile(cfg: XtreamConfig): Promise<URL> {
-  if (!(await stat(VOD_CATALOGUE).catch(() => null))) await vodChannels(cfg)
-  return VOD_CATALOGUE
-}
-
-async function vodChannels(cfg: XtreamConfig): Promise<Channel[]> {
-  const [vod, vodCats] = await Promise.all([
-    apiGet<VodStream[]>(cfg, 'get_vod_streams').catch(() => []),
-    apiGet<Category[]>(cfg, 'get_vod_categories').catch(() => []),
-  ])
-  if (vod.length && vodCats.length) {
-    const vodCatName = new Map(vodCats.map((c) => [Number(c.category_id), c.category_name]))
-    const channels = [...ufcReplays(vod), ...movie4kChannels(vod, vodCatName)]
-    await Promise.all([writeFile(LAST_GOOD_VOD, JSON.stringify(channels)).catch(() => {}), saveCatalogue(vod, vodCats)])
-    return channels
-  }
-  return JSON.parse(await readFile(LAST_GOOD_VOD, 'utf8').catch(() => '[]'))
-}
-
-/** The on-demand entries (4K movies, UFC replays) as the playlist last saw them, without pulling
- *  the 74MB catalogue again; pulls it only when no copy exists yet. */
-export async function savedVodChannels(cfg: XtreamConfig): Promise<Channel[]> {
-  const saved: Channel[] = JSON.parse(await readFile(LAST_GOOD_VOD, 'utf8').catch(() => '[]'))
-  return saved.length ? saved : vodChannels(cfg)
+/** The on-demand entries (4K movies, UFC replays), from the saved VOD catalogue (refreshed daily, never per build). */
+export async function vodChannels(cfg: XtreamConfig): Promise<Channel[]> {
+  const { cats, films } = await vodCatalogue(cfg)
+  return [...ufcReplays(films), ...movie4kChannels(films, cats)]
 }
 
 // The guide's logos (MyepgGuide.icons), saved by each guide build: the playlist and the app's
@@ -855,12 +742,12 @@ export async function saveEpgIcons(icons: Map<string, string>): Promise<void> {
 }
 
 /** Fetch + filter provider channels into ordered, quality-sorted buckets. `vod: false`
- *  leaves out the on-demand entries (and the 74MB catalogue download), for the EPG. */
+ *  leaves out the on-demand entries, for the EPG. */
 export async function fetchCuratedChannels(cfg: XtreamConfig, vod = true): Promise<Channel[]> {
   const [cats, streams, vodList, icons] = await Promise.all([
     apiGet<Category[]>(cfg, 'get_live_categories'),
     apiGet<Stream[]>(cfg, 'get_live_streams'),
-    vod ? vodChannels(cfg) : [],
+    vod ? vodChannels(cfg).catch(() => []) : [],
     readFile(EPG_ICONS, 'utf8').then((j) => new Map<string, string>(Object.entries(JSON.parse(j)))).catch(() => new Map<string, string>()),
   ])
   const catName = new Map(cats.map((c) => [Number(c.category_id), c.category_name]))
@@ -1063,6 +950,7 @@ const OVERFLOW_DAYS = 1
  * endpoint never sees them.
  */
 export function withCompetitionGroups(channels: Channel[], now = Date.now()): Channel[] {
+  const learned = learnedFile.read()
   const since = new Date(now - LEARN_DAYS * 864e5).toISOString().slice(0, 10)
   const overflowSince = new Date(now - OVERFLOW_DAYS * 864e5).toISOString().slice(0, 10)
   type Row = { c: Channel; rh: number; rf: number; lang: number; region: number; idx: number }
@@ -1076,7 +964,7 @@ export function withCompetitionGroups(channels: Channel[], now = Date.now()): Ch
     // mentions a match ("Premier League Weekend Live" on Sky Sports News).
     if (!c.isEventSlot && !WOMEN.test(c.name) && !SHOW.test(c.name)) {
       const from = OTHER_SPORT.test(c.name) ? overflowSince : since
-      for (const [k, seen] of Object.entries(LEARNED[c.tvgId] ?? {})) if (seen >= from) keys.add(k)
+      for (const [k, seen] of Object.entries(learned[c.tvgId] ?? {})) if (seen >= from) keys.add(k)
     }
     if (!keys.size) return
     const { h: rh, fps: rf } = realRes(c.streamId, c.q ?? 2, c.isEventSlot || EVENT_ONLY.test(c.name), c.name)
@@ -1113,10 +1001,10 @@ export function buildM3U(cfg: XtreamConfig, channels: Channel[], epgUrls: string
   const lines = [`#EXTM3U url-tvg="${epgUrls.join(',')}"`]
   for (const c of channels) {
     const src = c.vodExt
-      ? `${cfg.host}/movie/${cfg.user}/${cfg.pass}/${c.streamId}.${c.vodExt}`
+      ? streamUrl(cfg, 'movie', c.streamId, c.vodExt)
       : c.backup && backup
-        ? `${backup.host}/live/${backup.user}/${backup.pass}/${c.streamId - BACKUP_ID}.ts`
-        : `${cfg.host}/live/${cfg.user}/${cfg.pass}/${c.streamId}.ts`
+        ? streamUrl(backup, 'live', c.streamId - BACKUP_ID)
+        : streamUrl(cfg, 'live', c.streamId)
     lines.push(
       `#EXTINF:-1 tvg-id="${q(c.tvgId)}" tvg-name="${q(c.name)}" tvg-logo="${q(c.logo)}" group-title="${q(c.group)}",${c.name}`,
       src,
@@ -1255,7 +1143,7 @@ function collectNameIcons(block: string, names: Set<string>, icons: Map<string, 
 export async function fetchMyepgGuide(
   urls: string[],
   channels: Channel[],
-  matches: Record<string, string[]> = EPG_MATCHES,
+  matches: Record<string, string[]> = epgMatchesFile.read(),
 ): Promise<MyepgGuide> {
   const programmes: string[] = []
   const covered = new Set<string>()
@@ -1479,14 +1367,10 @@ export function buildEventEpg(
   return out.join('\n')
 }
 
-export function providerEpgUrl(cfg: XtreamConfig): string {
-  return `${cfg.host}/xmltv.php?username=${cfg.user}&password=${cfg.pass}`
-}
-
 /** Fetch the provider's full XMLTV guide; '' on any failure (best-effort). */
 export async function fetchProviderEpg(cfg: XtreamConfig): Promise<string> {
   try {
-    const resp = await fetch(providerEpgUrl(cfg), { headers: { 'User-Agent': 'VLC/3.0.18' } })
+    const resp = await fetch(guideUrl(cfg), { headers: { 'User-Agent': 'VLC/3.0.18' } })
     if (!resp.ok) return ''
     return await resp.text()
   } catch {

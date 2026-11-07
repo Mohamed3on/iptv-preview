@@ -1,7 +1,7 @@
 // Learn which channels carry which competition from the EPG. The guides only reach
 // ~36h ahead, so one look can't see a cup round or a UEFA week — instead this scans
 // our own /api/epg for live-match programmes and accumulates (tvg-id -> competition
-// -> last-seen date) into api/competition-cache.ts, dropping entries older than
+// -> last-seen date) into .cache/competitions.json, dropping entries older than
 // 60 days. Event slots (ppv.*) are skipped: their name IS the event, so only their
 // current name counts (see staticCompetitions). So are name-as-title filler rows.
 // Jev judges each match-like title on a football channel once (jevCompetitions; verdicts
@@ -9,9 +9,8 @@
 // regexes decide uncached titles instead.
 // Usage: bun scripts/learn-competitions.ts   (PLAYLIST_TOKEN, TYPESAFE_API_KEY from env /
 //        .env.local; EPG_ENDPOINT overrides the local server)
-import { COMP_SOURCE, couldBeLiveMatch, jevCompetitions, learnedCompetitions } from '../api/_lib.js'
+import { COMP_SOURCE, couldBeLiveMatch, jevCompetitions, learnedCompetitions, learnedFile } from '../api/_lib.js'
 import { jevTokens } from '../api/_jev.js'
-import { LEARNED } from '../api/competition-cache.js'
 
 const endpoint = process.env.EPG_ENDPOINT ?? 'http://127.0.0.1:8790/api/epg'
 const token = process.env.PLAYLIST_TOKEN
@@ -33,7 +32,7 @@ const football = local ? null : new Set(
 const KEEP_DAYS = 60
 const cutoff = new Date(Date.now() - KEEP_DAYS * 864e5).toISOString().slice(0, 10)
 const next: Record<string, Record<string, string>> = {}
-for (const [id, comps] of Object.entries(LEARNED)) {
+for (const [id, comps] of Object.entries(learnedFile.read(true))) {
   for (const [k, seen] of Object.entries(comps)) if (seen >= cutoff) (next[id] ??= {})[k] = seen
 }
 const unescape = (s: string) => s.replace(/&apos;/g, "'").replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&')
@@ -64,13 +63,10 @@ for (const { id, seen, title } of programmes) {
     hits++
   }
 }
-// Sorted keys -> deterministic file, minimal diffs.
+// Sorted keys -> a deterministic file. The server reads it again on its own; no restart.
 const sorted = Object.fromEntries(
   Object.keys(next).sort().map((id) => [id, Object.fromEntries(Object.entries(next[id]).sort())]),
 )
-const header = await Bun.file(new URL('../api/competition-cache.ts', import.meta.url)).text()
-const out = header.slice(0, header.indexOf('export const LEARNED')) +
-  `export const LEARNED: Record<string, Record<string, string>> = ${JSON.stringify(sorted, null, 1)}\n`
-await Bun.write(new URL('../api/competition-cache.ts', import.meta.url), out)
+await learnedFile.write(sorted)
 console.log(`${hits} live-match programme hits; ${Object.keys(sorted).length} channels in cache`)
 console.log(`Jev: judged ${judged} new titles, ${jevTokens()} input tokens ($${(jevTokens() * 0.042e-6).toFixed(4)})`)

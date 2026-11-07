@@ -53,7 +53,7 @@ A deploy never touches `.cache/`. Every push to `master` deploys (`.github/workf
 - `/api/app/channels`: groups, channels, feed families, quality badges and both provider fronts, as JSON.
 - `/api/app/guide`: the guide as a gzip SQLite file.
 - `/api/app/version`, `/api/app/apk` and `/api/app/dm`: the latest build and its dex metadata (the baseline profile, which the stick compiles at install), served from `/opt/sofa/app/` (deploys never touch it).
-- `/api/app/movies`: the on-demand library (4K movies, UFC replays), read from the copy the playlist build saves in `.cache/vod-last-good.json`, so the app never adds a pull of the 74 MB catalogue.
+- `/api/app/movies`: the on-demand library (4K movies, UFC replays), read from the daily VOD snapshot (`.cache/vod.json`, `api/_provider.ts`), so the app never adds a pull of the 74 MB catalogue.
 - `POST /api/app/quality`: what the app measured on a stream it played (resolution, frame rate, codec, Atmos), merged into the quality cache with the probe's rules (`api/_quality.ts`).
 - `POST /api/app/events`: tunes with their time to picture, stalls, feed switches and busy / wrong-route / offline problems, appended to `.cache/app-events.jsonl` on the box (rolls over at 20 MB). Read it to see which feeds hold up and how fast zaps are.
 

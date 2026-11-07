@@ -13,8 +13,15 @@ set -euo pipefail
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 
-# A fresh box has no readings yet.
-rsync -a "$SERVER:/opt/sofa/.cache/quality.json" "$work/quality.json" 2>/dev/null || echo '{}' > "$work/quality.json"
+# Only a box with no store yet starts from nothing; any other failure stops the run, since probing
+# against an empty copy would overwrite good readings.
+# (set -e: an ssh failure here ends the run.)
+store=$(ssh "$SERVER" 'test -f /opt/sofa/.cache/quality.json && echo yes || echo no')
+if [ "$store" = yes ]; then
+  rsync -a "$SERVER:/opt/sofa/.cache/quality.json" "$work/quality.json"
+else
+  echo '{}' > "$work/quality.json"
+fi
 QUALITY_FILE="$work/quality.json" PROBED_FILE="$work/probed.json" bun scripts/probe-quality.ts 8 refresh "mins=${1:-30}"
 if [ ! -f "$work/probed.json" ] || [ "$(cat "$work/probed.json")" = "{}" ]; then
   echo "No changed readings."

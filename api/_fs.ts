@@ -44,10 +44,8 @@ export function jsonFile<T>(path: () => string, empty: () => T) {
       } else held.checked = t
       return held.data
     },
-    async write(data: T): Promise<void> {
-      const file = path()
-      await writeAtomic(file, data)
-      if (held?.file === file && held.data === data) held.version = versionOf(file)
-    },
+    // The held copy's version is left as it was, so the next read loads the file again: another
+    // process's write that landed around this one is picked up, never masked by ours.
+    write: (data: T): Promise<void> => writeAtomic(path(), data),
   }
 }

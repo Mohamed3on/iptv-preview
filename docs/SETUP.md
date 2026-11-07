@@ -22,7 +22,7 @@ Copy [`.env.example`](../.env.example) to `.env` and fill in the required block:
 | The groups, their names and order | `B` (a list of all the groups), `CAT_BUCKET`, `bucketForCategory` |
 | Which language's feed comes first | `languageRank`, `regionPref` |
 | The 🏆 league and cup groups | `COMPS` |
-| Which films are listed | `MOVIE_4K` (4K categories), `ufcReplays` |
+| Which films are listed | `claims4K` in `api/_provider.ts` (4K categories), `ufcReplays` |
 
 Out of the box, on any provider other than the original, the server lists UK, ES, DE, IT, FR and AR football, tennis, UFC and general sport categories, as long as their names start with a region prefix like `UK|`, `UK |` or `UK:`. For anything else, either set `EXTRA_CATEGORIES` (a regex over category names; each match becomes its own group) or edit the rules above. To see your provider's category names:
 

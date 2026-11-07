@@ -183,6 +183,9 @@ import com.mohamed3on.iptv.player.Phase
 import com.mohamed3on.iptv.player.StreamSession
 import com.mohamed3on.iptv.ui.theme.ActionButton
 import com.mohamed3on.iptv.ui.theme.ActivityLine
+import com.mohamed3on.iptv.ui.theme.glide
+import androidx.compose.runtime.compositionLocalOf
+import androidx.compose.ui.graphics.CompositingStrategy
 import com.mohamed3on.iptv.ui.theme.Badges
 import com.mohamed3on.iptv.ui.theme.FormatChips
 import com.mohamed3on.iptv.ui.theme.PROSE_WIDTH
@@ -1185,7 +1188,7 @@ private val NEW_STYLE = Type.caption.copy(color = Palette.accent, fontWeight = F
  * no average is known); the group when nothing names genres.
  */
 @Composable
-private fun MetaLine(movie: Movie, info: MovieInfo?, extra: String? = null) {
+private fun MetaLine(movie: Movie, info: MovieInfo?, extra: String? = null, modifier: Modifier = Modifier) {
     val genre = info?.genre?.split(',', '/')?.map(String::trim)?.filter(String::isNotEmpty)?.take(2)?.joinToString(", ")?.ifEmpty { null }
     val runtime = (info?.secs?.takeIf { it > 0 }?.let { it * 1000L } ?: movie.lib?.rt?.takeIf { it > 0 }?.let { it * 60_000L })?.let(::runtimeLabel)
     val scored: Scored? = movie.lib?.takeIf { it.known } ?: info
@@ -1195,7 +1198,7 @@ private fun MetaLine(movie: Movie, info: MovieInfo?, extra: String? = null) {
     val net = info?.takeIf { it.hn != null && scored?.tr == null }?.let { it.copy(tr = it.hn, s = it.s ?: scored?.s, ir = it.ir ?: scored?.ir, iv = it.iv ?: scored?.iv, lb = it.lb ?: scored?.lb, lv = it.lv ?: scored?.lv) }
     val scores = remember(scored, yours, net) { scoresLine(net ?: scored, yours, onImdb = net?.hs == "i") }
     // The facts go under the scores when both don't fit on one line (beside a show's episodes); only then does a line scroll.
-    FlowRow(horizontalArrangement = Arrangement.spacedBy(Space.m), itemVerticalAlignment = Alignment.CenterVertically) {
+    FlowRow(modifier, horizontalArrangement = Arrangement.spacedBy(Space.m), itemVerticalAlignment = Alignment.CenterVertically) {
         if (scores != null) Text(scores, style = SCORE_STYLE, maxLines = 1, inlineContent = SCORE_LOGOS)
         movie.title.badge?.let { Badges(remember(it) { listOf(it) }) }
         val group = movie.group.takeIf { movie.lib != null } ?: groupLabel(movie.group).name
@@ -1305,7 +1308,7 @@ private val BUTTON_HEIGHT = 21.dp + Space.m * 2
 private fun TrailerButton(key: String?) {
     if (key.isNullOrEmpty()) return
     val context = LocalContext.current
-    PageButton("Trailer", { playTrailer(context, key) })
+    PageButton("Trailer", { playTrailer(context, key) }, Modifier.appear())
 }
 
 /** Ad-free SmartTube first, then Amazon's YouTube app, then whatever opens YouTube links. */
@@ -1795,20 +1798,8 @@ private fun HintLine(text: String) {
 /** First ever open only: later ones read the copy on disk. Waits 400ms, so a quick load never flashes it. */
 @Composable
 private fun LoadingMovies(focus: FocusRequester) {
-    var shown by remember { mutableStateOf(false) }
-    LaunchedEffect(Unit) {
-        delay(400)
-        shown = true
-    }
-    val alpha by animateFloatAsState(if (shown) 1f else 0f, Motion.panel(), label = "loading")
     // Holds focus meanwhile, so Back still answers.
-    Column(
-        Modifier.padding(start = EDGE, top = Space.xl).focusRequester(focus).focusable().graphicsLayer { this.alpha = alpha },
-        verticalArrangement = Arrangement.spacedBy(Space.l),
-    ) {
-        Text("Loading ${LocalLibrary.current.noun}…", style = Type.body)
-        ActivityLine()
-    }
+    Waiting("Loading ${LocalLibrary.current.noun}…", Modifier.padding(start = EDGE, top = Space.xl).focusRequester(focus).focusable())
 }
 
 @Composable
@@ -1894,22 +1885,22 @@ private fun FilmPage(
         TitleScroll(
             main = {
                 Column(Modifier.padding(start = EDGE, bottom = Space.xl).widthIn(max = PAGE_WIDTH), verticalArrangement = Arrangement.spacedBy(Space.s)) {
-                    PageTitle(film.title.title, info)
+                    PageTitle(film.title.title, info, Modifier.glide())
                     // The tier is the copy's that plays, on the Plays line.
-                    MetaLine(film, info)
-                    if (started && resume!!.dur > 0) Row(horizontalArrangement = Arrangement.spacedBy(Space.m), verticalAlignment = Alignment.CenterVertically) {
+                    MetaLine(film, info, modifier = Modifier.glide())
+                    if (started && resume!!.dur > 0) Row(Modifier.glide(), horizontalArrangement = Arrangement.spacedBy(Space.m), verticalAlignment = Alignment.CenterVertically) {
                         Text(leftLabel(resume.dur - resume.pos), style = Type.headline, maxLines = 1)
                         ProgressLine({ resume.pos.toFloat() / resume.dur }, Modifier.width(PROGRESS_WIDTH))
                     }
-                    info?.plot?.ifBlank { null }?.let { ScrollText(it, style = Type.prose, lines = if (unavailable) 8 else 10, modifier = Modifier.widthIn(max = PROSE_WIDTH)) }
+                    info?.plot?.ifBlank { null }?.let { ScrollText(it, style = Type.prose, lines = if (unavailable) 8 else 10, modifier = Modifier.widthIn(max = PROSE_WIDTH).appear()) }
                     // The provider's facts name people only as text; TMDB's are the row below.
                     if (info?.people.isNullOrEmpty()) {
-                        info?.cast?.ifBlank { null }?.let { Text("Starring $it", style = Type.caption, maxLines = 2) }
-                        info?.director?.substringBefore(",")?.trim()?.ifBlank { null }?.let { Text("Directed by $it", style = Type.caption, maxLines = 2) }
+                        info?.cast?.ifBlank { null }?.let { Text("Starring $it", style = Type.caption, maxLines = 2, modifier = Modifier.appear()) }
+                        info?.director?.substringBefore(",")?.trim()?.ifBlank { null }?.let { Text("Directed by $it", style = Type.caption, maxLines = 2, modifier = Modifier.appear()) }
                     }
                     if (unavailable) {
-                        Text("No copy available", style = Type.headline.copy(color = Palette.warning), modifier = Modifier.padding(top = Space.s).focusRequester(noCopy).focusable())
-                        Text("Neither IPTV nor $debridName has one that plays here. It stays in the library for when one turns up.", style = Type.caption)
+                        Text("No copy available", style = Type.headline.copy(color = Palette.warning), modifier = Modifier.appear().padding(top = Space.s).focusRequester(noCopy).focusable())
+                        Text("Neither IPTV nor $debridName has one that plays here. It stays in the library for when one turns up.", style = Type.caption, modifier = Modifier.appear())
                     } else {
                         // The Plays line may run past the column, across the page's whole width.
                         if (!buttons) Box(Modifier.padding(top = Space.s).height(PLAYS_HEIGHT)) else PlaysLine(
@@ -1970,7 +1961,9 @@ private fun PlaysLine(title: TitleId, fallback: List<String>?, modifier: Modifie
     LaunchedEffect(text) { if (text != null) Check.log("plays", "title" to title, "copy" to copy?.id, "src" to (copy?.source ?: "library")) }
     Row(modifier.height(PLAYS_HEIGHT), horizontalArrangement = Arrangement.spacedBy(Space.s), verticalAlignment = Alignment.CenterVertically) {
         if (text == null) return@Row
-        if (chips != null) FormatChips(chips) else FitText(text, style = Type.body, active = true)
+        Row(Modifier.appear(), horizontalArrangement = Arrangement.spacedBy(Space.s), verticalAlignment = Alignment.CenterVertically) {
+            if (chips != null) FormatChips(chips) else FitText(text, style = Type.body, active = true)
+        }
     }
 }
 
@@ -2005,10 +1998,10 @@ private fun <T : Any> BoxScope.SlidePanel(value: T?, content: @Composable (value
 
 /** A title page's name in display type, its original-language title under it when TMDB has one that differs. */
 @Composable
-private fun PageTitle(title: String, info: MovieInfo?) {
-    Column(verticalArrangement = Arrangement.spacedBy(Space.xs)) {
+private fun PageTitle(title: String, info: MovieInfo?, modifier: Modifier = Modifier) {
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(Space.xs)) {
         ScrollText(title, style = BIG_TITLE, lines = 2)
-        info?.originalTitle?.ifBlank { null }?.let { FitText(it, style = ORIGINAL_TITLE, active = true) }
+        info?.originalTitle?.ifBlank { null }?.let { FitText(it, style = ORIGINAL_TITLE, active = true, modifier = Modifier.appear()) }
     }
 }
 
@@ -2045,6 +2038,11 @@ private val DAY_MONTH_YEAR = DateTimeFormatter.ofPattern("d MMM yyyy", Locale.UK
 /** A title page's ground: the backdrop, Back to leave, focus kept inside; undrawn while [hidden]. */
 @Composable
 private fun TitleFrame(backdrop: String?, hidden: Boolean, onBack: () -> Unit, onFocus: (Boolean) -> Unit, onMenu: (() -> Unit)? = null, content: @Composable BoxScope.() -> Unit) {
+    var arrived by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        delay(ARRIVAL_MS)
+        arrived = true
+    }
     Box(
         Modifier
             .fillMaxSize()
@@ -2063,10 +2061,52 @@ private fun TitleFrame(backdrop: String?, hidden: Boolean, onBack: () -> Unit, o
             }
             .focusGroup(),
     ) {
-        CompositionLocalProvider(LocalStill provides hidden) {
+        CompositionLocalProvider(LocalStill provides hidden, LocalArrived provides arrived) {
             Backdrop(backdrop, solidFrom = null)
             content()
         }
+    }
+}
+
+/** Whether the page has been up a moment: what comes after that has loaded, and [appear]s. */
+private val LocalArrived = compositionLocalOf { false }
+
+/** Past this after a page opens, what shows has loaded: it fades in rather than popping. */
+private const val ARRIVAL_MS = 150L
+
+/** How long arriving content waits, unseen, while what it pushes glides out of its way. */
+private const val MAKE_ROOM_MS = 200L
+
+/** Fades in what arrives once its page is up (TMDB's details, the episodes, a copy); what's there from the start just shows. */
+@Composable
+private fun Modifier.appear(): Modifier {
+    val reduced = LocalReducedMotion.current
+    val late = LocalArrived.current
+    // Decided once: what was there from the start costs nothing (no layer, no effect).
+    val alpha = remember { if (late) Animatable(0f) else null } ?: return this
+    LaunchedEffect(alpha) {
+        // The lines it pushes up [glide] out of its way first, so the two never overlap.
+        if (!reduced) delay(MAKE_ROOM_MS)
+        alpha.animateTo(1f, if (reduced) tween(Motion.FADE_MS) else Motion.spring(0.3f))
+    }
+    return graphicsLayer {
+        this.alpha = alpha.value
+        compositingStrategy = CompositingStrategy.ModulateAlpha
+    }
+}
+
+/** A wait that says what for: nothing for 400 ms, so a quick load never flashes it, then the words over the activity line, faded in. */
+@Composable
+private fun Waiting(text: String, modifier: Modifier = Modifier) {
+    var shown by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        delay(400)
+        shown = true
+    }
+    val alpha by animateFloatAsState(if (shown) 1f else 0f, Motion.panel(), label = "waiting")
+    Column(modifier.graphicsLayer { this.alpha = alpha }, verticalArrangement = Arrangement.spacedBy(Space.l)) {
+        Text(text, style = Type.body, maxLines = 1)
+        ActivityLine()
     }
 }
 
@@ -2260,16 +2300,16 @@ private fun PersonPage(person: Person, watched: Set<TitleId>, active: Boolean, h
             item(key = "name", span = { GridItemSpan(maxLineSpan) }) {
                 Column(verticalArrangement = Arrangement.spacedBy(Space.xs)) {
                     Text(person.name, style = BIG_TITLE, maxLines = 2)
-                    Text(
+                    // Something holds focus while there are no cards, so Back still answers.
+                    if (list == null && !failed) Waiting("Loading their films and shows…", Modifier.focusRequester(status).focusable())
+                    else Text(
                         when {
                             !list.isNullOrEmpty() -> "${list.size} films and shows, best rated first"
                             failed -> "Their films and shows didn’t load. Check that the Fire TV is online."
-                            list != null -> "No films or shows"
-                            else -> "Loading…"
+                            else -> "No films or shows"
                         },
                         style = Type.body, maxLines = 1,
-                        // Something holds focus while there are no cards, so Back still answers.
-                        modifier = if (list.isNullOrEmpty()) Modifier.focusRequester(status).focusable() else Modifier,
+                        modifier = (if (list.isNullOrEmpty()) Modifier.focusRequester(status).focusable() else Modifier).appear(),
                     )
                     if (failed) ActionButton("Try again", { attempt++ }, Modifier.padding(top = Space.s))
                 }
@@ -2380,34 +2420,35 @@ private fun ShowPage(
             main = {
                 Row(Modifier.fillMaxSize().padding(start = EDGE, end = EDGE), horizontalArrangement = Arrangement.spacedBy(Space.xxl)) {
                     Column(Modifier.width(SHOW_INFO_WIDTH).fillMaxHeight().padding(bottom = Space.xl), verticalArrangement = Arrangement.spacedBy(Space.s, Alignment.Bottom)) {
-                        PageTitle(show.title.title, info)
+                        PageTitle(show.title.title, info, Modifier.glide())
                         val seasons = episodes?.map { it.season }?.distinct()?.size
-                        MetaLine(show, info ?: data?.info, extra = seasons?.let { if (it == 1) "1 season" else "$it seasons" })
-                        remember(info) { info?.let(::showStatus) }?.let { FitText(it, style = Type.body, active = true) }
-                        (info?.plot?.ifBlank { null } ?: data?.plot?.ifBlank { null })?.let { ScrollText(it, style = Type.prose, lines = 10, modifier = Modifier.widthIn(max = PROSE_WIDTH)) }
-                        if (info?.people.isNullOrEmpty()) data?.cast?.ifBlank { null }?.let { Text("Starring $it", style = Type.caption, maxLines = 2) }
+                        MetaLine(show, info ?: data?.info, extra = seasons?.let { if (it == 1) "1 season" else "$it seasons" }, modifier = Modifier.glide())
+                        remember(info) { info?.let(::showStatus) }?.let { FitText(it, style = Type.body, active = true, modifier = Modifier.glide().appear()) }
+                        (info?.plot?.ifBlank { null } ?: data?.plot?.ifBlank { null })?.let { ScrollText(it, style = Type.prose, lines = 10, modifier = Modifier.widthIn(max = PROSE_WIDTH).glide().appear()) }
+                        if (info?.people.isNullOrEmpty()) data?.cast?.ifBlank { null }?.let { Text("Starring $it", style = Type.caption, maxLines = 2, modifier = Modifier.glide().appear()) }
                         val next = target?.let { episodes[it] }
                         // The copy the episode up next plays on, prepared as the page opens; TMDB's episodes have no IPTV copy of their own.
-                        if (next != null) key(next.titleId) { PlaysLine(next.titleId, fallback = if (next.id > 0) listOf("IPTV") + next.quality else null) }
+                        if (next != null) key(next.titleId) { PlaysLine(next.titleId, fallback = if (next.id > 0) listOf("IPTV") + next.quality else null, Modifier.glide()) }
                         val started = next != null && resume?.episode == next.titleId && resume.pos > 0
                         // Buttons that don't fit beside the episode list go on a second line, never cut.
-                        FlowRow(Modifier.padding(top = Space.m), horizontalArrangement = Arrangement.spacedBy(Space.m), verticalArrangement = Arrangement.spacedBy(Space.m)) {
+                        FlowRow(Modifier.glide().padding(top = Space.m), horizontalArrangement = Arrangement.spacedBy(Space.m), verticalArrangement = Arrangement.spacedBy(Space.m)) {
                             when {
                                 next != null -> {
-                                    PageButton("${if (started) "Resume" else "Play"} ${next.code}", { onPlay(episodes, target, false) }, Modifier.focusRequester(primary))
-                                    if (started) PageButton("Start over", { onPlay(episodes, target, true) })
+                                    PageButton("${if (started) "Resume" else "Play"} ${next.code}", { onPlay(episodes, target, false) }, Modifier.focusRequester(primary).appear())
+                                    if (started) PageButton("Start over", { onPlay(episodes, target, true) }, Modifier.appear())
                                     TrailerButton(info?.trailer)
                                 }
-                                failed -> PageButton("Try again", { attempt++ }, Modifier.focusRequester(primary))
+                                failed -> PageButton("Try again", { attempt++ }, Modifier.focusRequester(primary).appear())
                                 // Something holds focus meanwhile, so Back still answers.
-                                else -> Text(if (episodes == null) "Loading episodes…" else "No episodes yet", style = Type.body, modifier = Modifier.focusRequester(primary).focusable())
+                                episodes == null -> Waiting("Loading episodes…", Modifier.focusRequester(primary).focusable())
+                                else -> Text("No episodes yet", style = Type.body, modifier = Modifier.focusRequester(primary).focusable().appear())
                             }
                         }
-                        if (failed) Text("Episodes didn’t load. Check that the Fire TV is online.", style = Type.caption)
+                        if (failed) Text("Episodes didn’t load. Check that the Fire TV is online.", style = Type.caption, modifier = Modifier.appear())
                     }
                     if (!episodes.isNullOrEmpty()) LazyColumn(
                         // On the app's floating material, so the list reads over any backdrop.
-                        Modifier.weight(1f).padding(vertical = Space.safeY).material().edgeFade(Palette.material, top = Space.m, bottom = Space.xl)
+                        Modifier.weight(1f).appear().padding(vertical = Space.safeY).material().edgeFade(Palette.material, top = Space.m, bottom = Space.xl)
                             .focusRequester(listFocus).focusRestorer(targetRow).focusGroup(),
                         state = list,
                         contentPadding = PaddingValues(horizontal = Space.l, vertical = Space.m),

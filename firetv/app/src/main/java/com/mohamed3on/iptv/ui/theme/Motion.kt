@@ -21,6 +21,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.round
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.VectorConverter
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.layout.layout
+import androidx.compose.ui.layout.positionInParent
+import kotlinx.coroutines.launch
 import kotlin.math.PI
 
 /**
@@ -100,6 +109,35 @@ fun Modifier.slideFade(progress: () -> Float, from: Edge, reduced: Boolean): Mod
         Edge.Left -> translationX = -(1f - p) * size.width / 3f
         Edge.Right -> translationX = (1f - p) * size.width / 3f
         Edge.Bottom -> translationY = (1f - p) * size.height / 2f
+    }
+}
+
+/**
+ * Moves to a new place in its parent on the panel spring instead of jumping there: a line pushed up when
+ * text arrives below it glides up. Only placement changes each frame, never layout. Reduced motion jumps.
+ */
+@Composable
+fun Modifier.glide(): Modifier {
+    if (LocalReducedMotion.current) return this
+    val scope = rememberCoroutineScope()
+    val shift = remember { Animatable(Offset.Zero, Offset.VectorConverter) }
+    val last = remember { arrayOfNulls<Offset>(1) }
+    return layout { measurable, constraints ->
+        val placeable = measurable.measure(constraints)
+        layout(placeable.width, placeable.height) {
+            val now = coordinates?.positionInParent()
+            val before = last[0]
+            if (now != null) last[0] = now
+            if (now != null && before != null && now != before) {
+                // Drawn where it was this frame too, then on to its new place.
+                val from = shift.value + (before - now)
+                placeable.place(from.round())
+                scope.launch {
+                    shift.snapTo(from)
+                    shift.animateTo(Offset.Zero, Motion.panel())
+                }
+            } else placeable.place(shift.value.round())
+        }
     }
 }
 

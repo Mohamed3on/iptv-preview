@@ -1,12 +1,11 @@
 // Production server on the Hetzner box, behind the Cloudflare Tunnel (see README): the
-// web app built into dist/ plus the /api handlers. Responses are cached in memory by
-// their Cache-Control, as Vercel's CDN did — reused for s-maxage, then served stale for
-// stale-while-revalidate while one rebuild runs — so TiviMate rarely waits on a build,
-// and concurrent misses never download the guides twice.
+// /api handlers. Responses are cached in memory by their Cache-Control, as Vercel's CDN
+// did — reused for s-maxage, then served stale for stale-while-revalidate while one
+// rebuild runs — so TiviMate rarely waits on a build, and concurrent misses never
+// download the guides twice.
 import * as app from './api/app'
 import epg from './api/epg'
 import playlist from './api/playlist'
-import proxy from './api/proxy'
 import { accessToken } from './api/_trakt'
 
 type Handler = (req: Request) => Promise<Response>
@@ -48,13 +47,8 @@ async function cached(req: Request, handler: Handler): Promise<Response> {
   return new Response(entry.body, entry.init)
 }
 
-const dist = `${import.meta.dir}/dist`
-
 export async function handle(req: Request): Promise<Response> {
   const { pathname } = new URL(req.url)
-  // The proxy relays files of any size, so it bypasses the cache: holding its responses
-  // in memory would let anyone fill this process with GitHub files.
-  if (pathname === '/api/proxy') return proxy(req)
   // A new build must show at once, and the APK is too big to hold in memory.
   if (pathname === '/api/app/version') return app.version(req)
   if (pathname === '/api/app/apk') return app.apk(req)
@@ -90,9 +84,7 @@ export async function handle(req: Request): Promise<Response> {
     return res
   }
   const handler = routes[pathname]
-  if (handler) return cached(req, handler)
-  const file = Bun.file(dist + (pathname === '/' ? '/index.html' : pathname))
-  return (await file.exists()) ? new Response(file) : new Response('Not found', { status: 404 })
+  return handler ? cached(req, handler) : new Response('Not found', { status: 404 })
 }
 
 if (import.meta.main) {

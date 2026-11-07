@@ -73,7 +73,7 @@ export async function guide(req: Request): Promise<Response> {
   }
 }
 
-// Builds live outside dist/ (deploys prune that), at fixed paths never taken from the request.
+// Builds live in app/, which deploys never touch, at fixed paths never taken from the request.
 // No file extension in the route, so Cloudflare never caches the APK.
 const appFile = (name: string) => Bun.file(`${process.env.APP_DIR ?? `${import.meta.dir}/../app`}/${name}`)
 

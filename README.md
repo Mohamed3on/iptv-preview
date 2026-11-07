@@ -32,8 +32,6 @@ Sofa cuts your Xtream Codes IPTV subscription down to what you actually watch. I
 
 **Not included:** catch-up, recordings and match reminders. The app runs on Fire TV only, and it's built around a one-stream account.
 
-The server also serves a basic in-browser playlist viewer at `/` for local use (`bun install && bun dev`); provider streams usually won't play in it once it's served over HTTPS.
-
 **To run your own, follow [docs/SETUP.md](docs/SETUP.md).** Every setting is listed in [.env.example](.env.example). The channel choices built in here are personal (which sports, regions, languages and leagues), so choose your own: the guide shows where. The rest of this README covers how the original deployment runs.
 
 ## Hosting
@@ -53,7 +51,7 @@ The repo's copies of those two files only seed a fresh box; a deploy never overw
 
 - `/api/app/channels`: groups, channels, feed families, quality badges and both provider fronts, as JSON.
 - `/api/app/guide`: the guide as a gzip SQLite file.
-- `/api/app/version`, `/api/app/apk` and `/api/app/dm`: the latest build and its dex metadata (the baseline profile, which the stick compiles at install), served from `/opt/sofa/app/` (outside `dist/`, so deploys never prune it).
+- `/api/app/version`, `/api/app/apk` and `/api/app/dm`: the latest build and its dex metadata (the baseline profile, which the stick compiles at install), served from `/opt/sofa/app/` (deploys never touch it).
 - `/api/app/movies`: the on-demand library (4K movies, UFC replays), read from the copy the playlist build saves in `.cache/vod-last-good.json`, so the app never adds a pull of the 74 MB catalogue.
 - `POST /api/app/quality`: what the app measured on a stream it played (resolution, frame rate, codec, Atmos), merged into the quality cache with the probe's rules (`api/_quality.ts`).
 - `POST /api/app/events`: tunes with their time to picture, stalls, feed switches and busy / wrong-route / offline problems, appended to `.cache/app-events.jsonl` on the box (rolls over at 20 MB). Read it to see which feeds hold up and how fast zaps are.
@@ -70,9 +68,8 @@ First install: on the stick, enable Settings → My Fire TV → Developer option
 
 **Baseline profile.** Release builds ship one (`firetv/app/src/main/generated/baselineProfiles/`), so the hot paths (the channel list, zaps, the panels) run compiled from the first frame after an update instead of warming up in the JIT. CI turns it into a dex metadata file (`firetv/baselineprofile/dex-metadata.sh`) that the self-update installs as `base.dm` beside the APK; a missing or failed one never blocks an update. Regenerate it after big UI changes with `firetv/baselineprofile/generate.sh` (needs `bun`; Gradle boots its own headless API 34 emulator, so a connected stick is never used) and commit the result. The profiling builds talk to `firetv/baselineprofile/fixture-server.ts`, a local copy of the channels and guide whose provider route plays a generated test clip (needs `ffmpeg`): the emulator plays, so playback, health and the info view are profiled, but never takes the account's stream slot or writes to the event log.
 
-## Tech Stack
+## Tech stack
 
-- React + TypeScript + Vite
-- HLS.js / mpegts.js for streaming
-- @tanstack/react-virtual for list virtualization
-- Web Workers for EPG parsing
+- Server: [Bun](https://bun.sh) and TypeScript, no runtime dependencies (`server.ts`, `api/`, `scripts/`).
+- Fire TV app: Kotlin, Jetpack Compose for TV and Media3/ExoPlayer (`firetv/`).
+- Logo lab: `bun run lab` tunes the app's mark; `lab/sofa/export.ts` writes its drawables.

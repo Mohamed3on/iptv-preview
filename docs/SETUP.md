@@ -52,7 +52,7 @@ bun install
 SERVER=root@<server-ip> ./deploy/sync.sh
 ```
 
-This builds the web app, copies the server to `/opt/sofa`, installs the systemd units in `deploy/` and starts them. Run the same command again after every change. Check it:
+This copies the server to `/opt/sofa`, installs the systemd units in `deploy/` and starts them. Run the same command again after every change. Check it:
 
 ```sh
 ssh root@<server-ip> 'curl -s "http://127.0.0.1:8790/api/playlist?t=<PLAYLIST_TOKEN>" | head -c 200'

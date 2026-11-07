@@ -111,8 +111,8 @@ private fun subtitleState(tracks: Tracks): SubtitleState {
     return SubtitleState(options, selected)
 }
 
-/** "4K · 24 fps · Dolby Vision · E-AC3 5.1 Atmos": what is actually playing, from the decoders' formats. */
-fun qualityLine(video: Format?, audio: Format?): String {
+/** "4K", "24 fps", "Dolby Vision", "E-AC3 5.1 Atmos": what is actually playing, from the decoders' formats. */
+fun qualityLabels(video: Format?, audio: Format?): List<String> {
     val parts = mutableListOf<String>()
     if (video != null && video.height > 0) {
         parts += when {
@@ -139,7 +139,7 @@ fun qualityLine(video: Format?, audio: Format?): String {
         }
         parts += listOfNotNull(codecName(audio.sampleMimeType), layout, "Atmos".takeIf { audio.sampleMimeType == MimeTypes.AUDIO_E_AC3_JOC || audio.sampleMimeType == MimeTypes.AUDIO_TRUEHD }).joinToString(" ")
     }
-    return parts.joinToString(" · ")
+    return parts.filter(String::isNotEmpty)
 }
 
 private fun videoCodec(mime: String?) = when (mime) {

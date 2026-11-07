@@ -17,7 +17,7 @@ import com.mohamed3on.iptv.player.SubtitleOption
 import com.mohamed3on.iptv.player.SubtitleState
 import com.mohamed3on.iptv.player.SubtitleTracks
 import com.mohamed3on.iptv.player.at
-import com.mohamed3on.iptv.player.qualityLine
+import com.mohamed3on.iptv.player.qualityLabels
 import androidx.activity.compose.LocalActivity
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
@@ -97,6 +97,7 @@ import com.mohamed3on.iptv.player.moviePlayer
 import com.mohamed3on.iptv.ui.theme.ActionButton
 import com.mohamed3on.iptv.ui.theme.ActivityLine
 import com.mohamed3on.iptv.ui.theme.Badges
+import com.mohamed3on.iptv.ui.theme.FormatChips
 import com.mohamed3on.iptv.ui.theme.Edge
 import com.mohamed3on.iptv.ui.theme.LocalReducedMotion
 import com.mohamed3on.iptv.ui.theme.Motion
@@ -336,7 +337,7 @@ internal fun MoviePlayback(
     val position = remember { mutableLongStateOf(from) }
     val duration = remember { mutableLongStateOf(0L) }
     val buffered = remember { mutableLongStateOf(0L) }
-    var quality by remember { mutableStateOf("") }
+    var quality by remember { mutableStateOf(emptyList<String>()) }
     var note by remember { mutableStateOf(if (from > 0) "Resuming from ${playTime(from)}" else null) }
     LaunchedEffect(kick, ui.playing, target, panel) {
         controls = true
@@ -357,7 +358,7 @@ internal fun MoviePlayback(
             duration.longValue = exo.duration.coerceAtLeast(0)
             buffered.longValue = exo.bufferedPosition
             // The copy playing, by its source, then what the decoders really show (R29).
-            quality = listOfNotNull(session.state.value.copy?.let { sourceName(it.source) }, qualityLine(exo.videoFormat, exo.audioFormat).ifEmpty { null }).joinToString(" · ")
+            quality = qualityLabels(exo.videoFormat, exo.audioFormat)
             delay(250)
         }
     }
@@ -567,13 +568,13 @@ internal fun MoviePlayback(
     }
 }
 
-/** Title (with its badge), a passing [note], then elapsed, the bar and what's left; "Paused" while paused. */
+/** Title (with its badge), what plays as format chips, a passing [note], then elapsed, the bar and what's left; the pause mark while paused. */
 @Composable
 private fun Controls(
     movie: Movie,
     paused: Boolean,
     note: String?,
-    quality: String,
+    quality: List<String>,
     position: () -> Long,
     duration: () -> Long,
     buffered: () -> Long,
@@ -593,13 +594,10 @@ private fun Controls(
                 transitionSpec = { fadeIn(Motion.focus()) togetherWith fadeOut(Motion.focus()) },
                 label = "paused",
             ) { p ->
-                if (p) Row(horizontalArrangement = Arrangement.spacedBy(Space.s), verticalAlignment = Alignment.CenterVertically) {
-                    PauseMark()
-                    Text("Paused", style = Type.headline)
-                }
+                if (p) PauseMark()
             }
         }
-        if (quality.isNotEmpty()) Text(quality, style = Type.body, maxLines = 1)
+        if (quality.isNotEmpty()) FormatChips(quality)
         if (note != null) Text(note, style = Type.body)
         Row(horizontalArrangement = Arrangement.spacedBy(Space.l), verticalAlignment = Alignment.CenterVertically) {
             Text(elapsed, style = Type.body.copy(color = Palette.textPrimary))

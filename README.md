@@ -1,10 +1,37 @@
-# IPTV Preview
+# Sofa
 
-Turns an Xtream Codes IPTV subscription into a trimmed sports playlist and guide:
+Your Xtream Codes IPTV subscription, cut down to what you actually watch: a clean playlist and guide for any IPTV player, and Sofa, a Fire TV app built around live sport and films.
 
-- **Playlist and guide** for TiviMate or any IPTV player: sports channels grouped by region, a 🏆 group per league and cup learned from the guide, feeds sorted by the quality they really deliver (measured, not the provider's labels), spares kept, dead slots dropped, plus 4K films and UFC replays.
-- **Fire TV app** (`firetv/`): a native player for the same channels, with multi-view and a Movies & Shows library (TMDB, IMDb and Letterboxd scores, Trakt, Real-Debrid and TorBox). It installs once over adb and updates itself from the server.
-- **Web viewer** at `/` for any M3U playlist and XMLTV guide (`bun install && bun dev`).
+## What you get
+
+**In any IPTV player** (TiviMate, VLC, …)
+
+- Only the channels you choose, in groups you name, instead of the provider's thousands.
+- A 🏆 group per league and cup (Premier League, Champions League, …), learned each day from the guide: every channel showing that competition, from any country.
+- The best copy of each channel first, ranked by the resolution, frame rate and sound it really delivers (measured, not the provider's labels), with one spare. Lower-quality duplicates and empty match slots are left out.
+- A fuller guide: copies of a channel share its programmes, and match slots show the match on them.
+- 4K films and UFC replays as on-demand entries.
+
+**In Sofa, the Fire TV app** (Fire OS 8 or later, remote only)
+
+- Live now: the matches on right now, one press away.
+- Channel groups, favourites, recent channels, and multi-view of up to 3 channels.
+- When a feed stalls or fails, it switches to a spare by itself; a dot shows how the stream is doing and why.
+- Switches the TV to the video's frame rate, and shows what plays as badges (4K, Dolby Vision, Atmos).
+- Asks "Still watching?" after a while, so a forgotten TV doesn't hold your account's connection.
+- Installs once over adb, then updates itself.
+
+**Movies & Shows in Sofa** (needs `TMDB_TOKEN`; without it, only the provider's own groups)
+
+- Rows for your Watchlist, trending, new releases, genres and languages; title pages with plot, cast, trailer and episodes; voice search.
+- IMDb and Letterboxd scores (needs `MDBLIST_KEY`).
+- Plays the best copy from your provider, Real-Debrid or TorBox (needs `REAL_DEBRID_TOKEN` or `TORBOX_TOKEN`).
+- Up next and resume, Skip intro, English subtitles on by default.
+- Watched marks from Trakt and Letterboxd, and what you finish written back to Trakt (needs `TRAKT_CLIENT_ID`, `LETTERBOXD_USER`).
+
+**Not included:** catch-up, recordings and match reminders. The app runs on Fire TV only, and it's built around a one-stream account.
+
+The server also serves a basic in-browser playlist viewer at `/` for local use (`bun install && bun dev`); provider streams usually won't play in it once it's served over HTTPS.
 
 **To run your own, follow [docs/SETUP.md](docs/SETUP.md).** Every setting is listed in [.env.example](.env.example). The channel choices built in here are personal (which sports, regions, languages and leagues), so choose your own: the guide shows where. The rest of this README covers how the original deployment runs.
 

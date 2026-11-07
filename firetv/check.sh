@@ -8,8 +8,9 @@ cd "$(dirname "$0")"
 adb=~/Library/Android/sdk/platform-tools/adb
 stick=${STICK:-192.168.178.25:5555}
 pkg=com.mohamed3on.iptv
-# Inception (Real-Debrid's copy plays) and a film whose best copy is IPTV's.
-FILM=${FILM:-movie:27205} IPTV_FILM=${IPTV_FILM:-movie:26280}
+# Inception (a debrid copy plays) and Hobal, a Saudi film IPTV has in 4K and no scraper lists a torrent for,
+# so only IPTV can play it (with TorBox, the old pick movie:26280 played a debrid copy).
+FILM=${FILM:-movie:27205} IPTV_FILM=${IPTV_FILM:-movie:1173720}
 PLAYS_MS=1000 FRAME_MS=4000 WORST_MS=32
 
 # The nightly quality probe needs the account's one connection.

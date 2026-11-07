@@ -185,6 +185,7 @@ import com.mohamed3on.iptv.ui.theme.ActionButton
 import com.mohamed3on.iptv.ui.theme.ActivityLine
 import com.mohamed3on.iptv.ui.theme.Badges
 import com.mohamed3on.iptv.ui.theme.FormatChips
+import com.mohamed3on.iptv.ui.theme.PROSE_WIDTH
 import com.mohamed3on.iptv.ui.theme.Edge
 import com.mohamed3on.iptv.ui.theme.LocalReducedMotion
 import com.mohamed3on.iptv.ui.theme.Motion
@@ -1086,7 +1087,7 @@ private fun UpNextPage(
                     if (r.dur > 0) ProgressLine({ r.pos.toFloat() / r.dur }, Modifier.width(PROGRESS_WIDTH))
                     if (r.at == 0L && m.titleId in newShows) Text(NEW_EPISODE, style = NEW_STYLE, maxLines = 1)
                 }
-                ScrollText(i?.plot.orEmpty(), style = Type.body, lines = 4, minLines = 4, modifier = Modifier.padding(top = Space.xs))
+                ScrollText(i?.plot.orEmpty(), style = Type.prose, lines = 4, minLines = 4, modifier = Modifier.padding(top = Space.xs).widthIn(max = PROSE_WIDTH))
             }
         }
         val alone = entries.size == 1
@@ -1249,7 +1250,7 @@ private const val LETTERBOXD = "Letterboxd"
 private val SCORE_LOGOS = mapOf(
     IMDB to InlineTextContent(Placeholder(2.3.em, 1.1.em, PlaceholderVerticalAlign.Center)) {
         Box(Modifier.fillMaxSize().background(Color(0xFFF5C518), RoundedCornerShape(3.dp)), contentAlignment = Alignment.Center) {
-            Text("IMDb", style = Type.caption.copy(color = Color.Black, fontSize = 10.sp, lineHeight = 10.sp, fontWeight = FontWeight.Black, letterSpacing = 0.em))
+            Text("IMDb", style = Type.caption.copy(color = Color.Black, fontSize = 10.sp, lineHeight = 10.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.em))
         }
     },
     LETTERBOXD to InlineTextContent(Placeholder(1.45.em, 0.6.em, PlaceholderVerticalAlign.Center)) {
@@ -1430,7 +1431,7 @@ private fun Hero(movie: Movie?, info: MovieInfo?, resume: List<Resume>, placehol
                 }
             }
             MetaLine(m, i, extra = left)
-            i?.plot?.ifBlank { null }?.let { ScrollText(it, style = Type.body, lines = 2) }
+            i?.plot?.ifBlank { null }?.let { ScrollText(it, style = Type.prose, lines = 2, modifier = Modifier.widthIn(max = PROSE_WIDTH)) }
         }
     }
 }
@@ -1900,7 +1901,7 @@ private fun FilmPage(
                         Text(leftLabel(resume.dur - resume.pos), style = Type.headline, maxLines = 1)
                         ProgressLine({ resume.pos.toFloat() / resume.dur }, Modifier.width(PROGRESS_WIDTH))
                     }
-                    info?.plot?.ifBlank { null }?.let { ScrollText(it, style = Type.body, lines = if (unavailable) 8 else 10) }
+                    info?.plot?.ifBlank { null }?.let { ScrollText(it, style = Type.prose, lines = if (unavailable) 8 else 10, modifier = Modifier.widthIn(max = PROSE_WIDTH)) }
                     // The provider's facts name people only as text; TMDB's are the row below.
                     if (info?.people.isNullOrEmpty()) {
                         info?.cast?.ifBlank { null }?.let { Text("Starring $it", style = Type.caption, maxLines = 2) }
@@ -2383,7 +2384,7 @@ private fun ShowPage(
                         val seasons = episodes?.map { it.season }?.distinct()?.size
                         MetaLine(show, info ?: data?.info, extra = seasons?.let { if (it == 1) "1 season" else "$it seasons" })
                         remember(info) { info?.let(::showStatus) }?.let { FitText(it, style = Type.body, active = true) }
-                        (info?.plot?.ifBlank { null } ?: data?.plot?.ifBlank { null })?.let { ScrollText(it, style = Type.body, lines = 10) }
+                        (info?.plot?.ifBlank { null } ?: data?.plot?.ifBlank { null })?.let { ScrollText(it, style = Type.prose, lines = 10, modifier = Modifier.widthIn(max = PROSE_WIDTH)) }
                         if (info?.people.isNullOrEmpty()) data?.cast?.ifBlank { null }?.let { Text("Starring $it", style = Type.caption, maxLines = 2) }
                         val next = target?.let { episodes[it] }
                         // The copy the episode up next plays on, prepared as the page opens; TMDB's episodes have no IPTV copy of their own.

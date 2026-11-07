@@ -88,6 +88,8 @@ object Type {
     val headline = base.copy(fontSize = 16.sp, lineHeight = 21.sp, fontWeight = FontWeight.Medium, letterSpacing = (-0.006).em)
     /** Now/next lines, schedule rows. */
     val body = base.copy(fontSize = 15.sp, lineHeight = 20.sp, color = Palette.textSecondary, letterSpacing = 0.em)
+    /** Paragraphs (plots): body with reading leading (~1.5), set no wider than [PROSE_WIDTH]. */
+    val prose = body.copy(lineHeight = 23.sp)
     /** Times, badges, hints. */
     val caption = base.copy(fontSize = 13.sp, lineHeight = 17.sp, fontWeight = FontWeight.Medium, color = Palette.textTertiary, letterSpacing = 0.01.em)
 }
@@ -98,6 +100,9 @@ object Type {
  * rows feels when it builds (measured 2026-11-02).
  */
 val TextStyle.tabular get() = copy(fontFeatureSettings = "tnum")
+
+/** A paragraph's measure: about 70 characters of [Type.prose], so the eye finds the next line. */
+val PROSE_WIDTH = 560.dp
 
 /** Spacing steps; pick from these, never ad-hoc values. */
 @Immutable

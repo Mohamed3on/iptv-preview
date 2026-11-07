@@ -113,6 +113,7 @@ import androidx.compose.ui.geometry.CornerRadius
 import com.mohamed3on.iptv.player.PlayerPool
 import com.mohamed3on.iptv.ui.theme.Radius
 import com.mohamed3on.iptv.ui.theme.tabular
+import com.mohamed3on.iptv.ui.theme.PROSE_WIDTH
 import com.mohamed3on.iptv.ui.theme.bottomScrim
 import com.mohamed3on.iptv.ui.theme.leftScrim
 import com.mohamed3on.iptv.ui.theme.material
@@ -678,7 +679,7 @@ private fun Guide(channel: Channel, guide: GuideDb?, clock: State<Long>, describ
                 modifier = Modifier.widthIn(max = PROGRESS_WIDTH),
             )
         }
-        if (describe && now.descr.isNotBlank()) ScrollText(now.descr, style = Type.body, lines = 2)
+        if (describe && now.descr.isNotBlank()) ScrollText(now.descr, style = Type.prose, lines = 2, modifier = Modifier.widthIn(max = PROSE_WIDTH))
     }
     if (next != null && !next.synthetic) {
         Text("Next · ${clockTime(next.start)} ${cleanTitle(next.title)}", style = Type.body, maxLines = 2)

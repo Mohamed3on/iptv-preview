@@ -98,6 +98,7 @@ import com.mohamed3on.iptv.ui.theme.ActionButton
 import com.mohamed3on.iptv.ui.theme.ActivityLine
 import com.mohamed3on.iptv.ui.theme.Badges
 import com.mohamed3on.iptv.ui.theme.FormatChips
+import com.mohamed3on.iptv.ui.theme.tabular
 import com.mohamed3on.iptv.ui.theme.Edge
 import com.mohamed3on.iptv.ui.theme.LocalReducedMotion
 import com.mohamed3on.iptv.ui.theme.Motion
@@ -600,12 +601,15 @@ private fun Controls(
         if (quality.isNotEmpty()) FormatChips(quality)
         if (note != null) Text(note, style = Type.body)
         Row(horizontalArrangement = Arrangement.spacedBy(Space.l), verticalAlignment = Alignment.CenterVertically) {
-            Text(elapsed, style = Type.body.copy(color = Palette.textPrimary))
+            Text(elapsed, style = TIME_STYLE.copy(color = Palette.textPrimary))
             SeekBar(position, duration, buffered, seeking, Modifier.weight(1f))
-            Text(left, style = Type.body)
+            Text(left, style = TIME_STYLE)
         }
     }
 }
+
+/** Elapsed and left tick each second: tabular, so the bar between them never twitches. */
+private val TIME_STYLE = Type.body.tabular
 
 /** Played (accent), buffered ahead (faint) and the rest, with a thumb at the place; all read while drawing. */
 @Composable

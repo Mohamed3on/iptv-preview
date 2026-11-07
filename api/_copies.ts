@@ -2,8 +2,10 @@
 // torrents Torrentio knows (Real-Debrid candidates; the stick checks which are cached). The box
 // describes, the stick ranks. IPTV copies never wait on Torrentio: it gets a short budget, after which
 // the answer says `sources.rd: 'pending'` and the lookup carries on into the cache for the next ask.
+// Arabic films and Arabic-dubbed animated films also get ArabP2P's copies that TorBox holds (_arabp2p.ts).
 import { readFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
+import { arabp2pCopies } from './_arabp2p.js'
 import { writeAtomic } from './_fs.js'
 import { getJson } from './_http.js'
 import { introFor, type Intro } from './_intros.js'
@@ -219,13 +221,20 @@ export async function markInfringing(hashes: string[]): Promise<boolean> {
 export async function titleCopies(title: string, iptv: Promise<IptvCopy[]>, waitMs = 2500): Promise<Copies> {
   const p = parseTitleId(title)
   const meta = p ? tmdbTitle(p.kind, p.tmdb) : Promise.resolve(null)
+  let arabp2pPending = false
   const rd = meta.then(async (t): Promise<RdCopy[]> => {
     if (!p) return [] // a provider-only title: nothing to look up
     if (!t) throw new Error('no TMDB details')
     if (!t.imdb) return []
-    const [copies, refused] = await Promise.all([torrentio(p.season != null ? `series/${t.imdb}:${p.season}:${p.episode}` : `movie/${t.imdb}`), infringing()])
+    const [copies, extra, refused] = await Promise.all([
+      torrentio(p.season != null ? `series/${t.imdb}:${p.season}:${p.episode}` : `movie/${t.imdb}`),
+      p.kind === 'movie' ? arabp2pCopies(p.tmdb, t) : { copies: [], pending: false },
+      infringing(),
+    ])
+    arabp2pPending = extra.pending
     const now = Date.now()
-    return copies
+    const known = new Set(copies.map((c) => c.hash))
+    return [...copies, ...extra.copies.filter((c) => !known.has(c.hash))]
       .filter((c) => !(now - (refused[c.hash] ?? 0) < INFRINGING_MS))
       // A full disc ("COMPLETE.BLURAY", BDMV, ISO) is a folder of disc files, not one video the stick can stream.
       .filter((c) => !DISC.test(`${c.name} ${c.filename ?? ''}`))
@@ -240,7 +249,8 @@ export async function titleCopies(title: string, iptv: Promise<IptvCopy[]>, wait
     titleId: title,
     originalLanguage: tmdb?.originalLanguage ?? '',
     runtime: tmdb?.runtime ?? 0,
-    sources: { iptv: typeof i === 'object' ? 'ok' : i, rd: typeof r === 'object' ? 'ok' : r },
+    // An ArabP2P lookup still running makes the debrid side pending, so the copies aren't kept without what it finds.
+    sources: { iptv: typeof i === 'object' ? 'ok' : i, rd: typeof r === 'object' ? (arabp2pPending ? 'pending' : 'ok') : r },
     ...(typeof o === 'object' && o.v && { intro: o.v }),
     copies: [...(typeof i === 'object' ? i.v : []), ...(typeof r === 'object' ? r.v : [])],
   }

@@ -183,6 +183,7 @@ import com.mohamed3on.iptv.player.StreamSession
 import com.mohamed3on.iptv.ui.theme.ActionButton
 import com.mohamed3on.iptv.ui.theme.ActivityLine
 import com.mohamed3on.iptv.ui.theme.Badges
+import com.mohamed3on.iptv.ui.theme.FormatChips
 import com.mohamed3on.iptv.ui.theme.Edge
 import com.mohamed3on.iptv.ui.theme.LocalReducedMotion
 import com.mohamed3on.iptv.ui.theme.Motion
@@ -1111,12 +1112,12 @@ private fun UpNextPage(
             }
         }
         if (alone) {
-            Text("Menu for more · Down for all ${LocalLibrary.current.noun}", style = Type.caption, maxLines = 1, modifier = Modifier.padding(start = EDGE, top = Space.l))
+            Text("☰ More · ↓ All ${LocalLibrary.current.noun}", style = Type.caption, maxLines = 1, modifier = Modifier.padding(start = EDGE, top = Space.l))
             return@Column
         }
         Row(Modifier.padding(start = EDGE, top = Space.xl), horizontalArrangement = Arrangement.spacedBy(Space.m), verticalAlignment = Alignment.CenterVertically) {
             Text("Up next", style = Type.headline, maxLines = 1)
-            Text("Menu for more · Down for all ${LocalLibrary.current.noun}", style = Type.caption, maxLines = 1)
+            Text("☰ More · ↓ All ${LocalLibrary.current.noun}", style = Type.caption, maxLines = 1)
         }
         LazyRow(
             modifier = Modifier
@@ -1201,8 +1202,8 @@ private fun MetaLine(movie: Movie, info: MovieInfo?, extra: String? = null) {
 }
 
 /**
- * "TrueScore 7,735 · 23% → 27% net loved · [IMDb] 8.8 · [Letterboxd] 8.4 · You 9/10": TrueScore's score and its all-time then
- * recent net-loved share (the score in the colour of the latest; "… on IMDb" [onImdb] when the share is IMDb histogram's and
+ * "TrueScore 7,735 · ♥ 23% → 27% · [IMDb] 8.8 · [Letterboxd] 8.4 · You 9/10": TrueScore's score and its all-time then
+ * recent net-loved share behind a heart (the score in the colour of the latest; "… on IMDb" [onImdb] when the share is IMDb histogram's and
  * IMDb's average isn't known to say so), then IMDb's and Letterboxd's averages out of 10 (Letterboxd's doubled) behind their
  * logos ([SCORE_LOGOS]), with vote counts when TrueScore's line isn't there to carry them, then the owner's rating. Each number
  * in its colour on the review-score ramp, the rest text-secondary; null when none is known.
@@ -1220,9 +1221,8 @@ private fun scoresLine(scored: Scored?, yours: Int?, onImdb: Boolean = false): A
                 val recent = scored.tq?.let(::pct)
                 append("TrueScore ")
                 withStyle(SpanStyle(color = Palette.share(recent ?: all))) { append("%,d".format(Locale.US, scored.ta ?: scored.s ?: 0)) }
-                append(" · $all%")
+                append(" · ♥ $all%")
                 if (recent != null) append(" → $recent%")
-                append(" net loved")
                 if (onImdb && scored.ir == null) append(" on IMDb")
             }
             for ((logo, value, votes) in averages) {
@@ -1942,7 +1942,7 @@ private fun FilmPage(
 }
 
 /**
- * "Plays: Real-Debrid · 4K · HDR10 · E-AC3 5.1 · 14.2 GB" (no video codec) with its tier: the copy Play will open, in a
+ * [4K] [HDR10] [E-AC3 5.1] ([formatLabels]): the copy Play will open, in a
  * one-line slot that is there from the start, so nothing moves when it fills in or changes (R29). Until
  * the ranking and Real-Debrid's check are in, it stays empty; after Play's own wait it names the best
  * IPTV copy, and the library's ([fallback] labels) when the box can't answer.
@@ -1963,11 +1963,12 @@ private fun PlaysLine(title: TitleId, fallback: List<String>?, modifier: Modifie
         p.rdChecked && p.ranking != null -> "no copy plays here right now"
         else -> null
     }
+    // Shown as format chips; the source, bitrate and size stay in Versions.
+    val chips = copy?.let(::formatLabels) ?: fallback?.takeIf { p.failed || (late && p.ranking == null) }
     LaunchedEffect(text) { if (text != null) Check.log("plays", "title" to title, "copy" to copy?.id, "src" to (copy?.source ?: "library")) }
     Row(modifier.height(PLAYS_HEIGHT), horizontalArrangement = Arrangement.spacedBy(Space.s), verticalAlignment = Alignment.CenterVertically) {
         if (text == null) return@Row
-        copy?.let(::copyTier)?.let { TierChip(it) }
-        FitText("Plays: $text", style = Type.body, active = true)
+        if (chips != null) FormatChips(chips) else FitText(text, style = Type.body, active = true)
     }
 }
 
@@ -2511,12 +2512,12 @@ private fun EpisodeRow(episode: Episode, watched: Boolean, rating: Int?, progres
             if (request != null) AsyncImage(model = request, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
             else Text("${episode.episode}", style = Type.title.copy(color = Palette.textSecondary))
             if (progress != null) ProgressLine({ progress }, Modifier.align(Alignment.BottomCenter).padding(horizontal = Space.xs, vertical = Space.xs))
+            if (watched) WatchedMark(Modifier.align(Alignment.TopEnd).padding(Space.xs))
         }
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(Space.xs)) {
             FitText(listOfNotNull("${episode.episode}", title).joinToString(". "), style = Type.headline, active = focused)
             Row(horizontalArrangement = Arrangement.spacedBy(Space.s), verticalAlignment = Alignment.CenterVertically) {
                 if (episode.secs > 0) Text("${(episode.secs + 30) / 60} min", style = Type.caption, maxLines = 1)
-                if (watched) Text("Watched", style = Type.caption.copy(color = Palette.accent), maxLines = 1)
                 if (rating != null) Text(yoursLabel(rating), style = Type.caption.copy(color = Palette.outOf10(rating.toDouble())), maxLines = 1)
                 if (focused && episode.titleId.isNotEmpty()) EpisodePlays(episode.titleId)
             }
@@ -2524,7 +2525,7 @@ private fun EpisodeRow(episode: Episode, watched: Boolean, rating: Int?, progres
     }
 }
 
-/** A focused episode's copy, in its caption line ("Plays: IPTV · 1080p · Menu for versions"); asked for only once focus rests. */
+/** A focused episode's copy, in its caption line ("4K · DTS-HD 5.1 · ☰ More"); asked for only once focus rests. */
 @Composable
 private fun EpisodePlays(title: TitleId) {
     val films = LocalContext.current.graph.films
@@ -2534,8 +2535,8 @@ private fun EpisodePlays(title: TitleId) {
     }
     val plays = p?.plays
     LaunchedEffect(plays) { if (plays != null) Check.log("plays", "title" to title, "copy" to plays.id, "src" to plays.source) }
-    val text = plays?.let { (listOf(sourceName(it.source)) + copyLabels(it).take(2)).joinToString(" · ") } ?: return
-    FitText("Plays: $text · Menu for more", style = Type.caption, active = true)
+    val text = plays?.let { (formatLabels(it).take(2) + "☰ More").joinToString(" · ") } ?: return
+    FitText(text, style = Type.caption, active = true)
 }
 
 private val GENERIC_EPISODE = Regex("""(?i)episode\s*\d+""")

@@ -341,6 +341,9 @@ internal fun sizeLabel(bytes: Long): String? = when {
 internal fun copyLine(c: Copy, answer: TitleAnswer?): String =
     (listOf(sourceName(c.source)) + (copyLabels(c) - setOfNotNull(VIDEO[c.codec])) + listOfNotNull(sizeLabel(answer?.size(c.id) ?: 0))).joinToString(" · ")
 
+/** What a glance at the copy needs, as chips: picture, HDR, sound, and languages other than plain English ("4K", "Dolby Vision 8", "DTS-HD 5.1"). */
+internal fun formatLabels(c: Copy): List<String> = copyLabels(c).filter { it != VIDEO[c.codec] && it != "EN" && !it.endsWith(" Mbps") }
+
 /** Only a Real-Debrid copy that failed its check says so; a ready or not-yet-checked one reads as plain Real-Debrid. */
 private fun rdState(c: Copy, rd: Map<String, RdCheck>): String? {
     if (c.source != Source.RealDebrid) return null

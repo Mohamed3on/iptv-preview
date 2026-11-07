@@ -158,6 +158,13 @@ private val badgeStyle = Type.caption
 fun Badges(labels: List<String>, modifier: Modifier = Modifier) =
     Chips(remember(labels) { if (labels.isEmpty()) labels else listOf(labels.joinToString(" · ")) }, badgeStyle, fill = null, outline = null, modifier)
 
+private val formatStyle = Type.caption.copy(color = Palette.textSecondary)
+private val formatOutline = Palette.textTertiary.copy(alpha = 0.6f)
+
+/** A copy's formats as outlined capsules ("4K", "Dolby Vision", "DTS-HD 5.1"), read at a glance where a "·" list reads as a sentence. */
+@Composable
+fun FormatChips(labels: List<String>, modifier: Modifier = Modifier) = Chips(labels, formatStyle, fill = null, outline = formatOutline, modifier)
+
 private val liveLabel = listOf("LIVE")
 private val liveStyle = Type.caption.copy(color = Palette.live)
 private val liveFill = Palette.live.copy(alpha = 0.16f)

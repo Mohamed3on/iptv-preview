@@ -31,19 +31,6 @@ class TraktSyncTest {
     private fun reply(code: Int) = server.enqueue(MockResponse.Builder().code(code).build())
     private fun sent() = generateSequence { server.takeRequest(100, TimeUnit.MILLISECONDS) }.map { it.body?.utf8() }.toList()
 
-    @Test fun `passing 90 percent sends one finished play, and passing it again in the same play sends nothing`() = runBlocking {
-        val trakt = trakt()
-        reply(204)
-        val play = trakt.play("movie:603")
-        play(50_000, 100_000)
-        play(91_000, 100_000)
-        play(40_000, 100_000) // seeked back
-        play(95_000, 100_000)
-        trakt.flush()
-        assertEquals(listOf("""{"title":"movie:603","at":1762372800000}"""), sent())
-        assertNull(store.get("trakt.finished"))
-    }
-
     @Test fun `plays finished offline are kept and sent later`() = runBlocking {
         reply(503) // Trakt not signed in on the box, or the box out of reach
         trakt().finished("tv:1396:s1e2")

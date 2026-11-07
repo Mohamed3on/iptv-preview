@@ -131,3 +131,88 @@ private fun neighbour(list: List<Channel>, from: Channel, down: Boolean): Channe
 internal fun stepThrough(list: List<Channel>, from: Channel?, down: Boolean): Channel? =
     if (from != null && list.any { it.family == from.family }) neighbour(list, from, down)
     else if (down) list.firstOrNull() else list.lastOrNull()
+
+/** What a film key press needs to know: what is open over the film, and what Back would peel first. */
+data class FilmKeys(
+    /** No copy would play: the Unavailable card is up. */
+    val error: Boolean = false,
+    /** Options (or Versions) is open. */
+    val panel: Boolean = false,
+    /** A run of steps waits to seek. */
+    val seeking: Boolean = false,
+    /** The session takes Back: a trial's first 30 s, or a notice showing. */
+    val sessionBack: Boolean = false,
+    val controls: Boolean = false,
+    /** The film plays (or would once buffered), so OK pauses it. */
+    val playing: Boolean = true,
+)
+
+/** A key press in the film player, mapped by [filmKey]. */
+sealed interface FilmAction {
+    /** Back out to the titles (the place is kept). */
+    data object Leave : FilmAction
+    data object ClosePanel : FilmAction
+    data object OpenPanel : FilmAction
+    /** Drops the pending seek. */
+    data object DropSeek : FilmAction
+    /** Back is the session's: undo a trial or dismiss the notice. */
+    data object SessionBack : FilmAction
+    data object HideControls : FilmAction
+    /** Seeks now to the pending target. */
+    data object CommitSeek : FilmAction
+    data object Play : FilmAction
+    data object Pause : FilmAction
+    /** Steps the pending target by [by] ms. */
+    data class Step(val by: Long) : FilmAction
+    /** ▲: takes the offer or Skip intro showing. */
+    data object Accept : FilmAction
+    /** The player's key, nothing to do (a key's release, a held repeat). */
+    data object Swallow : FilmAction
+    /** Not the player's key: the panel moves its own focus with it. */
+    data object Pass : FilmAction
+}
+
+/** Left/Right step 10 s, 30 s once held for [FILM_HOLD_MS]; ⏪/⏩ 30 s; repeats closer than [FILM_REPEAT_MS] are skipped. */
+private const val FILM_STEP_MS = 10_000L
+private const val FILM_HELD_STEP_MS = 30_000L
+private const val FILM_JUMP_MS = 30_000L
+private const val FILM_HOLD_MS = 1_000L
+private const val FILM_REPEAT_MS = 100L
+
+/**
+ * The film player's keys as a pure function: [held] is how long the key has been down, [sinceStep] the time since the
+ * last step. Back peels one layer a press: the Unavailable card, a panel, a pending seek, a trial or notice, the
+ * controls, then the film. OK and Play/Pause seek a pending step, else pause and play.
+ */
+fun filmKey(code: Int, down: Boolean, repeat: Int, held: Long, sinceStep: Long, s: FilmKeys): FilmAction {
+    val back = code == KeyEvent.KEYCODE_BACK
+    if (back && s.error) return if (down) FilmAction.Leave else FilmAction.Swallow
+    if (s.panel) return if (!back && code != KeyEvent.KEYCODE_MENU) FilmAction.Pass else if (down) FilmAction.ClosePanel else FilmAction.Swallow
+    if (s.error) return FilmAction.Pass
+    val action = when (code) {
+        KeyEvent.KEYCODE_BACK -> when {
+            s.seeking -> FilmAction.DropSeek
+            s.sessionBack -> FilmAction.SessionBack
+            s.controls -> FilmAction.HideControls
+            else -> FilmAction.Leave
+        }
+        KeyEvent.KEYCODE_MENU -> FilmAction.OpenPanel
+        KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER,
+        KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE, KeyEvent.KEYCODE_MEDIA_PLAY, KeyEvent.KEYCODE_MEDIA_PAUSE -> when {
+            repeat > 0 -> FilmAction.Swallow
+            s.seeking -> FilmAction.CommitSeek
+            code == KeyEvent.KEYCODE_MEDIA_PLAY -> FilmAction.Play
+            code == KeyEvent.KEYCODE_MEDIA_PAUSE || s.playing -> FilmAction.Pause
+            else -> FilmAction.Play
+        }
+        KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_RIGHT ->
+            if (repeat > 0 && sinceStep < FILM_REPEAT_MS) FilmAction.Swallow
+            else FilmAction.Step((if (held >= FILM_HOLD_MS) FILM_HELD_STEP_MS else FILM_STEP_MS) * if (code == KeyEvent.KEYCODE_DPAD_LEFT) -1 else 1)
+        KeyEvent.KEYCODE_MEDIA_REWIND -> FilmAction.Step(-FILM_JUMP_MS)
+        KeyEvent.KEYCODE_MEDIA_FAST_FORWARD -> FilmAction.Step(FILM_JUMP_MS)
+        KeyEvent.KEYCODE_DPAD_UP -> if (repeat == 0) FilmAction.Accept else FilmAction.Swallow
+        KeyEvent.KEYCODE_DPAD_DOWN -> FilmAction.Swallow
+        else -> return FilmAction.Pass
+    }
+    return if (down) action else FilmAction.Swallow
+}

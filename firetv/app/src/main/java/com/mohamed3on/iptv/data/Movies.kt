@@ -310,14 +310,18 @@ fun posterUrl(raw: String): String = raw.replace(TMDB_SIZE, "https://image.tmdb.
 fun tmdbAt(raw: String, width: String): String = raw.replace(TMDB_SIZE, "https://image.tmdb.org/t/p/$width/")
 
 private const val MIN_RESUME_MS = 60_000L
-private const val FINISHED = 0.95
+/** Past this share of its length a play is finished (Trakt's own threshold): logged, marked watched, no longer resumed. */
+const val FINISHED = 0.9
 
-/** Where OK starts a movie with this saved place: there, if past the first minute and short of 95%; else the beginning. */
-fun resumeAt(pos: Long, dur: Long): Long = if (pos > MIN_RESUME_MS && (dur <= 0 || pos < dur * FINISHED)) pos else 0L
+/** Whether a play at [pos] of [dur] is finished. */
+fun finished(pos: Long, dur: Long) = dur > 0 && pos >= dur * FINISHED
+
+/** Where OK starts a movie with this saved place: there, if past the first minute and not [finished]; else the beginning. */
+fun resumeAt(pos: Long, dur: Long): Long = if (pos > MIN_RESUME_MS && !finished(pos, dur)) pos else 0L
 
 /**
  * Saved places, newest first, at most [CAP], persisted as one JSON value under [key]. Only resumable
- * ones are kept: a movie saved before its first minute or past 95% (finished) drops out of Continue
+ * ones are kept: a movie saved before its first minute or past 90% (finished) drops out of Continue
  * watching. A show's episode stays from its start (the next episode is saved at 0 when one ends),
  * and only a finished episode with nothing after it drops the show. Keyed by title (KTD10), so every
  * copy of a film, and every language of a show, shares one place.
@@ -347,7 +351,7 @@ class ResumeStore(private val store: KeyValueStore, private val key: String, pri
     fun save(place: Resume) {
         if (place.title.isEmpty()) return
         val rest = _entries.value.filter { it.title != place.title }
-        val keep = resumeAt(place.pos, place.dur) > 0 || (place.episode != null && (place.dur <= 0 || place.pos < place.dur * FINISHED))
+        val keep = resumeAt(place.pos, place.dur) > 0 || (place.episode != null && !finished(place.pos, place.dur))
         write(if (keep) (listOf(place.copy(at = now())) + rest).take(CAP) else rest)
     }
 
@@ -368,7 +372,7 @@ class ResumeStore(private val store: KeyValueStore, private val key: String, pri
 }
 
 /**
- * What was watched to the end (past 95%), by title id (a film or an episode), persisted under [key];
+ * What was watched to the end (past 90%), by title id (a film or an episode), persisted under [key];
  * the newest [CAP] are kept.
  */
 class WatchedStore(private val store: KeyValueStore, private val key: String) {

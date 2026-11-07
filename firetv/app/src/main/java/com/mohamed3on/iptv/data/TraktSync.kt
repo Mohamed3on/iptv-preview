@@ -30,7 +30,7 @@ data class TraktStatus(val state: String = "off", val code: String = "", val url
 data class FinishedPlay(val title: TitleId, val at: Long)
 
 /**
- * Trakt through the box (KTD19): the Options sign-in, and films and episodes finished here (past 90%) logged
+ * Trakt through the box (KTD19): the Options sign-in, and films and episodes finished here (past 90%, once a play) logged
  * to Trakt history. Finished plays are kept in [store] until the box has logged them (Trakt's duplicate counts),
  * so a play finished offline, or before Trakt is signed in, goes later. Sends run on [scope], off the player.
  */
@@ -52,17 +52,6 @@ class TraktSync(
             while (true) {
                 delay(RETRY_MS)
                 flush()
-            }
-        }
-    }
-
-    /** One play of [title]: the first time it passes 90% it is logged, however often it is passed again. */
-    fun play(title: TitleId): (pos: Long, dur: Long) -> Unit {
-        var sent = false
-        return { pos, dur ->
-            if (!sent && dur > 0 && pos >= dur * FINISHED) {
-                sent = true
-                finished(title)
             }
         }
     }
@@ -112,8 +101,6 @@ class TraktSync(
     private fun save(plays: List<FinishedPlay>) = store.put(KEY, if (plays.isEmpty()) null else json.encodeToString(plays))
 
     companion object {
-        /** Past this share of its length a play counts as finished. */
-        const val FINISHED = 0.9
         private const val KEY = "trakt.finished"
         private const val CAP = 500
         private const val RETRY_MS = 10 * 60_000L

@@ -175,6 +175,7 @@ import com.mohamed3on.iptv.graph
 import com.mohamed3on.iptv.player.Capacity
 import com.mohamed3on.iptv.system.Check
 import com.mohamed3on.iptv.player.Copy
+import com.mohamed3on.iptv.player.PlayOf
 import com.mohamed3on.iptv.player.ExoStreamPlayer
 import com.mohamed3on.iptv.player.FilmSession
 import com.mohamed3on.iptv.player.Prepared
@@ -540,26 +541,14 @@ fun MoviesLayer(
             playing?.let { p ->
                 key(p) {
                     val s = p.show
-                    // Past 90% the play is logged to Trakt, once this play.
-                    val trakt = remember { graph.trakt.play(s?.episode?.titleId ?: p.movie.titleId) }
                     // The player words its states for a film or an episode.
                     CompositionLocalProvider(LocalLibrary provides if (s != null) LibraryKind.Shows else LibraryKind.Movies) {
                         MoviePlayback(
                             movie = p.movie,
-                            title = p.title,
+                            of = if (s != null) PlayOf(s.show, s.episode) else PlayOf(p.movie),
                             from = p.from,
                             fallback = p.fallback,
                             iptvUrl = iptvUrl(p),
-                            onSave = { pos, dur ->
-                                trakt(pos, dur)
-                                if (dur > 0 && pos >= dur * 0.95) {
-                                    (if (s != null) graph.watchedEpisodes else graph.watchedMovies).mark(s?.episode?.titleId ?: p.movie.titleId)
-                                    // The show is followed from here: its next or newly aired episode comes to Up next (R31).
-                                    if (s != null && graph.followed.find(s.show.titleId)?.episode != s.episode.titleId)
-                                        graph.followed.merge(listOf(s.show.resume(pos, dur, s.episode.titleId, s.episode.code, System.currentTimeMillis())))
-                                }
-                                if (s == null) graph.resume.save(p.movie, pos, dur) else graph.showResume.save(s.show, pos, dur, s.episode.titleId, s.episode.code)
-                            },
                             onEnded = { if (!nextEpisode(s)) stopped() },
                             onClose = ::stopped,
                             onNext = s?.takeIf { it.index < it.episodes.lastIndex }?.let { { nextEpisode(it) } },

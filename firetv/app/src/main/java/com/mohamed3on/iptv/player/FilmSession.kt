@@ -238,13 +238,18 @@ class FilmSession(
     fun back(): Boolean {
         val copy = current
         val to = back
-        if (trial && copy != null && to != null && here().position - trialFrom < TRIAL_MS) {
+        if (copy != null && to != null && undoable()) {
             trialOver(copy, works = false)
             reopen(to, here())
             return true
         }
         return dismiss(accepted = false) != null
     }
+
+    /** Whether [back] would act now: a trial's first 30 s, or a notice showing. */
+    val takesBack: Boolean get() = undoable() || notices.isNotEmpty()
+
+    private fun undoable() = trial && current != null && back != null && here().position - trialFrom < TRIAL_MS
 
     /** Versions: plays [copyId] at the same place and pins it for the title (KTD12). */
     fun choose(copyId: String) {

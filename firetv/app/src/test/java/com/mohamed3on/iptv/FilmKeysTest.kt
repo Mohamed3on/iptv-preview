@@ -1,0 +1,32 @@
+package com.mohamed3on.iptv
+
+import android.view.KeyEvent
+import com.mohamed3on.iptv.ui.FilmAction
+import com.mohamed3on.iptv.ui.FilmKeys
+import com.mohamed3on.iptv.ui.filmKey
+import org.junit.Assert.assertEquals
+import org.junit.Test
+
+class FilmKeysTest {
+    private fun press(code: Int, s: FilmKeys, repeat: Int = 0, held: Long = 0, sinceStep: Long = 1_000) = filmKey(code, true, repeat, held, sinceStep, s)
+
+    @Test fun `Back peels one layer a press, the film last`() {
+        val back = KeyEvent.KEYCODE_BACK
+        val all = FilmKeys(panel = true, seeking = true, sessionBack = true, controls = true)
+        assertEquals(FilmAction.ClosePanel, press(back, all))
+        assertEquals(FilmAction.DropSeek, press(back, all.copy(panel = false)))
+        assertEquals(FilmAction.SessionBack, press(back, all.copy(panel = false, seeking = false)))
+        assertEquals(FilmAction.HideControls, press(back, all.copy(panel = false, seeking = false, sessionBack = false)))
+        assertEquals(FilmAction.Leave, press(back, FilmKeys()))
+        assertEquals("the Unavailable card leaves at once", FilmAction.Leave, press(back, all.copy(error = true)))
+        assertEquals(FilmAction.Swallow, filmKey(back, false, 0, 0, 0, FilmKeys()))
+    }
+
+    @Test fun `OK seeks a pending step, else pauses and plays`() {
+        val ok = KeyEvent.KEYCODE_DPAD_CENTER
+        assertEquals(FilmAction.CommitSeek, press(ok, FilmKeys(seeking = true)))
+        assertEquals(FilmAction.Pause, press(ok, FilmKeys(playing = true)))
+        assertEquals(FilmAction.Play, press(ok, FilmKeys(playing = false)))
+        assertEquals("a held OK does nothing more", FilmAction.Swallow, press(ok, FilmKeys(), repeat = 3))
+    }
+}

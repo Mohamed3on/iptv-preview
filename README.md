@@ -1,24 +1,12 @@
 # IPTV Preview
 
-A web-based IPTV playlist viewer with EPG (Electronic Program Guide) support. Load M3U playlists, browse channels, and watch live streams directly in the browser.
+Turns an Xtream Codes IPTV subscription into a trimmed sports playlist and guide:
 
-## Features
+- **Playlist and guide** for TiviMate or any IPTV player: sports channels grouped by region, a 🏆 group per league and cup learned from the guide, feeds sorted by the quality they really deliver (measured, not the provider's labels), spares kept, dead slots dropped, plus 4K films and UFC replays.
+- **Fire TV app** (`firetv/`): a native player for the same channels, with multi-view and a Movies & Shows library (TMDB, IMDb and Letterboxd scores, Trakt, Real-Debrid and TorBox). It installs once over adb and updates itself from the server.
+- **Web viewer** at `/` for any M3U playlist and XMLTV guide (`bun install && bun dev`).
 
-- **M3U Playlist Support** — Load via URL or file upload
-- **EPG / XMLTV** — Program guide with current/next show, progress bar, descriptions
-- **HLS & MPEG-TS Playback** — Handles `.m3u8` (HLS.js) and `.ts` (mpegts.js) streams
-- **Gzip Support** — Transparently decompresses `.gz` EPG files
-- **20k+ Channels** — Virtualized list handles massive playlists smoothly
-- **Off-thread EPG Parsing** — Web Worker with regex parser for large XMLTV files
-- **Search & Filter** — Full-text search and group filtering
-- **Persistent URLs** — Saves playlist/EPG URLs to localStorage
-
-## Getting Started
-
-```bash
-bun install
-bun dev
-```
+**To run your own, follow [docs/SETUP.md](docs/SETUP.md).** Every setting is listed in [.env.example](.env.example). The rest of this README covers how the original deployment runs.
 
 ## Hosting
 

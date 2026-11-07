@@ -7,6 +7,7 @@ import {
   chanKey,
   couldBeLiveMatch,
   fetchMyepgGuide,
+  isHomeProvider,
   jevCompetitions,
   learnedCompetitions,
   replayAirings,
@@ -42,6 +43,13 @@ describe('sports playlist curation', () => {
     // the provider writes the French league's channel without a space
     expect(autoIncluded('FR| LIGUE1+ ᴮᴱ')).toBe(true)
     expect(bucketForCategory('FR| LIGUE1+ ᴮᴱ')).toBe('🇫🇷 French Sports')
+  })
+
+  test('KEEP\'s ids apply only on the provider they were picked from', () => {
+    expect(isHomeProvider(new Map([[333, 'DE| SPORT HD/4K'], [870, 'ES| M+ LALIGA VIP'], [6, 'RU| RENAMED']]))).toBe(true)
+    expect(isHomeProvider(new Map([[333, 'DE | SPORT'], [870, 'US | NBA'], [6, 'RU| RUSSIAN HD/4K']]))).toBe(false)
+    expect(autoIncluded('DE | BUNDESLIGA')).toBe(true)
+    expect(bucketForCategory('ES: LALIGA')).toBe('🇪🇸 Spanish Sports')
   })
 })
 

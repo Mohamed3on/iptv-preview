@@ -24,7 +24,9 @@ import { EPG_MATCHES } from './epg-matches.js'
 import { askJev, type JevQuestion } from './_jev.js'
 import { readFile, stat, writeFile } from 'node:fs/promises'
 
-// Provider category_ids to keep.
+// Provider category_ids to keep. KEEP, CAT_BUCKET, CAT_ONLY and RU_KIDS's category are this
+// repo's provider's ids (recognised by HOME_CATEGORIES); on any other provider the same ids
+// name other categories, so there only the name rules (autoIncluded, EXTRA_CATEGORIES) pick.
 export const KEEP: number[] = [
   // UK sports — the provider ships Sky/TNT as parallel feed FAMILIES (RAW / 4K /
   // HEVC / HD copies in separate categories). Keep the high-tier ones next to the
@@ -191,16 +193,28 @@ const CAT_BUCKET: Record<number, string> = {
   2063: B.cartoon247, 2064: B.kidsFamily247,
 }
 
+// A few of the home provider's categories, by id and exact name: two still there means KEEP's ids are its.
+const HOME_CATEGORIES: Record<number, string> = {
+  333: 'DE| SPORT HD/4K', 870: 'ES| M+ LALIGA VIP', 265: 'IT| SPORT HD/4K', 1429: 'TS| TENNIS TV PPV', 6: 'RU| RUSSIAN HD/4K',
+}
+export const isHomeProvider = (catName: Map<number, string>): boolean =>
+  Object.entries(HOME_CATEGORIES).filter(([id, name]) => catName.get(Number(id)) === name).length >= 2
+
+// More categories to list, by name (a case-insensitive regex, e.g. "^US\| NBA|^UK\| CRICKET"), on any
+// provider: each is its own group, named as the provider names it, after the built-in ones.
+const EXTRA_CATEGORIES = process.env.EXTRA_CATEGORIES ? new RegExp(process.env.EXTRA_CATEGORIES, 'i') : null
+
 // Bucket for categories not in CAT_BUCKET (i.e. auto-included new ones).
+// Region prefixes come as "UK|", "UK |" or "UK:" depending on the provider.
 export function bucketForCategory(name: string): string {
   if (/REPLAY/i.test(name)) return B.fbReplay
   if (/UFC|PPV EVENT/i.test(name)) return B.ufc
   if (/TENNIS|ROLAND|WIMBLEDON/i.test(name)) return B.tennis
-  if (/^AR\|/i.test(name)) return B.ar
-  if (/^DE\|/i.test(name)) return /PPV/i.test(name) ? B.fbPpv : B.de
-  if (/^ES\|/i.test(name)) return /PPV/i.test(name) ? B.fbPpv : B.es
-  if (/^IT\|/i.test(name)) return /PPV/i.test(name) ? B.fbPpv : B.it
-  if (/^FR\|/i.test(name)) return /PPV/i.test(name) ? B.fbPpv : B.fr
+  if (/^AR\s*[|:]/i.test(name)) return B.ar
+  if (/^DE\s*[|:]/i.test(name)) return /PPV/i.test(name) ? B.fbPpv : B.de
+  if (/^ES\s*[|:]/i.test(name)) return /PPV/i.test(name) ? B.fbPpv : B.es
+  if (/^IT\s*[|:]/i.test(name)) return /PPV/i.test(name) ? B.fbPpv : B.it
+  if (/^FR\s*[|:]/i.test(name)) return /PPV/i.test(name) ? B.fbPpv : B.fr
   if (/PPV|EVENT/i.test(name)) return B.fbPpv
   return B.uk
 }
@@ -208,7 +222,7 @@ export function bucketForCategory(name: string): string {
 // Auto-include NEW provider categories beyond KEEP: relevant region prefix +
 // football/tennis/UFC topic in the name. Expired tournament-specific packages
 // are deliberately blocked even if their names otherwise match a current topic.
-const AUTO_REGION = /^(8K|UK|ES|DE|IT|TS|FR|AR)\|/i
+const AUTO_REGION = /^(8K|UK|ES|DE|IT|TS|FR|AR)\s*[|:]/i
 const AUTO_TOPIC =
   /FUSSBALL|UEFA|CHAMPIONS|EPL|PREMIER LEAGUE|LA ?LIGA|SERIE A|BUNDESLIGA|LIGUE ?1|FOOTBALL|SOCCER|CALCIO|COPA|TENNIS|ROLAND GARROS|WIMBLEDON|US OPEN|UFC|PPV EVENT/i
 const STALE_EVENT = /WORLD CUP|MUNDIAL|ROLAND GARROS 2026/i
@@ -858,31 +872,35 @@ export async function fetchCuratedChannels(cfg: XtreamConfig, vod = true): Promi
     else byCat.set(id, [s])
   }
 
-  const keepSet = new Set(KEEP)
+  const home = isHomeProvider(catName)
+  const keep = home ? KEEP : []
+  const keepSet = new Set(keep)
+  // Without KEEP, a region's general sport categories ("UK| SPORTS HD") count too: KEEP holds the home ones.
+  const auto = (name: string) => autoIncluded(name) || (!home && AUTO_REGION.test(name) && /SPORT/i.test(name) && !STALE_EVENT.test(name))
   const autoIds = [...catName.entries()]
-    .filter(([id, name]) => !keepSet.has(id) && autoIncluded(name))
+    .filter(([id, name]) => !keepSet.has(id) && (auto(name) || EXTRA_CATEGORIES?.test(name)))
     .map(([id]) => id)
 
   type Item = { c: Channel; q: number; rh: number; rf: number; lang: number; region: number; backup: number; bein: number; nkey: string; ck: string; idx: number }
   const byBucket = new Map<string, Item[]>()
 
-  const ids = [...KEEP, ...autoIds]
+  const ids = [...keep, ...autoIds]
   for (const [idx, id] of ids.entries()) {
     const group = catName.get(id)
     if (!group) continue
-    const bucket = CAT_BUCKET[id] ?? bucketForCategory(group)
+    const bucket = (home ? CAT_BUCKET[id] : undefined) ?? (auto(group) ? bucketForCategory(group) : group)
     const isEventSlot = EVENT_GROUP.test(group)
     const backup = BACKUP_GROUP.test(group) ? 1 : 0
     for (const s of byCat.get(id) ?? []) {
       const fix = PROVIDER_FIX[String(s.name ?? '').trim()]
       const name = fix?.name ?? String(s.name ?? '').trim()
       if (!name || SEPARATOR.test(name)) continue
-      if (CAT_ONLY[id] && !CAT_ONLY[id].test(name)) continue
+      if (home && CAT_ONLY[id] && !CAT_ONLY[id].test(name)) continue
       if (isEventSlot && DEAD_SLOT.test(name)) continue
       const q = qualityScore(name, group)
       if (q === 0) continue // explicit SD/LQ feeds
       // Russian kids channels ride in the general RU category — route them to the kids group.
-      const chBucket = id === 6 && RU_KIDS.test(name) ? B.kidsRu : bucket
+      const chBucket = home && id === 6 && RU_KIDS.test(name) ? B.kidsRu : bucket
       // Feeds that only light up during a match (PPV slots, beIN's "(EVENT ONLY)"
       // 4K slots) keep their marker tier when probed low — that's idle filler.
       const { h: rh, fps: rf } = realRes(s.stream_id, q, isEventSlot || EVENT_ONLY.test(name), name)
@@ -917,7 +935,7 @@ export async function fetchCuratedChannels(cfg: XtreamConfig, vod = true): Promi
   }
 
   const channels: Channel[] = []
-  for (const bucket of BUCKET_ORDER) {
+  for (const bucket of new Set([...BUCKET_ORDER, ...byBucket.keys()])) {
     const items = byBucket.get(bucket)
     if (!items) continue
     // beIN first in the Arabic bucket, then by EFFECTIVE resolution/fps — the probed

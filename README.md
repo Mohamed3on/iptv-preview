@@ -24,7 +24,8 @@ Sofa cuts your Xtream Codes IPTV subscription down to what you actually watch. I
 **Movies & Shows in the app** (needs `TMDB_TOKEN`; without it, only the provider's own groups)
 
 - Rows for your Watchlist, trending, new releases, genres and languages; title pages with plot, cast, trailer and episodes; voice search.
-- IMDb and Letterboxd scores (needs `MDBLIST_KEY`).
+- IMDb and Letterboxd scores (needs `MDBLIST_KEY`), and rows ranked the [TrueScore](https://github.com/Mohamed3on/truescore) way: by how many people loved a title against how many hated it, not by its average.
+- With TrueScore running on the same server, its own rows (recent and all-time) and its scores on the films it knows (set `LETTERBOXD_HISTOGRAMS` to its store; without it, those two rows just don't show).
 - Plays the best copy from your provider, Real-Debrid or TorBox (needs `REAL_DEBRID_TOKEN` or `TORBOX_TOKEN`).
 - Up next and resume, Skip intro, English subtitles on by default.
 - Watched marks from Trakt and Letterboxd, and what you finish written back to Trakt (needs `TRAKT_CLIENT_ID`, `LETTERBOXD_USER`).
